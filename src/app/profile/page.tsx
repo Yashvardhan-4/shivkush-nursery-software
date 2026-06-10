@@ -1,6 +1,7 @@
 import { getSession, logout } from '@/lib/actions/auth';
 import { redirect } from 'next/navigation';
 import LanguageToggle from '@/components/profile/LanguageToggle';
+import LogoutButton from '@/components/profile/LogoutButton';
 
 async function handleLogout() {
   'use server';
@@ -90,14 +91,9 @@ export default async function ProfilePage() {
         </div>
 
         {/* Logout */}
-        <form action={handleLogout} className="pt-4">
-          <button
-            type="submit"
-            className="w-full bg-red-600 hover:bg-red-700 text-white font-black text-base p-4 rounded-2xl active:scale-95 transition-transform shadow-md"
-          >
-            Log Out
-          </button>
-        </form>
+        <div className="pt-4">
+          <LogoutButton logoutAction={handleLogout} />
+        </div>
 
         {/* Powered by branding */}
         <div className="flex flex-col items-center justify-center pt-8 opacity-45">
