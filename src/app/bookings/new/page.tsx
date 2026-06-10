@@ -194,6 +194,19 @@ export default function NewBookingPage() {
       };
     });
 
+    if (customerPhone && customerName) {
+      let cust = await db.customers.where('mobile').equals(customerPhone).first();
+      if (!cust) {
+        cust = { id: crypto.randomUUID(), name: customerName, mobile: customerPhone, city: city || null };
+        await db.customers.add(cust);
+      } else {
+        cust.name = customerName;
+        if (city) cust.city = city;
+        await db.customers.put(cust);
+      }
+      await db.sync_queue.add({ table: 'customers', action: 'INSERT', payload: cust, created_at: Date.now() });
+    }
+
     await db.bookings.bulkAdd(newBookings);
     
     for (const b of newBookings) {

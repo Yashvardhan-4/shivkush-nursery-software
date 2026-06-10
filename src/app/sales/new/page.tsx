@@ -176,6 +176,18 @@ export default function NewDirectSalePage() {
       created_at: createdAt
     }));
 
+    if (customerPhone && customerName) {
+      let cust = await db.customers.where('mobile').equals(customerPhone).first();
+      if (!cust) {
+        cust = { id: crypto.randomUUID(), name: customerName, mobile: customerPhone, city: null };
+        await db.customers.add(cust);
+      } else {
+        cust.name = customerName;
+        await db.customers.put(cust);
+      }
+      await db.sync_queue.add({ table: 'customers', action: 'INSERT', payload: cust, created_at: Date.now() });
+    }
+
     await db.direct_sales.bulkAdd(newSales);
     
     for (const s of newSales) {

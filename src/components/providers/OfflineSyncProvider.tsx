@@ -50,7 +50,7 @@ export function OfflineSyncProvider({ children }: { children: React.ReactNode })
       const { success, data } = await res.json();
       if (success && data) {
         // Bulk put all data into IndexedDB
-        await db.transaction('rw', [db.plants, db.lots, db.bookings, db.allotments, db.direct_sales, db.attendance, db.audit_logs], async () => {
+        await db.transaction('rw', [db.plants, db.lots, db.bookings, db.allotments, db.direct_sales, db.attendance, db.audit_logs, db.customers, db.users], async () => {
           if (data.plants?.length) await db.plants.bulkPut(data.plants);
           if (data.lots?.length) await db.lots.bulkPut(data.lots);
           if (data.bookings?.length) await db.bookings.bulkPut(data.bookings);
@@ -58,6 +58,8 @@ export function OfflineSyncProvider({ children }: { children: React.ReactNode })
           if (data.direct_sales?.length) await db.direct_sales.bulkPut(data.direct_sales);
           if (data.attendance?.length) await db.attendance.bulkPut(data.attendance);
           if (data.audit_logs?.length) await db.audit_logs.bulkPut(data.audit_logs);
+          if (data.customers?.length) await db.customers.bulkPut(data.customers);
+          if (data.users?.length) await db.users.bulkPut(data.users);
         });
         console.log('Successfully pulled and updated local offline database from Supabase.');
       }
@@ -136,11 +138,23 @@ export function OfflineSyncProvider({ children }: { children: React.ReactNode })
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    
+    // Initial sync on mount/route change
     const hasUser = !!localStorage.getItem('snms_user');
-    if (pathname !== '/login' && hasUser && navigator.onLine) {
+    if (pathname !== '/login' && hasUser && isOnline) {
       processSyncQueue();
     }
-  }, [pathname]);
+
+    // Polling interval every 10 seconds for real-time feel
+    const interval = setInterval(() => {
+      const currentUser = !!localStorage.getItem('snms_user');
+      if (pathname !== '/login' && currentUser && isOnline) {
+        processSyncQueue();
+      }
+    }, 10000);
+
+    return () => clearInterval(interval);
+  }, [pathname, isOnline]);
 
   return (
     <>

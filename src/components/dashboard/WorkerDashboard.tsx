@@ -1,11 +1,20 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/lib/db';
 import { Banknote, PlusCircle, BookOpen, Layers, Leaf } from 'lucide-react';
 import Link from 'next/link';
+import RecentTransactions from './RecentTransactions';
 
 export default function WorkerDashboard() {
+  const [workerId, setWorkerId] = useState<string | undefined>();
+
+  useEffect(() => {
+    const userStr = localStorage.getItem('snms_user');
+    if (userStr) setWorkerId(JSON.parse(userStr).id);
+  }, []);
+
   const todaySalesTotal = useLiveQuery(async () => {
     const todayStr = new Date().toISOString().split('T')[0];
     const userStr = localStorage.getItem('snms_user');
@@ -113,6 +122,9 @@ export default function WorkerDashboard() {
           </div>
         </Link>
       </div>
+
+      {/* "?"? My Recent Transactions "?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"? */}
+      {workerId && <RecentTransactions workerId={workerId} />}
 
       {/* Free Stock by Plant Section */}
       <div className="space-y-3">

@@ -17,6 +17,7 @@ import {
   Users
 } from 'lucide-react';
 import Link from 'next/link';
+import RecentTransactions from './RecentTransactions';
 
 function fmt(n: number) {
   return '₹' + n.toLocaleString('en-IN');
@@ -140,6 +141,9 @@ export default function OwnerDashboard() {
           <p className="text-sm font-bold text-green-700">All stock levels are sufficient.</p>
         </div>
       )}
+
+      {/* "?"? Recent Transactions "?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"? */}
+      <RecentTransactions />
     </div>
   );
 }

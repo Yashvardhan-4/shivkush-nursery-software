@@ -30,6 +30,12 @@ export interface Customer {
   city: string | null;
 }
 
+export interface User {
+  id: string;
+  name: string;
+  role: 'owner' | 'worker';
+}
+
 // A Booking row represents ONE plant line in a booking order.
 // Multiple rows can share the same booking_number (cart).
 export interface Booking {
@@ -122,6 +128,7 @@ const db = new Dexie('SNMS_OfflineDB') as Dexie & {
   plants: EntityTable<Plant, 'id'>;
   lots: EntityTable<Lot, 'id'>;
   customers: EntityTable<Customer, 'id'>;
+  users: EntityTable<User, 'id'>;
   bookings: EntityTable<Booking, 'id'>;
   allotments: EntityTable<Allotment, 'id'>;
   direct_sales: EntityTable<DirectSale, 'id'>;
@@ -130,11 +137,12 @@ const db = new Dexie('SNMS_OfflineDB') as Dexie & {
   sync_queue: EntityTable<SyncQueueItem, 'id'>;
 };
 
-// Version 3: Full schema with allotments + attendance + audit logs
-db.version(3).stores({
+// Version 4: Added users table for worker name resolving
+db.version(4).stores({
   plants: 'id, plant_name, variety, active',
   lots: 'id, lot_number, plant_id, status',
   customers: 'id, mobile, name',
+  users: 'id, name, role',
   bookings: 'id, booking_number, customer_name, customer_phone, plant_id, lot_id, status, sync_status, created_at',
   allotments: 'id, booking_id, lot_id, sync_status',
   direct_sales: 'id, sale_number, plant_id, sync_status, created_at',
