@@ -65,5 +65,16 @@
   "revenue": "Revenue",
   "salesVolume": "Sales Volume",
   "allTime": "All Time",
-  "thisMonth": "This Month"
+  "thisMonth": "This Month",
+  "Welcome back": "Welcome back",
+  "Owner Dashboard": "Owner Dashboard",
+  "Worker Dashboard": "Worker Dashboard",
+  "Syncing...": "Syncing...",
+  "Sync Now": "Sync Now",
+  "Recent Collections": "Recent Collections",
+  "My Recent Collections": "My Recent Collections",
+  "No recent collections": "No recent collections.",
+  "Sale": "Sale",
+  "Advance": "Advance",
+  "Final Pay": "Final Pay"
 }

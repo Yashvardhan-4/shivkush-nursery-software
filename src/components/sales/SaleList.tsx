@@ -22,7 +22,7 @@ export default function SaleList() {
         return (
           <div key={sale.id} className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center active:scale-[0.98] transition-transform">
             <div>
-              <p className="font-bold text-gray-900 text-lg">{plant?.plant_name || 'Unknown Plant'}</p>
+              <p className="font-bold text-gray-900 text-lg">{plant ? (plant.variety ? `${plant.plant_name} - ${plant.variety}` : plant.plant_name) : 'Unknown Plant'}</p>
               <p className="text-xs font-bold text-gray-500 mt-1 uppercase tracking-wider">
                 {sale.payment_mode} • Qty: {sale.quantity}
               </p>

@@ -54,7 +54,10 @@ export default function NotebookLedger() {
 
   const salesList = groupedSales ? Object.values(groupedSales).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()) : [];
 
-  const getPlantName = (id: string) => plants?.find(p => p.id === id)?.plant_name || 'Unknown';
+  const getPlantName = (id: string) => {
+    const p = plants?.find(p => p.id === id);
+    return p ? (p.variety ? `${p.plant_name} - ${p.variety}` : p.plant_name) : 'Unknown';
+  };
 
   // Filtering
   const filteredBookings = bookingsList.filter(b => 

@@ -102,7 +102,7 @@ export default function NewDirectSalePage() {
     setCart([...cart, {
       id: crypto.randomUUID(),
       plantId: selectedPlant.id,
-      plantName: selectedPlant.plant_name,
+      plantName: selectedPlant.variety ? `${selectedPlant.plant_name} - ${selectedPlant.variety}` : selectedPlant.plant_name,
       quantity: qty,
       price: price,
       amount: price * qty
@@ -250,7 +250,7 @@ export default function NewDirectSalePage() {
                 const fs = computeFreeStock(p.id);
                 return (
                   <option key={p.id} value={p.id}>
-                    {p.plant_name} — ₹{p.selling_price} (Free: {fs})
+                    {p.variety ? `${p.plant_name} - ${p.variety}` : p.plant_name} — ₹{p.selling_price} (Free: {fs})
                   </option>
                 );
               })}

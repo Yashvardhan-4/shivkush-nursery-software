@@ -65,5 +65,16 @@
   "revenue": "महसूल",
   "salesVolume": "विक्रीचे प्रमाण",
   "allTime": "आतापर्यंत",
-  "thisMonth": "हा महिना"
+  "thisMonth": "हा महिना",
+  "Welcome back": "पुन्हा स्वागत आहे",
+  "Owner Dashboard": "मालक डॅशबोर्ड",
+  "Worker Dashboard": "कामगार डॅशबोर्ड",
+  "Syncing...": "सिंक होत आहे...",
+  "Sync Now": "सिंक करा",
+  "Recent Collections": "अलीकडील संकलन",
+  "My Recent Collections": "माझे अलीकडील संकलन",
+  "No recent collections": "कोणतेही अलीकडील संकलन नाही.",
+  "Sale": "विक्री",
+  "Advance": "अॅडव्हान्स",
+  "Final Pay": "अंतिम पे"
 }

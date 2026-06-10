@@ -12,8 +12,9 @@ export default function RecentTransactions({ workerId }: { workerId?: string }) 
   const allBookings = useLiveQuery(() => db.bookings.toArray());
   const allUsers = useLiveQuery(() => db.users.toArray());
   const allPlants = useLiveQuery(() => db.plants.toArray());
+  const allAuditLogs = useLiveQuery(() => db.audit_logs.toArray());
 
-  if (!allSales || !allBookings || !allUsers || !allPlants) {
+  if (!allSales || !allBookings || !allUsers || !allPlants || !allAuditLogs) {
     return (
       <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex justify-center items-center h-32">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600"></div>
@@ -23,7 +24,8 @@ export default function RecentTransactions({ workerId }: { workerId?: string }) 
 
   // Create lookup maps
   const userMap = new Map(allUsers.map(u => [u.id, u.name]));
-  const plantMap = new Map(allPlants.map(p => [p.id, p.plant_name]));
+  const plantMap = new Map(allPlants.map(p => [p.id, p.variety ? `${p.plant_name} - ${p.variety}` : p.plant_name]));
+  const deliveryLogs = new Map(allAuditLogs.filter(l => l.action === 'DELIVER_BOOKING').map(l => [l.record_id, new Date(l.created_at).getTime()]));
 
   // Build unified ledger
   const ledger: any[] = [];
@@ -35,7 +37,7 @@ export default function RecentTransactions({ workerId }: { workerId?: string }) 
       id: sale.id,
       date: new Date(sale.created_at).getTime(),
       displayDate: new Date(sale.created_at).toLocaleString('en-IN', { hour: 'numeric', minute: 'numeric', hour12: true }),
-      title: `Sale: ${plantMap.get(sale.plant_id) || 'Plant'} (x${sale.quantity})`,
+      title: `${t('Sale')}: ${plantMap.get(sale.plant_id) || 'Plant'} (x${sale.quantity})`,
       amount: sale.amount,
       mode: sale.payment_mode,
       worker: userMap.get(sale.worker_id) || 'Unknown Worker',
@@ -52,7 +54,7 @@ export default function RecentTransactions({ workerId }: { workerId?: string }) 
         id: b.id + '_adv',
         date: new Date(dateStr).getTime(),
         displayDate: new Date(dateStr).toLocaleString('en-IN', { hour: 'numeric', minute: 'numeric', hour12: true }),
-        title: `Advance: Booking #${b.booking_number}`,
+        title: `${t('Advance')}: ${t('bookingNo')} #${b.booking_number}`,
         amount: b.advance_paid,
         mode: b.advance_payment_mode || 'Unknown',
         worker: userMap.get(b.worker_id || '') || 'Unknown Worker',
@@ -63,12 +65,19 @@ export default function RecentTransactions({ workerId }: { workerId?: string }) 
     // 3. Bookings (Final Payments upon Delivery)
     if (b.status === 'Delivered' && b.total_amount > (b.advance_paid || 0)) {
        const balance = b.total_amount - (b.advance_paid || 0);
-       const dateStr = b.delivery_date || b.booking_date; // fallback
+       
+       // Priority: exact delivery timestamp from Audit Log > End of delivery day > End of booking day
+       let exactTime = deliveryLogs.get(b.booking_number);
+       if (!exactTime) {
+         const dStr = b.delivery_date || b.booking_date;
+         exactTime = new Date(dStr).setHours(23, 59, 59, 999);
+       }
+       
        ledger.push({
          id: b.id + '_final',
-         date: new Date(dateStr).getTime(),
-         displayDate: new Date(dateStr).toLocaleDateString('en-IN'),
-         title: `Final Pay: Booking #${b.booking_number}`,
+         date: exactTime,
+         displayDate: new Date(exactTime).toLocaleString('en-IN', { hour: 'numeric', minute: 'numeric', hour12: true }),
+         title: `${t('Final Pay')}: ${t('bookingNo')} #${b.booking_number}`,
          amount: balance,
          mode: b.payment_mode || 'Unknown',
          worker: userMap.get(b.worker_id || '') || 'Unknown Worker',
@@ -88,19 +97,20 @@ export default function RecentTransactions({ workerId }: { workerId?: string }) 
   }
 
   return (
-    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-      <div className="p-5 border-b border-gray-50 flex justify-between items-center bg-gray-50/50">
-        <h2 className="font-extrabold text-gray-900 tracking-tight flex items-center gap-2">
-          <Banknote className="w-5 h-5 text-green-600" />
-          {workerId ? "My Recent Collections" : "Recent Collections"}
-        </h2>
+    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden p-5">
+      <div className="flex justify-between items-end mb-4 px-1">
+        <div>
+          <h2 className="text-xl font-black text-gray-900 tracking-tight">
+            {workerId ? t('My Recent Collections') : t('Recent Collections')}
+          </h2>
+          <p className="text-sm font-bold text-gray-500 mt-1">{t('Overview')}</p>
+        </div>
       </div>
 
-      {recentLedger.length === 0 ? (
-        <div className="p-8 text-center text-gray-400 font-medium">
-          No collections found.
-        </div>
-      ) : (
+      <div className="space-y-3">
+        {ledger.length === 0 ? (
+          <p className="text-sm text-gray-500 text-center py-4">{t('No recent collections')}</p>
+        ) : (
         <div className="divide-y divide-gray-100">
           {recentLedger.map((item) => (
             <div key={item.id} className="p-4 flex items-center justify-between hover:bg-gray-50 transition-colors">

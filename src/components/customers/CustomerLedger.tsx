@@ -61,7 +61,10 @@ export default function CustomerLedger() {
     }
   }
 
-  const getPlantName = (id: string) => plants.find(p => p.id === id)?.plant_name || 'Unknown';
+  const getPlantName = (id: string) => {
+    const p = plants.find(p => p.id === id);
+    return p ? (p.variety ? `${p.plant_name} - ${p.variety}` : p.plant_name) : 'Unknown';
+  };
 
   const allCustomers = Object.values(customerMap).sort((a, b) =>
     (b.totalBookingValue + b.totalSalesValue) - (a.totalBookingValue + a.totalSalesValue)

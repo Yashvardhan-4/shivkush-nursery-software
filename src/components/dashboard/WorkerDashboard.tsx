@@ -6,6 +6,8 @@ import { db } from '@/lib/db';
 import { Banknote, PlusCircle, BookOpen, Layers, Leaf } from 'lucide-react';
 import Link from 'next/link';
 import RecentTransactions from './RecentTransactions';
+import { SyncButton } from '@/components/ui/SyncButton';
+import { useLanguage } from '@/lib/i18n/LanguageContext';
 
 export default function WorkerDashboard() {
   const [workerId, setWorkerId] = useState<string | undefined>();
@@ -72,8 +74,14 @@ export default function WorkerDashboard() {
       .filter(item => item.totalStock > 0);
   });
 
+  const { t } = useLanguage();
   return (
     <div className="space-y-6">
+      <header className="flex justify-between items-center mb-2">
+        <h1 className="text-2xl font-black text-gray-900 tracking-tight">{t('Worker Dashboard')}</h1>
+        <SyncButton />
+      </header>
+
       {/* Today's Sales Hero Card */}
       <div className="bg-gradient-to-br from-green-500 to-green-700 p-8 rounded-3xl shadow-xl text-white relative overflow-hidden">
         <div className="absolute top-0 right-0 p-8 opacity-10">

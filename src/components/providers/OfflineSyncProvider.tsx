@@ -1,9 +1,18 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, createContext, useContext } from 'react';
 import { db } from '@/lib/db';
 import { supabase } from '@/lib/supabase';
 import { usePathname } from 'next/navigation';
+
+export const SyncContext = createContext({
+  isSyncing: false,
+  forceSync: async () => {}
+});
+
+export function useSync() {
+  return useContext(SyncContext);
+}
 
 export function OfflineSyncProvider({ children }: { children: React.ReactNode }) {
   const [isOnline, setIsOnline] = useState(true);
@@ -157,13 +166,13 @@ export function OfflineSyncProvider({ children }: { children: React.ReactNode })
   }, [pathname, isOnline]);
 
   return (
-    <>
+    <SyncContext.Provider value={{ isSyncing, forceSync: processSyncQueue }}>
       {!isOnline && (
         <div className="bg-yellow-500 text-white text-center p-1.5 text-sm font-semibold sticky top-0 z-50 w-full shadow-md">
           Offline Mode - Data saved safely on device.
         </div>
       )}
       {children}
-    </>
+    </SyncContext.Provider>
   );
 }

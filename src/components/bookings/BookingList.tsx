@@ -99,7 +99,10 @@ export default function BookingList({ role, userId, userName }: BookingListProps
     );
   }
 
-  const getPlantName = (id: string) => plants.find(p => p.id === id)?.plant_name || 'Unknown Plant';
+  const getPlantName = (id: string) => {
+    const p = plants.find(p => p.id === id);
+    return p ? (p.variety ? `${p.plant_name} - ${p.variety}` : p.plant_name) : 'Unknown Plant';
+  };
 
   // Group bookings by booking_number
   const grouped = bookings.reduce((acc, curr) => {

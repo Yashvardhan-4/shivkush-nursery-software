@@ -66,7 +66,7 @@ export default function NewBookingPage() {
     setCart([...cart, {
       id: crypto.randomUUID(),
       plantId: selectedPlant.id,
-      plantName: selectedPlant.plant_name,
+      plantName: selectedPlant.variety ? `${selectedPlant.plant_name} - ${selectedPlant.variety}` : selectedPlant.plant_name,
       lotId: selectedLot?.id || '',
       lotName: selectedLot?.lot_number || 'Any Lot',
       quantity: qty,
@@ -265,7 +265,7 @@ export default function NewBookingPage() {
             <select value={plantId} onChange={e => { setPlantId(e.target.value); setLotId(''); }} className="w-full p-4 bg-white border border-blue-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold text-lg text-blue-900">
               <option value="">Choose plant...</option>
               {plants?.map(p => (
-                <option key={p.id} value={p.id}>{p.plant_name} (₹{p.selling_price})</option>
+                <option key={p.id} value={p.id}>{p.variety ? `${p.plant_name} - ${p.variety}` : p.plant_name} (₹{p.selling_price})</option>
               ))}
             </select>
           </div>
