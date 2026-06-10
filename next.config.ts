@@ -1,6 +1,5 @@
 import type { NextConfig } from "next";
 
-// @ts-expect-error
 import withPWAInit from "@ducanh2912/next-pwa";
 
 const withPWA = withPWAInit({
@@ -10,9 +9,6 @@ const withPWA = withPWAInit({
   reloadOnOnline: true,
 
   disable: process.env.NODE_ENV === "development",
-  workboxOptions: {
-    disableDevLogs: true,
-  },
 });
 
 const nextConfig: NextConfig = {

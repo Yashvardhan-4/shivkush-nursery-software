@@ -103,7 +103,7 @@ export default function RecentTransactions({ workerId }: { workerId?: string }) 
           <h2 className="text-xl font-black text-gray-900 tracking-tight">
             {workerId ? t('My Recent Collections') : t('Recent Collections')}
           </h2>
-          <p className="text-sm font-bold text-gray-500 mt-1">{t('Overview')}</p>
+          <p className="text-sm font-bold text-gray-500 mt-1">{t('overview')}</p>
         </div>
       </div>
 
@@ -140,6 +140,7 @@ export default function RecentTransactions({ workerId }: { workerId?: string }) 
           ))}
         </div>
       )}
+      </div>
     </div>
   );
 }

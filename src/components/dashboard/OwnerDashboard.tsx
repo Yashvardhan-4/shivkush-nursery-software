@@ -17,7 +17,7 @@ import {
   Users
 } from 'lucide-react';
 import Link from 'next/link';
-import { RecentTransactions } from './RecentTransactions';
+import RecentTransactions from './RecentTransactions';
 import { SyncButton } from '@/components/ui/SyncButton';
 
 function fmt(n: number) {
