@@ -190,6 +190,14 @@ export default function BookingList({ role, userId, userName }: BookingListProps
       const row = await db.bookings.get(id);
       if (!row) return;
       await db.bookings.update(row.id, { status: 'Cancelled', sync_status: 'pending' });
+
+      // Release allotments so lot inventory is freed (Fix #006)
+      const rowAllotments = await db.allotments.where('booking_id').equals(id).toArray();
+      for (const a of rowAllotments) {
+        await db.allotments.delete(a.id);
+        await db.sync_queue.add({ table: 'allotments', action: 'DELETE', payload: { id: a.id }, created_at: Date.now() });
+      }
+
       await logAudit(userId, userName, 'CANCEL_BOOKING', 'bookings', row.id, {
         booking_number: row.booking_number,
         customer_name: row.customer_name,
@@ -204,6 +212,7 @@ export default function BookingList({ role, userId, userName }: BookingListProps
       setActionLoading(null);
     }
   }
+
 
   function openDeliveryModal(grp: any) {
     const pendingItems = grp.items.filter((i: any) => i.status !== 'Delivered' && i.status !== 'Cancelled');

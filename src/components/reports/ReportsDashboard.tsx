@@ -158,8 +158,28 @@ function ReconciliationTab() {
   // ── 3. Bookings Created Today (Advance) ──
   const newBookings = bookingsRaw.filter(b => b.created_at && toLocalDateStr(b.created_at) === todayStr);
 
-  const dsCash = sales.reduce((sum, s) => sum + (s.payment_mode === 'Cash' ? s.amount : s.payment_mode === 'Split' ? (s.cash_amount || 0) : 0), 0);
-  const dsUpi = sales.reduce((sum, s) => sum + (s.payment_mode === 'UPI' ? s.amount : s.payment_mode === 'Split' ? (s.upi_amount || 0) : 0), 0);
+  // Group by sale_number FIRST so that Split-payment multi-item sales only contribute
+  // cash_amount / upi_amount once.  Each row for the same sale stores the *whole-sale*
+  // split amounts (not per-item), so summing row-by-row would multiply them by item count.
+  const salesBySaleNumber = sales.reduce((groups, s) => {
+    if (!groups[s.sale_number]) groups[s.sale_number] = [];
+    groups[s.sale_number].push(s);
+    return groups;
+  }, {} as Record<string, typeof sales>);
+
+  const dsCash = Object.values(salesBySaleNumber).reduce((sum, group) => {
+    const first = group[0];
+    if (first.payment_mode === 'Cash') return sum + group.reduce((s, item) => s + item.amount, 0);
+    if (first.payment_mode === 'Split') return sum + (first.cash_amount || 0);
+    return sum; // UPI — no cash contribution
+  }, 0);
+
+  const dsUpi = Object.values(salesBySaleNumber).reduce((sum, group) => {
+    const first = group[0];
+    if (first.payment_mode === 'UPI') return sum + group.reduce((s, item) => s + item.amount, 0);
+    if (first.payment_mode === 'Split') return sum + (first.upi_amount || 0);
+    return sum; // Cash — no UPI contribution
+  }, 0);
 
   const delCash = deliveredBookings.reduce((sum, b) => {
     if (b.payment_mode === 'Cash') return sum + Math.max(0, b.total_amount - (b.advance_paid || 0));

@@ -39,6 +39,10 @@ export default function OwnerDashboard() {
     return all.filter(p => p.active);
   });
 
+  // Today's cash-in-hand = direct sales collected today
+  //   + balance collected at delivery today (total_amount - advance_paid)
+  // Advances are NOT added separately — they're already captured on booking day
+  // via direct entries into cash. Adding them here would double-count.
   const todaySalesTotal = (allSales && allBookings)
     ? allSales
         .filter((s) => s.created_at && toLocalDateStr(s.created_at) === todayStr)
@@ -46,9 +50,6 @@ export default function OwnerDashboard() {
       + allBookings
         .filter((b) => b.delivery_date === todayStr && b.status === 'Delivered')
         .reduce((sum, b) => sum + Math.max(0, Number(b.total_amount || 0) - Number(b.advance_paid || 0)), 0)
-      + allBookings
-        .filter((b) => (b.created_at && toLocalDateStr(b.created_at) === todayStr) || (!b.created_at && b.booking_date === todayStr))
-        .reduce((sum, b) => sum + Number(b.advance_paid || 0), 0)
     : null;
 
   const pendingBookingsCount = allBookings

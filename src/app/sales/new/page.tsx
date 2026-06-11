@@ -11,6 +11,8 @@ interface CartItem {
   id: string;
   plantId: string;
   plantName: string;
+  lotId: string;
+  lotNumber: string;
   quantity: number;
   price: number;
   amount: number;
@@ -36,6 +38,7 @@ export default function NewDirectSalePage() {
   
   // Current Item State
   const [plantId, setPlantId] = useState('');
+  const [selectedLotId, setSelectedLotId] = useState('');
   const [quantity, setQuantity] = useState('');
   
   const [paymentMode, setPaymentMode] = useState<'Cash' | 'UPI' | 'Split'>('Cash');
@@ -51,6 +54,16 @@ export default function NewDirectSalePage() {
   const bookings = useLiveQuery(() => db.bookings.toArray());
   const existingSales = useLiveQuery(() => db.direct_sales.toArray());
   const customers = useLiveQuery(() => db.customers.toArray());
+
+  // Auto-select first available lot (FIFO) when plant changes
+  useEffect(() => {
+    if (!plantId) { setSelectedLotId(''); return; }
+    const lotsData = lots || [];
+    const first = lotsData
+      .filter(l => l.plant_id === plantId && l.status !== 'Completed')
+      .sort((a, b) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime())[0];
+    setSelectedLotId(first?.id || '');
+  }, [plantId, lots]);
 
   const selectedPlant = plants?.find(p => p.id === plantId);
 
@@ -76,64 +89,59 @@ export default function NewDirectSalePage() {
     }
   };
 
-  // Compute freeStock for a given plantId using all loaded data
+  // Total free stock across all lots for a plant (for dropdown badge)
   const computeFreeStock = (pid: string): number => {
-    if (!lots || !allotments || !bookings || !existingSales) return 0;
-
-    const totalStock = lots
-      .filter(l => l.plant_id === pid)
-      .reduce((s, l) => s + l.total_quantity, 0);
-
-    const plantBookingIds = new Set(
-      bookings
-        .filter(b => b.plant_id === pid && b.status !== 'Delivered' && b.status !== 'Cancelled')
-        .map(b => b.id)
+    if (!lots || !allotments || !bookings) return 0;
+    const activeBookingIds = new Set(
+      bookings.filter(b => b.plant_id === pid && b.status !== 'Delivered' && b.status !== 'Cancelled').map(b => b.id)
     );
-    const allottedQty = allotments
-      .filter(a => plantBookingIds.has(a.booking_id))
-      .reduce((s, a) => s + a.quantity, 0);
-
-    // Also subtract already-in-cart qty for this plant
-    const cartQty = cart
-      .filter(item => item.plantId === pid)
-      .reduce((s, item) => s + item.quantity, 0);
-
+    const allottedQty = allotments.filter(a => activeBookingIds.has(a.booking_id)).reduce((s, a) => s + a.quantity, 0);
+    const totalStock = lots.filter(l => l.plant_id === pid && l.status !== 'Completed').reduce((s, l) => s + l.total_quantity, 0);
+    const cartQty = cart.filter(i => i.plantId === pid).reduce((s, i) => s + i.quantity, 0);
     return Math.max(0, totalStock - allottedQty - cartQty);
   };
 
-  // Get freeStock for the selected plant (for display in qty section)
-  const selectedFreeStock = plantId ? computeFreeStock(plantId) : null;
+  // Per-lot free stock: respects allotments — the CORRECT formula
+  const computeFreeStockForLot = (lotId: string, pid: string): number => {
+    if (!lots || !allotments || !bookings) return 0;
+    const lot = lots.find(l => l.id === lotId);
+    if (!lot) return 0;
+    const activeBookingIds = new Set(
+      bookings.filter(b => b.plant_id === pid && b.status !== 'Delivered' && b.status !== 'Cancelled').map(b => b.id)
+    );
+    const allottedInLot = allotments
+      .filter(a => a.lot_id === lotId && activeBookingIds.has(a.booking_id))
+      .reduce((s, a) => s + a.quantity, 0);
+    const cartQty = cart.filter(i => i.lotId === lotId).reduce((s, i) => s + i.quantity, 0);
+    return Math.max(0, lot.total_quantity - allottedInLot - cartQty);
+  };
+
+  const selectedFreeStock = (plantId && selectedLotId) ? computeFreeStockForLot(selectedLotId, plantId) : null;
 
   const handleAddToCart = () => {
-    if (!selectedPlant || !quantity) return;
-    
+    if (!selectedPlant || !quantity || !selectedLotId) return;
     const qty = parseInt(quantity);
     if (isNaN(qty) || qty <= 0) return;
 
-    const freeStock = computeFreeStock(selectedPlant.id);
+    const freeStock = computeFreeStockForLot(selectedLotId, selectedPlant.id);
     if (qty > freeStock) {
-      const plantBookingIds = new Set(
-        bookings?.filter(b => b.plant_id === selectedPlant.id && b.status !== 'Delivered' && b.status !== 'Cancelled').map(b => b.id) || []
-      );
-      const allottedQty = allotments?.filter(a => plantBookingIds.has(a.booking_id)).reduce((s, a) => s + a.quantity, 0) || 0;
-      alert(
-        `Only ${freeStock} plants are free to sell. ${allottedQty > 0 ? allottedQty + ' are reserved for bookings.' : 'Stock limit reached.'}`
-      );
+      const lot = lots?.find(l => l.id === selectedLotId);
+      alert(`Only ${freeStock} plants free in lot ${lot?.lot_number || ''}. Some are reserved for bookings.`);
       return;
     }
 
+    const lot = lots?.find(l => l.id === selectedLotId);
     const price = selectedPlant.selling_price || 0;
-    
     setCart([...cart, {
       id: generateId(),
       plantId: selectedPlant.id,
       plantName: selectedPlant.variety ? `${selectedPlant.plant_name} - ${selectedPlant.variety}` : selectedPlant.plant_name,
+      lotId: selectedLotId,
+      lotNumber: lot?.lot_number || '',
       quantity: qty,
-      price: price,
+      price,
       amount: price * qty
     }]);
-
-    // Reset current item
     setPlantId('');
     setQuantity('');
   };
@@ -191,6 +199,7 @@ export default function NewDirectSalePage() {
       customer_name: customerName || undefined,
       customer_phone: customerPhone || undefined,
       plant_id: item.plantId,
+      lot_id: item.lotId,
       quantity: item.quantity,
       amount: item.amount,
       payment_mode: paymentMode,
@@ -214,45 +223,18 @@ export default function NewDirectSalePage() {
     }
 
     await db.direct_sales.bulkAdd(newSales);
-    
     for (const s of newSales) {
-      await db.sync_queue.add({
-        table: 'direct_sales',
-        action: 'INSERT',
-        payload: s,
-        created_at: Date.now()
-      });
+      await db.sync_queue.add({ table: 'direct_sales', action: 'INSERT', payload: s, created_at: Date.now() });
     }
 
-    // Deduct sold quantities from active lots
+    // Deduct sold qty directly from the chosen lot — allotment-aware, no blind FIFO
     for (const item of cart) {
-      let qtyToDeduct = item.quantity;
-      const activeLots = await db.lots
-        .filter(l => l.plant_id === item.plantId && l.status !== 'Completed')
-        .toArray();
-
-      activeLots.sort((a, b) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime());
-
-      for (const lot of activeLots) {
-        if (qtyToDeduct <= 0) break;
-        if (lot.total_quantity <= 0) continue;
-
-        const deductAmount = Math.min(lot.total_quantity, qtyToDeduct);
-        lot.total_quantity -= deductAmount;
-        qtyToDeduct -= deductAmount;
-
-        if (lot.total_quantity <= 0) {
-          lot.status = 'Completed';
-        }
-
-        await db.lots.put(lot);
-        await db.sync_queue.add({
-          table: 'lots',
-          action: 'UPDATE',
-          payload: lot,
-          created_at: Date.now()
-        });
-      }
+      const lot = await db.lots.get(item.lotId);
+      if (!lot) continue;
+      lot.total_quantity = Math.max(0, lot.total_quantity - item.quantity);
+      if (lot.total_quantity === 0) lot.status = 'Completed';
+      await db.lots.put(lot);
+      await db.sync_queue.add({ table: 'lots', action: 'UPDATE', payload: lot, created_at: Date.now() });
     }
 
     // Audit log for the entire sale
@@ -329,7 +311,7 @@ export default function NewDirectSalePage() {
           <div className="space-y-2">
             <select value={plantId} onChange={e => { setPlantId(e.target.value); setQuantity(''); }} className="w-full p-4 bg-white border border-green-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-bold text-lg text-green-900">
               <option value="">{t('choosePlantPlaceholder')}</option>
-              {plants?.map(p => {
+              {plants?.filter(p => p.active !== false).map(p => {
                 const fs = computeFreeStock(p.id);
                 return (
                   <option key={p.id} value={p.id}>
@@ -342,8 +324,33 @@ export default function NewDirectSalePage() {
 
           {plantId && (
             <div className="space-y-2">
-              {/* Free stock indicator */}
-              {selectedFreeStock !== null && (
+              {/* Lot selector */}
+              {lots && lots.filter(l => l.plant_id === plantId && l.status !== 'Completed').length > 0 ? (
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-green-700 uppercase">Source Lot</label>
+                  <select
+                    value={selectedLotId}
+                    onChange={e => setSelectedLotId(e.target.value)}
+                    className="w-full p-3 bg-white border border-green-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-bold text-green-900 text-sm"
+                  >
+                    {lots
+                      .filter(l => l.plant_id === plantId && l.status !== 'Completed')
+                      .sort((a, b) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime())
+                      .map(l => {
+                        const free = computeFreeStockForLot(l.id, plantId);
+                        return (
+                          <option key={l.id} value={l.id}>
+                            {l.lot_number} — {free} free{free <= 0 ? ' (fully reserved)' : ''}
+                          </option>
+                        );
+                      })}
+                  </select>
+                </div>
+              ) : (
+                <p className="text-sm font-bold text-red-600 text-center py-2">No active lots for this plant</p>
+              )}
+              {/* Per-lot free stock indicator */}
+              {selectedLotId && selectedFreeStock !== null && (
                 <div className={`flex items-center justify-between px-4 py-2 rounded-xl text-sm font-bold ${selectedFreeStock > 0 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
                   <span>{t('availableToSell')}</span>
                   <span className="text-lg font-black">{selectedFreeStock}</span>
@@ -362,7 +369,7 @@ export default function NewDirectSalePage() {
                 <button
                   type="button"
                   onClick={handleAddToCart}
-                  disabled={!quantity || (selectedFreeStock !== null && selectedFreeStock <= 0)}
+                  disabled={!quantity || !selectedLotId || (selectedFreeStock !== null && selectedFreeStock <= 0)}
                   className="w-1/3 bg-green-600 text-white rounded-xl font-black flex items-center justify-center disabled:opacity-50 active:scale-95 transition-transform"
                 >
                   {t('add')}
@@ -384,7 +391,7 @@ export default function NewDirectSalePage() {
                 <div key={item.id} className="flex justify-between items-center bg-gray-50 p-3 rounded-xl border border-gray-100">
                   <div>
                     <p className="font-bold text-gray-900">{item.plantName}</p>
-                    <p className="text-xs font-semibold text-gray-500">{item.quantity} x ₹{item.price}</p>
+                    <p className="text-xs font-semibold text-gray-500">{item.quantity} × ₹{item.price} · {item.lotNumber}</p>
                   </div>
                   <div className="flex items-center space-x-4">
                     <span className="font-black text-gray-900">₹{item.amount}</span>

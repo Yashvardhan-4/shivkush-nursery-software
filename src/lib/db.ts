@@ -83,6 +83,7 @@ export interface DirectSale {
   customer_name?: string;
   customer_phone?: string;
   plant_id: string;
+  lot_id?: string | null;   // which lot the plants came from (Fix #002)
   quantity: number;
   amount: number;
   payment_mode: 'Cash' | 'UPI' | 'Split';
@@ -148,6 +149,20 @@ db.version(4).stores({
   bookings: 'id, booking_number, customer_name, customer_phone, plant_id, lot_id, status, sync_status, created_at',
   allotments: 'id, booking_id, lot_id, sync_status',
   direct_sales: 'id, sale_number, plant_id, sync_status, created_at',
+  attendance: 'id, worker_id, date, status',
+  audit_logs: '++id, user_id, action, table_name, record_id, created_at',
+  sync_queue: '++id, table, action, created_at'
+});
+
+// Version 5: Added lot_id index to direct_sales (Fix #002 — inventory accuracy)
+db.version(5).stores({
+  plants: 'id, plant_name, variety, category, active',
+  lots: 'id, lot_number, plant_id, status',
+  customers: 'id, mobile, name',
+  users: 'id, name, role',
+  bookings: 'id, booking_number, customer_name, customer_phone, plant_id, lot_id, status, sync_status, created_at',
+  allotments: 'id, booking_id, lot_id, sync_status',
+  direct_sales: 'id, sale_number, plant_id, lot_id, sync_status, created_at',
   attendance: 'id, worker_id, date, status',
   audit_logs: '++id, user_id, action, table_name, record_id, created_at',
   sync_queue: '++id, table, action, created_at'
