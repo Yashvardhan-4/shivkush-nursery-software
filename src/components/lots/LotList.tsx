@@ -12,6 +12,7 @@ export default function LotList() {
   const plants = useLiveQuery(() => db.plants.toArray());
   const allotments = useLiveQuery(() => db.allotments.toArray());
   const sales = useLiveQuery(() => db.direct_sales.toArray());
+  const bookings = useLiveQuery(() => db.bookings.toArray());
 
   const handleMarkReady = async (lotId: string) => {
     try {
@@ -37,7 +38,7 @@ export default function LotList() {
     }
   };
 
-  if (!lots || !plants || !allotments || !sales) {
+  if (!lots || !plants || !allotments || !sales || !bookings) {
     return <div className="p-4 text-center text-gray-500 font-medium">Loading lots...</div>;
   }
 
@@ -53,8 +54,14 @@ export default function LotList() {
   const sortedLots = [...lots].sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
   const lotSoldQtyMap: Record<string, number> = {};
   
+  const activeBookingIds = new Set(
+    bookings.filter(b => b.status !== 'Delivered' && b.status !== 'Cancelled').map(b => b.id)
+  );
+
   sortedLots.forEach(lot => {
-    const allottedQty = allotments.filter(a => a.lot_id === lot.id).reduce((sum, a) => sum + a.quantity, 0);
+    const allottedQty = allotments
+      .filter(a => a.lot_id === lot.id && activeBookingIds.has(a.booking_id))
+      .reduce((sum, a) => sum + a.quantity, 0);
     const unallotted = lot.total_quantity - allottedQty;
     
     let salesToDeduct = 0;
@@ -96,7 +103,7 @@ export default function LotList() {
 
           // Allotted to bookings for this specific lot
           const allottedQty = allotments
-            .filter(a => a.lot_id === lot.id)
+            .filter(a => a.lot_id === lot.id && activeBookingIds.has(a.booking_id))
             .reduce((sum, a) => sum + a.quantity, 0);
 
           // FIFO apportioned direct sales
@@ -156,7 +163,7 @@ export default function LotList() {
 
                 <div className="grid grid-cols-4 gap-2 bg-gray-50 p-3 rounded-xl">
                   <div className="text-center">
-                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest">Total</p>
+                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest">Stock</p>
                     <p className="font-black text-gray-900 text-lg">{lot.total_quantity}</p>
                   </div>
                   <div className="text-center border-l border-gray-200">

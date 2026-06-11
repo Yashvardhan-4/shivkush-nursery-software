@@ -71,6 +71,25 @@ function StatusBadge({ status }: { status: string }) {
 // ──────────────────────────────────────────────
 // Per-Item Allotment Row
 // ──────────────────────────────────────────────
+// ──────────────────────────────────────────────
+// Helpers
+// ──────────────────────────────────────────────
+function getAvailableInLot(lotId: string, lots: Lot[], allotments: Allotment[], bookings: Booking[]): number {
+  const lot = lots.find((l) => l.id === lotId);
+  if (!lot) return 0;
+  const used = allotments
+    .filter((a) => {
+      if (a.lot_id !== lotId) return false;
+      const b = bookings.find(b => b.id === a.booking_id);
+      return b && b.status !== 'Delivered' && b.status !== 'Cancelled';
+    })
+    .reduce((sum, a) => sum + a.quantity, 0);
+  return Math.max(0, lot.total_quantity - used);
+}
+
+// ──────────────────────────────────────────────
+// Per-Item Allotment Row
+// ──────────────────────────────────────────────
 function AllotmentRow({
   booking,
   bookings,
@@ -91,23 +110,142 @@ function AllotmentRow({
 
   const plant = plants.find((p) => p.id === booking.plant_id);
   const eligibleLots = lots.filter((l) => l.plant_id === booking.plant_id && l.status !== 'Completed');
+  const hasStock = eligibleLots.some(lot => getAvailableInLot(lot.id, lots, allotments, bookings) > 0);
 
-  // Available qty in a lot = total - sum of allotments for that lot
   function availableInLot(lotId: string): number {
-    const lot = lots.find((l) => l.id === lotId);
-    if (!lot) return 0;
-    const used = allotments
-      .filter((a) => {
-        if (a.lot_id !== lotId) return false;
-        const b = bookings.find(b => b.id === a.booking_id);
-        return b && b.status !== 'Delivered' && b.status !== 'Cancelled';
-      })
-      .reduce((sum, a) => sum + a.quantity, 0);
-    return Math.max(0, lot.total_quantity - used);
+    return getAvailableInLot(lotId, lots, allotments, bookings);
   }
 
   const selectedLot = lots.find((l) => l.id === selectedLotId);
   const available = selectedLotId ? availableInLot(selectedLotId) : null;
+
+  async function handleRelease() {
+    if (!confirm('Are you sure you want to release this allotment? The booking status will return to Pending.')) return;
+    setLoading(true);
+    setError('');
+    try {
+      const user = getUser();
+      const allotment = allotments.find((a) => a.booking_id === booking.id);
+
+      // 1. Delete allotment record
+      if (allotment) {
+        await db.allotments.delete(allotment.id);
+        await db.sync_queue.add({
+          table: 'allotments',
+          action: 'DELETE',
+          payload: { id: allotment.id },
+          created_at: Date.now(),
+        });
+      }
+
+      // 2. Reset booking status to Pending
+      await db.bookings.update(booking.id, {
+        status: 'Pending',
+        lot_id: null,
+        sync_status: 'pending',
+      });
+      await db.sync_queue.add({
+        table: 'bookings',
+        action: 'UPDATE',
+        payload: { ...booking, status: 'Pending', lot_id: null, sync_status: undefined },
+        created_at: Date.now(),
+      });
+
+      // 3. Audit log
+      await logAudit(
+        user.id || 'owner',
+        user.name || 'Owner',
+        'RELEASE_ALLOTMENT',
+        'allotments',
+        allotment?.id || booking.id,
+        { booking_id: booking.id, lot_id: booking.lot_id }
+      );
+    } catch (e: any) {
+      setError(e.message || 'Failed to release allotment.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleAutoAllotItem() {
+    setError('');
+    const sortedEligibleLots = [...eligibleLots].sort(
+      (a, b) => new Date(a.ready_date).getTime() - new Date(b.ready_date).getTime()
+    );
+
+    const bestLot = sortedEligibleLots.find(lot => {
+      const avail = getAvailableInLot(lot.id, lots, allotments, bookings);
+      return avail >= booking.quantity;
+    }) || sortedEligibleLots.find(lot => {
+      const avail = getAvailableInLot(lot.id, lots, allotments, bookings);
+      return avail > 0;
+    });
+
+    if (!bestLot) {
+      setError('No stock available in any lot for this plant.');
+      return;
+    }
+
+    const avail = getAvailableInLot(bestLot.id, lots, allotments, bookings);
+    const allotQty = Math.min(booking.quantity, avail);
+
+    setLoading(true);
+    try {
+      const user = getUser();
+      const newId = generateId();
+      const now = new Date().toISOString();
+
+      await db.allotments.add({
+        id: newId,
+        booking_id: booking.id,
+        lot_id: bestLot.id,
+        quantity: allotQty,
+        allotted_by: user.id || 'owner',
+        allotted_at: now,
+        sync_status: 'pending',
+      });
+
+      await db.bookings.update(booking.id, {
+        status: 'Allocated',
+        lot_id: bestLot.id,
+        sync_status: 'pending',
+      });
+
+      await db.sync_queue.add({
+        table: 'allotments',
+        action: 'INSERT',
+        payload: {
+          id: newId,
+          booking_id: booking.id,
+          lot_id: bestLot.id,
+          quantity: allotQty,
+          allotted_by: user.id || 'owner',
+          allotted_at: now,
+        },
+        created_at: Date.now(),
+      });
+
+      await db.sync_queue.add({
+        table: 'bookings',
+        action: 'UPDATE',
+        payload: { ...booking, status: 'Allocated', lot_id: bestLot.id, sync_status: undefined },
+        created_at: Date.now(),
+      });
+
+      await logAudit(
+        user.id || 'owner',
+        user.name || 'Owner',
+        'ALLOT_BOOKING',
+        'allotments',
+        newId,
+        { booking_id: booking.id, lot_id: bestLot.id, quantity: allotQty }
+      );
+    } catch (e: any) {
+      setError(e.message || 'Failed to auto-allot.');
+    } finally {
+      setLoading(false);
+    }
+  }
 
   async function handleAllot() {
     setError('');
@@ -184,6 +322,8 @@ function AllotmentRow({
   if (booking.status !== 'Pending') {
     const allotment = allotments.find((a) => a.booking_id === booking.id);
     const allottedLot = lots.find((l) => l.id === (allotment?.lot_id ?? booking.lot_id));
+    const showRelease = booking.status === 'Allocated' || booking.status === 'Ready';
+
     return (
       <div className="rounded-xl bg-gray-50/40 border border-gray-200/50 p-3 flex items-center justify-between gap-3">
         <div className="flex-1 min-w-0">
@@ -198,7 +338,19 @@ function AllotmentRow({
             </p>
           )}
         </div>
-        <StatusBadge status={booking.status} />
+        <div className="flex items-center gap-2">
+          <StatusBadge status={booking.status} />
+          {showRelease && (
+            <button
+              onClick={handleRelease}
+              disabled={loading}
+              className="px-2.5 py-1.5 bg-red-50 hover:bg-red-100 border border-red-200 text-red-600 rounded-xl text-xs font-black transition-all active:scale-95 shrink-0 flex items-center gap-1"
+              title="Release allotment"
+            >
+              Release
+            </button>
+          )}
+        </div>
       </div>
     );
   }
@@ -214,73 +366,101 @@ function AllotmentRow({
         </span>
       </div>
 
-      {/* Lot selector */}
-      <div className="space-y-2">
-        <label className="text-[10px] font-black uppercase tracking-widest text-gray-500">
-          Select Lot
-        </label>
-        <div className="relative">
-          <select
-            value={selectedLotId}
-            onChange={(e) => { setSelectedLotId(e.target.value); setError(''); }}
-            className="w-full bg-white border border-gray-200 text-gray-900 text-sm font-semibold rounded-xl px-3 py-2.5 pr-8 appearance-none outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/40 transition-all"
-          >
-            <option value="">— Pick a lot —</option>
-            {eligibleLots.map((lot) => {
-              const avail = availableInLot(lot.id);
-              return (
-                <option key={lot.id} value={lot.id} disabled={avail === 0}>
-                  {lot.lot_number} · {lot.status} · {avail} available
-                </option>
-              );
-            })}
-          </select>
-          <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none" />
-        </div>
-
-        {selectedLotId && (
-          <p className="text-xs font-bold text-blue-400 flex items-center gap-1.5">
-            <CalendarDays className="w-3 h-3" />
-            Ready: {selectedLot?.ready_date ?? 'N/A'} ·{' '}
-            <span className={available === 0 ? 'text-red-400' : 'text-emerald-600'}>
-              {available} available
-            </span>
+      {!hasStock ? (
+        <div className="rounded-xl bg-red-50 border border-red-200 p-3 flex flex-col gap-2">
+          <p className="text-xs font-bold text-red-700 flex items-center gap-1.5">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            No growing/ready stock available for this plant!
           </p>
-        )}
-      </div>
-
-      {/* Quantity input */}
-      <div className="space-y-1.5">
-        <label className="text-[10px] font-black uppercase tracking-widest text-gray-500">
-          Allot Quantity
-        </label>
-        <input
-          type="number"
-          min={1}
-          max={available ?? booking.quantity}
-          value={qty}
-          onChange={(e) => { setQty(Number(e.target.value)); setError(''); }}
-          className="w-full bg-white border border-gray-200 text-gray-900 text-sm font-semibold rounded-xl px-3 py-2.5 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/40 transition-all"
-        />
-      </div>
-
-      {/* Error */}
-      {error && (
-        <div className="flex items-center gap-2 text-red-400 text-xs font-bold bg-red-900/20 border border-red-700/30 rounded-lg px-3 py-2">
-          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-          {error}
+          <a
+            href="/lots/new"
+            className="text-xs text-center font-black text-white bg-red-600 hover:bg-red-700 py-1.5 px-3 rounded-lg active:scale-95 transition-all animate-pulse"
+          >
+            + Create New Lot
+          </a>
         </div>
-      )}
+      ) : (
+        <>
+          {/* Lot selector */}
+          <div className="space-y-2">
+            <div className="flex justify-between items-center">
+              <label className="text-[10px] font-black uppercase tracking-widest text-gray-500">
+                Select Lot
+              </label>
+              {eligibleLots.length > 0 && (
+                <button
+                  onClick={handleAutoAllotItem}
+                  disabled={loading}
+                  className="text-[10px] font-black uppercase tracking-wider text-amber-600 hover:text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-lg flex items-center gap-1 active:scale-95 transition-all"
+                >
+                  ⚡ Auto
+                </button>
+              )}
+            </div>
+            <div className="relative">
+              <select
+                value={selectedLotId}
+                onChange={(e) => { setSelectedLotId(e.target.value); setError(''); }}
+                className="w-full bg-white border border-gray-200 text-gray-900 text-sm font-semibold rounded-xl px-3 py-2.5 pr-8 appearance-none outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/40 transition-all"
+              >
+                <option value="">— Pick a lot —</option>
+                {eligibleLots.map((lot) => {
+                  const avail = availableInLot(lot.id);
+                  return (
+                    <option key={lot.id} value={lot.id} disabled={avail === 0}>
+                      {lot.lot_number} · {lot.status} · {avail} available
+                    </option>
+                  );
+                })}
+              </select>
+              <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none" />
+            </div>
 
-      {/* Allot button */}
-      <button
-        onClick={handleAllot}
-        disabled={loading}
-        className="w-full bg-amber-500 hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed text-gray-950 font-black text-sm py-2.5 rounded-xl transition-all active:scale-95 shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2"
-      >
-        <CheckCircle2 className="w-4 h-4" />
-        {loading ? 'Allotting…' : 'Allot to Booking'}
-      </button>
+            {selectedLotId && (
+              <p className="text-xs font-bold text-blue-400 flex items-center gap-1.5">
+                <CalendarDays className="w-3 h-3" />
+                Ready: {selectedLot?.ready_date ?? 'N/A'} ·{' '}
+                <span className={available === 0 ? 'text-red-400' : 'text-emerald-600'}>
+                  {available} available
+                </span>
+              </p>
+            )}
+          </div>
+
+          {/* Quantity input */}
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-black uppercase tracking-widest text-gray-500">
+              Allot Quantity
+            </label>
+            <input
+              type="number"
+              min={1}
+              max={available ?? booking.quantity}
+              value={qty}
+              onChange={(e) => { setQty(Number(e.target.value)); setError(''); }}
+              className="w-full bg-white border border-gray-200 text-gray-900 text-sm font-semibold rounded-xl px-3 py-2.5 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/40 transition-all"
+            />
+          </div>
+
+          {/* Error */}
+          {error && (
+            <div className="flex items-center gap-2 text-red-400 text-xs font-bold bg-red-900/20 border border-red-700/30 rounded-lg px-3 py-2">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+              {error}
+            </div>
+          )}
+
+          {/* Allot button */}
+          <button
+            onClick={handleAllot}
+            disabled={loading}
+            className="w-full bg-amber-500 hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed text-gray-950 font-black text-sm py-2.5 rounded-xl transition-all active:scale-95 shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2"
+          >
+            <CheckCircle2 className="w-4 h-4" />
+            {loading ? 'Allotting…' : 'Allot to Booking'}
+          </button>
+        </>
+      )}
     </div>
   );
 }
@@ -301,12 +481,94 @@ function BookingCard({
   allotments: Allotment[];
   plants: Plant[];
 }) {
-  const router = useRouter();
+  const [autoLoading, setAutoLoading] = useState(false);
+  const [autoError, setAutoError] = useState('');
 
   const balanceDue = group.total_amount - group.total_advance;
+  const hasPending = group.items.some((i) => i.status === 'Pending');
 
-  // Only show "Mark as Delivered" if ALL items are Allocated (not yet Delivered)
-  const canDeliver = group.items.every((i) => i.status === 'Allocated');
+  async function handleAutoAllotOrder() {
+    setAutoError('');
+    const pendingItems = group.items.filter(item => item.status === 'Pending');
+    if (pendingItems.length === 0) return;
+
+    setAutoLoading(true);
+    try {
+      const user = getUser();
+      const now = new Date().toISOString();
+
+      for (const booking of pendingItems) {
+        const eligibleLots = lots.filter((l) => l.plant_id === booking.plant_id && l.status !== 'Completed');
+        const sortedEligibleLots = [...eligibleLots].sort(
+          (a, b) => new Date(a.ready_date).getTime() - new Date(b.ready_date).getTime()
+        );
+
+        const bestLot = sortedEligibleLots.find(lot => {
+          const avail = getAvailableInLot(lot.id, lots, allotments, bookings);
+          return avail >= booking.quantity;
+        }) || sortedEligibleLots.find(lot => {
+          const avail = getAvailableInLot(lot.id, lots, allotments, bookings);
+          return avail > 0;
+        });
+
+        if (!bestLot) continue;
+
+        const avail = getAvailableInLot(bestLot.id, lots, allotments, bookings);
+        const allotQty = Math.min(booking.quantity, avail);
+        const newId = generateId();
+
+        await db.allotments.add({
+          id: newId,
+          booking_id: booking.id,
+          lot_id: bestLot.id,
+          quantity: allotQty,
+          allotted_by: user.id || 'owner',
+          allotted_at: now,
+          sync_status: 'pending',
+        });
+
+        await db.bookings.update(booking.id, {
+          status: 'Allocated',
+          lot_id: bestLot.id,
+          sync_status: 'pending',
+        });
+
+        await db.sync_queue.add({
+          table: 'allotments',
+          action: 'INSERT',
+          payload: {
+            id: newId,
+            booking_id: booking.id,
+            lot_id: bestLot.id,
+            quantity: allotQty,
+            allotted_by: user.id || 'owner',
+            allotted_at: now,
+          },
+          created_at: Date.now(),
+        });
+
+        await db.sync_queue.add({
+          table: 'bookings',
+          action: 'UPDATE',
+          payload: { ...booking, status: 'Allocated', lot_id: bestLot.id, sync_status: undefined },
+          created_at: Date.now(),
+        });
+
+        await logAudit(
+          user.id || 'owner',
+          user.name || 'Owner',
+          'ALLOT_BOOKING',
+          'allotments',
+          newId,
+          { booking_id: booking.id, lot_id: bestLot.id, quantity: allotQty }
+        );
+      }
+    } catch (e: any) {
+      setAutoError(e.message || 'Auto-allot failed.');
+    } finally {
+      setAutoLoading(false);
+    }
+  }
 
   // Card accent based on status
   const accentMap: Record<string, string> = {
@@ -349,6 +611,22 @@ function BookingCard({
         </div>
       </div>
 
+      {/* ── Auto Allot Button ── */}
+      {hasPending && (
+        <div className="px-4 pt-3">
+          <button
+            onClick={handleAutoAllotOrder}
+            disabled={autoLoading}
+            className="w-full bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 disabled:opacity-50 text-gray-950 font-black text-xs py-2 rounded-xl transition-all active:scale-95 shadow-md flex items-center justify-center gap-1.5"
+          >
+            ⚡ {autoLoading ? 'Auto-Allotting...' : 'Auto-Allot Order (All Pending)'}
+          </button>
+          {autoError && (
+            <p className="text-[10px] text-red-500 font-bold mt-1 text-center">{autoError}</p>
+          )}
+        </div>
+      )}
+
       {/* ── Items ── */}
       <div className="px-4 pt-3 pb-2 space-y-3">
         {group.items.map((item) => (
@@ -380,27 +658,6 @@ function BookingCard({
           </p>
         </div>
       </div>
-
-      {/* ── Call + Deliver buttons ── */}
-      {canDeliver && (
-        <div className="px-4 pb-4 space-y-2">
-          {/* Call customer before delivery */}
-          <a
-            href={`tel:${group.customer_phone}`}
-            className="w-full bg-blue-600/20 border border-blue-200 text-blue-600 font-black text-sm py-3 rounded-xl transition-all active:scale-95 flex items-center justify-center gap-2"
-          >
-            <Phone className="w-4 h-4" />
-            Call {group.customer_name.split(' ')[0]} — Order Ready!
-          </a>
-          <button
-            onClick={() => router.push('/bookings?search=' + group.booking_number)}
-            className="w-full bg-emerald-600 hover:bg-emerald-500 text-gray-900 font-black text-sm py-3 rounded-xl transition-all active:scale-95 shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-2"
-          >
-            <Truck className="w-4 h-4" />
-            Process Delivery in Bookings
-          </button>
-        </div>
-      )}
     </div>
   );
 }

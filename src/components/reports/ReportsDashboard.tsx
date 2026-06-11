@@ -446,17 +446,24 @@ function LotReportTab() {
   const lots = useLiveQuery(() => db.lots.toArray());
   const plants = useLiveQuery(() => db.plants.toArray());
   const allotments = useLiveQuery(() => db.allotments.toArray());
+  const bookings = useLiveQuery(() => db.bookings.toArray());
 
-  if (!lots || !plants || !allotments) {
+  if (!lots || !plants || !allotments || !bookings) {
     return <LoadingCard />;
   }
 
   const plantMap = new Map(plants.map((p) => [p.id, p]));
 
+  const activeBookingIds = new Set(
+    bookings.filter(b => b.status !== 'Delivered' && b.status !== 'Cancelled').map(b => b.id)
+  );
+
   // Build allotted qty per lot
   const allottedPerLot = new Map<string, number>();
   for (const a of allotments) {
-    allottedPerLot.set(a.lot_id, (allottedPerLot.get(a.lot_id) ?? 0) + a.quantity);
+    if (activeBookingIds.has(a.booking_id)) {
+      allottedPerLot.set(a.lot_id, (allottedPerLot.get(a.lot_id) ?? 0) + a.quantity);
+    }
   }
 
   const statusGroups: Array<{
@@ -527,7 +534,7 @@ function LotReportTab() {
                     <div className="px-5 py-4 grid grid-cols-3 gap-3 text-center">
                       <div>
                         <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
-                          Total
+                          Stock
                         </p>
                         <p className="text-xl font-black text-gray-800 mt-1">
                           {lot.total_quantity}

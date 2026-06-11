@@ -57,7 +57,9 @@ export default function WorkerDashboard() {
 
         // Allotted qty: find bookings for this plant, then sum allotments for those bookings
         const plantBookingIds = new Set(
-          bookings.filter(b => b.plant_id === plant.id).map(b => b.id)
+          bookings
+            .filter(b => b.plant_id === plant.id && b.status !== 'Delivered' && b.status !== 'Cancelled')
+            .map(b => b.id)
         );
         const allottedQty = allotments
           .filter(a => plantBookingIds.has(a.booking_id))

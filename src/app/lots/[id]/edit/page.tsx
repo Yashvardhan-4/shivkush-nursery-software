@@ -24,7 +24,16 @@ export default function EditLotPage({ params }: Props) {
 
   const lot = useLiveQuery(() => db.lots.get(id), [id]);
   const plant = useLiveQuery(() => lot ? db.plants.get(lot.plant_id) : undefined, [lot]);
-  const allotments = useLiveQuery(() => db.allotments.where('lot_id').equals(id).toArray(), [id]);
+  const allotments = useLiveQuery(async () => {
+    const all = await db.allotments.where('lot_id').equals(id).toArray();
+    const bIds = all.map(a => a.booking_id);
+    if (bIds.length === 0) return [];
+    const bookings = await db.bookings.where('id').anyOf(bIds).toArray();
+    const activeBookingIds = new Set(
+      bookings.filter(b => b.status !== 'Delivered' && b.status !== 'Cancelled').map(b => b.id)
+    );
+    return all.filter(a => activeBookingIds.has(a.booking_id));
+  }, [id]);
 
   // Populate form when lot loads
   useEffect(() => {

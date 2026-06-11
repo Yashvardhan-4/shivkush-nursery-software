@@ -60,7 +60,9 @@ export default function NewDirectSalePage() {
       .reduce((s, l) => s + l.total_quantity, 0);
 
     const plantBookingIds = new Set(
-      bookings.filter(b => b.plant_id === pid).map(b => b.id)
+      bookings
+        .filter(b => b.plant_id === pid && b.status !== 'Delivered' && b.status !== 'Cancelled')
+        .map(b => b.id)
     );
     const allottedQty = allotments
       .filter(a => plantBookingIds.has(a.booking_id))
