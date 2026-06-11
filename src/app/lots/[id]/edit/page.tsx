@@ -151,23 +151,19 @@ export default function EditLotPage({ params }: Props) {
         {/* Status — most important, at top for quick update */}
         <div className="space-y-2">
           <label className="text-xs font-black text-gray-500 uppercase tracking-wider">Status</label>
-          <div className="grid grid-cols-3 gap-2">
-            {(['Growing', 'Ready', 'Completed'] as const).map(s => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => setStatus(s)}
-                className={`py-3 rounded-xl font-black text-sm transition-all active:scale-95 ${
-                  status === s
-                    ? s === 'Growing' ? 'bg-yellow-500 text-white shadow-md'
-                      : s === 'Ready' ? 'bg-green-600 text-white shadow-md'
-                      : 'bg-gray-700 text-white shadow-md'
-                    : 'bg-gray-100 text-gray-500'
-                }`}
-              >
-                {s}
-              </button>
-            ))}
+          <div className="relative">
+            <select
+              value={status}
+              onChange={(e) => setStatus(e.target.value as 'Growing' | 'Ready' | 'Completed')}
+              className="w-full p-4 bg-white border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-bold appearance-none text-gray-800"
+            >
+              <option value="Growing">Growing</option>
+              <option value="Ready">Ready</option>
+              <option value="Completed">Completed</option>
+            </select>
+            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-gray-500">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+            </div>
           </div>
         </div>
 

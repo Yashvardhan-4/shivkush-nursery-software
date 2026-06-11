@@ -11,7 +11,9 @@ import {
 
 export default function AnalyticsClient() {
   const { t } = useLanguage();
-  const [timeRange, setTimeRange] = useState<'all' | 'month'>('all');
+  const [timeRange, setTimeRange] = useState<'all' | 'month' | 'custom'>('all');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
 
   const bookings = useLiveQuery(() => db.bookings.toArray());
   const directSales = useLiveQuery(() => db.direct_sales.toArray());
@@ -23,16 +25,27 @@ export default function AnalyticsClient() {
 
   const now = new Date();
 
-  const isCurrentMonth = (dateVal: any) => {
+  const isDateInRange = (dateVal: any) => {
     if (!dateVal) return false;
     const d = new Date(dateVal);
     if (isNaN(d.getTime())) return false;
-    return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+    
+    if (timeRange === 'month') {
+      return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+    } else if (timeRange === 'custom') {
+      if (!startDate || !endDate) return true;
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      start.setHours(0, 0, 0, 0);
+      end.setHours(23, 59, 59, 999);
+      return d >= start && d <= end;
+    }
+    return true; // Fallback for 'all', though filterData handles it
   };
 
   const filterData = (data: any[]) => timeRange === 'all' 
     ? data 
-    : data.filter(d => isCurrentMonth(d.booking_date || d.created_at));
+    : data.filter(d => isDateInRange(d.booking_date || d.created_at));
 
   const filteredBookings = filterData(bookings).filter((b: any) => b.status !== 'Cancelled');
   const filteredSales = filterData(directSales);
@@ -105,19 +118,45 @@ export default function AnalyticsClient() {
   return (
     <div className="space-y-6">
       {/* Time Range Filter */}
-      <div className="flex gap-2 bg-gray-100 p-1 w-max rounded-xl">
-        <button 
-          onClick={() => setTimeRange('all')}
-          className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${timeRange === 'all' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}
-        >
-          {t('allTime')}
-        </button>
-        <button 
-          onClick={() => setTimeRange('month')}
-          className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${timeRange === 'month' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}
-        >
-          {t('thisMonth')}
-        </button>
+      <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
+        <div className="flex gap-2 bg-gray-100 p-1 w-max rounded-xl">
+          <button 
+            onClick={() => setTimeRange('all')}
+            className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${timeRange === 'all' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}
+          >
+            {t('allTime')}
+          </button>
+          <button 
+            onClick={() => setTimeRange('month')}
+            className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${timeRange === 'month' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}
+          >
+            {t('thisMonth')}
+          </button>
+          <button 
+            onClick={() => setTimeRange('custom')}
+            className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${timeRange === 'custom' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}
+          >
+            Custom
+          </button>
+        </div>
+
+        {timeRange === 'custom' && (
+          <div className="flex gap-2 items-center">
+            <input 
+              type="date" 
+              value={startDate} 
+              onChange={(e) => setStartDate(e.target.value)} 
+              className="px-3 py-2 border rounded-lg text-sm"
+            />
+            <span className="text-gray-500 font-bold">to</span>
+            <input 
+              type="date" 
+              value={endDate} 
+              onChange={(e) => setEndDate(e.target.value)} 
+              className="px-3 py-2 border rounded-lg text-sm"
+            />
+          </div>
+        )}
       </div>
 
       {/* KPI Cards */}

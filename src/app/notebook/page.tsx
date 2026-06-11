@@ -1,19 +1,20 @@
-import { getSession } from '@/lib/actions/auth';
+'use client';
+import { useEffect, useState } from 'react';
 import NotebookLedger from '@/components/notebook/NotebookLedger';
 
-export default async function NotebookPage() {
-  const session = await getSession();
+export default function NotebookPage() {
+  const [role, setRole] = useState('');
+  const [userId, setUserId] = useState('');
 
-  if (!session || session.role !== 'owner') {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-screen p-10 text-center">
-        <p className="text-5xl mb-4">🔒</p>
-        <h2 className="text-2xl font-bold text-gray-800">Access Denied</h2>
-        <p className="text-sm text-gray-500 mt-2">
-          This page is restricted to owners only.
-        </p>
-      </div>
-    );
+  useEffect(() => {
+    const user = JSON.parse(localStorage.getItem('snms_user') || '{}');
+    setRole(user.role || '');
+    setUserId(user.id || '');
+  }, []);
+
+  // Wait for role to be determined
+  if (!role) {
+    return <div className="p-10 text-center text-gray-500 font-bold">Loading ledger...</div>;
   }
 
   return (
@@ -24,7 +25,7 @@ export default async function NotebookPage() {
           All bookings and sales history
         </p>
       </header>
-      <NotebookLedger />
+      <NotebookLedger role={role} userId={userId} />
     </div>
   );
 }

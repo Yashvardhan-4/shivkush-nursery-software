@@ -195,7 +195,7 @@ export default function NewBookingPage() {
         advance_cash_amount: itemCash > 0 ? itemCash : null,
         advance_upi_amount: itemUpi > 0 ? itemUpi : null,
         total_amount: item.amount,
-        booking_date: createdAt,
+        booking_date: createdAt.split('T')[0],
         delivery_date: deliveryDate || null,
         status: 'Pending' as const,
         worker_id: user.id,

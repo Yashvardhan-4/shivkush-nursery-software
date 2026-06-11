@@ -96,6 +96,11 @@ export default function OwnerDashboard() {
 
   return (
     <div className="space-y-6">
+      <header className="flex justify-between items-center mb-2">
+        <h1 className="text-2xl font-black text-gray-900 tracking-tight">{t('Owner Dashboard')}</h1>
+        <SyncButton />
+      </header>
+      
       {/* ── Live Stat Cards ──────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 gap-4">
         {stats.map((stat, i) => (

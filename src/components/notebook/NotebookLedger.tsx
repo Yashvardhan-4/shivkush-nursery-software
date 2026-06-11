@@ -4,12 +4,22 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/lib/db';
 import { Search, Filter, Phone } from 'lucide-react';
 
-export default function NotebookLedger() {
+export default function NotebookLedger({ role, userId }: { role: string, userId: string }) {
   const [tab, setTab] = useState<'Bookings' | 'Sales'>('Bookings');
   const [search, setSearch] = useState('');
 
-  const bookings = useLiveQuery(() => db.bookings.toArray());
-  const sales = useLiveQuery(() => db.direct_sales.toArray());
+  const bookings = useLiveQuery(async () => {
+    const all = await db.bookings.toArray();
+    if (role === 'worker') return all.filter(b => b.worker_id === userId);
+    return all;
+  }, [role, userId]);
+
+  const sales = useLiveQuery(async () => {
+    const all = await db.direct_sales.toArray();
+    if (role === 'worker') return all.filter(s => s.worker_id === userId);
+    return all;
+  }, [role, userId]);
+
   const plants = useLiveQuery(() => db.plants.toArray());
 
   // Group bookings by booking_number to show cart items together

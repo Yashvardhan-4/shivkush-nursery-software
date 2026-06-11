@@ -50,6 +50,7 @@ export default function BookingList({ role, userId, userName }: BookingListProps
   const [deliveryQtys, setDeliveryQtys] = useState<Record<string, number>>({});
   const [paymentMode, setPaymentMode] = useState<'Cash' | 'UPI' | 'Split'>('Cash');
   const [splitAmounts, setSplitAmounts] = useState({ cash: '', upi: '' });
+  const [deliveryRemarks, setDeliveryRemarks] = useState('');
 
   const bookings = useLiveQuery(() => db.bookings.orderBy('created_at').reverse().toArray());
   const plants = useLiveQuery(() => db.plants.toArray());
@@ -173,25 +174,24 @@ export default function BookingList({ role, userId, userName }: BookingListProps
     Cancelled: groupedList.filter(g => g.status === 'Cancelled').length,
   };
 
-  async function cancelBooking(bookingNumber: string) {
-    if (!confirm('Cancel this booking? This cannot be undone.')) return;
-    setActionLoading(`cancel_${bookingNumber}`);
+  async function cancelBookingRow(id: string) {
+    if (!confirm('Cancel this item? This cannot be undone.')) return;
+    setActionLoading(`cancel_${id}`);
     try {
-      const rows = await db.bookings.where('booking_number').equals(bookingNumber).toArray();
-      for (const row of rows) {
-        await db.bookings.update(row.id, { status: 'Cancelled', sync_status: 'pending' });
-        await logAudit(userId, userName, 'CANCEL_BOOKING', 'bookings', row.id, {
-          booking_number: bookingNumber,
-          customer_name: row.customer_name,
-        });
-        // Send FULL row so COALESCE-based UPDATE doesn't null out any fields
-        await db.sync_queue.add({
-          table: 'bookings',
-          action: 'UPDATE',
-          payload: { ...row, status: 'Cancelled', sync_status: undefined },
-          created_at: Date.now(),
-        });
-      }
+      const row = await db.bookings.get(id);
+      if (!row) return;
+      await db.bookings.update(row.id, { status: 'Cancelled', sync_status: 'pending' });
+      await logAudit(userId, userName, 'CANCEL_BOOKING', 'bookings', row.id, {
+        booking_number: row.booking_number,
+        customer_name: row.customer_name,
+      });
+      // Send FULL row so COALESCE-based UPDATE doesn't null out any fields
+      await db.sync_queue.add({
+        table: 'bookings',
+        action: 'UPDATE',
+        payload: { ...row, status: 'Cancelled', sync_status: undefined },
+        created_at: Date.now(),
+      });
     } finally {
       setActionLoading(null);
     }
@@ -216,6 +216,7 @@ export default function BookingList({ role, userId, userName }: BookingListProps
 
     setPaymentMode('Cash');
     setSplitAmounts({ cash: '', upi: '' });
+    setDeliveryRemarks('');
   }
 
   async function confirmDelivery() {
@@ -249,6 +250,7 @@ export default function BookingList({ role, userId, userName }: BookingListProps
 
       const newlyProcessedRows: any[] = [];
       const ops = [];
+      const remarksToAppend = deliveryRemarks.trim();
 
       for (const row of rows) {
         if (row.status === 'Delivered' || row.status === 'Cancelled') {
@@ -265,12 +267,16 @@ export default function BookingList({ role, userId, userName }: BookingListProps
 
         const unitPrice = row.total_amount / totalQty;
         
+        const updatedRemarks = remarksToAppend 
+          ? (row.remarks ? row.remarks + '\nDelivery Note: ' + remarksToAppend : 'Delivery Note: ' + remarksToAppend)
+          : row.remarks;
+
         if (deliverQty === totalQty) {
-           const updated = { ...row, status: 'Delivered', delivery_date: todayStr, sync_status: 'pending' };
+           const updated = { ...row, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, sync_status: 'pending' };
            newlyProcessedRows.push(updated);
            ops.push(async () => {
-             await db.bookings.update(row.id, { status: 'Delivered', delivery_date: todayStr, sync_status: 'pending' });
-             await db.sync_queue.add({ table: 'bookings', action: 'UPDATE', payload: { id: row.id, status: 'Delivered', delivery_date: todayStr }, created_at: Date.now() });
+             await db.bookings.update(row.id, { status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, sync_status: 'pending' });
+             await db.sync_queue.add({ table: 'bookings', action: 'UPDATE', payload: { id: row.id, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks }, created_at: Date.now() });
              
              if (row.lot_id) {
                const lot = await db.lots.get(row.lot_id);
@@ -287,7 +293,7 @@ export default function BookingList({ role, userId, userName }: BookingListProps
            const remainingQty = totalQty - deliverQty;
            const remainingAmount = row.total_amount - deliveredAmount;
 
-           const updatedDelivered = { ...row, quantity: deliverQty, total_amount: deliveredAmount, status: 'Delivered', delivery_date: todayStr, sync_status: 'pending' };
+           const updatedDelivered = { ...row, quantity: deliverQty, total_amount: deliveredAmount, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, sync_status: 'pending' };
            newlyProcessedRows.push(updatedDelivered);
            
            const newPendingId = crypto.randomUUID();
@@ -295,8 +301,8 @@ export default function BookingList({ role, userId, userName }: BookingListProps
            newlyProcessedRows.push(newPending);
 
            ops.push(async () => {
-             await db.bookings.update(row.id, { quantity: deliverQty, total_amount: deliveredAmount, status: 'Delivered', delivery_date: todayStr, sync_status: 'pending' });
-             await db.sync_queue.add({ table: 'bookings', action: 'UPDATE', payload: { id: row.id, quantity: deliverQty, total_amount: deliveredAmount, status: 'Delivered', delivery_date: todayStr }, created_at: Date.now() });
+             await db.bookings.update(row.id, { quantity: deliverQty, total_amount: deliveredAmount, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, sync_status: 'pending' });
+             await db.sync_queue.add({ table: 'bookings', action: 'UPDATE', payload: { id: row.id, quantity: deliverQty, total_amount: deliveredAmount, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks }, created_at: Date.now() });
              
              await db.bookings.add(newPending);
              await db.sync_queue.add({ table: 'bookings', action: 'INSERT', payload: newPending, created_at: Date.now() });
@@ -471,7 +477,6 @@ export default function BookingList({ role, userId, userName }: BookingListProps
         )}
 
         {filtered.map(grp => {
-          const isCancelling = actionLoading === `cancel_${grp.booking_number}`;
           const isDelivering = actionLoading === `deliver_${grp.booking_number}`;
           const statusCfg = STATUS_COLORS[grp.status] || 'bg-gray-100 text-gray-600 border-gray-200';
 
@@ -513,8 +518,23 @@ export default function BookingList({ role, userId, userName }: BookingListProps
                       {item.status === 'Delivered' && (
                         <span className="text-[9px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded-md font-bold uppercase tracking-wide">Delivered</span>
                       )}
+                      {item.status === 'Cancelled' && (
+                        <span className="text-[9px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded-md font-bold uppercase tracking-wide">Cancelled</span>
+                      )}
                     </span>
-                    <span className="font-bold text-gray-900">₹{item.total_amount}</span>
+                    <div className="flex items-center gap-3">
+                      <span className="font-bold text-gray-900">₹{item.total_amount}</span>
+                      {role === 'owner' && !['Delivered', 'Cancelled'].includes(item.status) && (
+                        <button
+                          onClick={() => cancelBookingRow(item.id)}
+                          disabled={actionLoading === `cancel_${item.id}`}
+                          className="text-red-400 hover:text-red-600 p-1"
+                          title="Cancel Item"
+                        >
+                          <XCircle className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -550,17 +570,6 @@ export default function BookingList({ role, userId, userName }: BookingListProps
                     <Truck className="w-4 h-4" />
                     {isDelivering ? 'Marking...' : 'Deliver Order'}
                   </button>
-
-                  {role === 'owner' && (
-                    <button
-                      onClick={() => cancelBooking(grp.booking_number)}
-                      disabled={isCancelling}
-                      className="px-4 flex items-center justify-center gap-2 py-3 rounded-2xl bg-red-50 text-red-600 border border-red-200 font-black text-sm active:scale-95 transition-all disabled:opacity-60"
-                    >
-                      <XCircle className="w-4 h-4" />
-                      {isCancelling ? 'Cancelling...' : 'Cancel'}
-                    </button>
-                  )}
                 </div>
               )}
 
@@ -627,6 +636,17 @@ export default function BookingList({ role, userId, userName }: BookingListProps
                     </div>
                   </div>
                 ))}
+              </div>
+
+              <div className="mt-4">
+                <label className="text-xs font-bold text-gray-500 uppercase">Delivery Remarks (Optional)</label>
+                <textarea
+                  value={deliveryRemarks}
+                  onChange={(e) => setDeliveryRemarks(e.target.value)}
+                  className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-medium text-sm mt-1"
+                  rows={2}
+                  placeholder="Any notes for this delivery..."
+                />
               </div>
 
               <div className="bg-gray-50 p-4 rounded-xl border border-gray-200 mt-4 space-y-2">

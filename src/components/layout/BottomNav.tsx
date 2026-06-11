@@ -34,6 +34,7 @@ export function BottomNav() {
     { href: '/dashboard', label: t('dashboard'),    icon: Home },
     { href: '/sales/new',      label: t('directSales'),    icon: ShoppingCart },
     { href: '/bookings',  label: t('bookings'), icon: BookOpen },
+    { href: '/notebook',  label: 'Ledger', icon: BookOpen },
     { href: '/lots',      label: t('lots'),   icon: Package },
     { href: '/profile',   label: 'Profile', icon: User },
   ];
