@@ -290,7 +290,10 @@ function ReconciliationTab() {
 
 // ─── PRODUCTION DEMAND TAB ────────────────────────────────────────────────────
 function ProductionDemandTab() {
-  const plants = useLiveQuery(() => db.plants.where('active').equals(true as any).toArray());
+  const plants = useLiveQuery(async () => {
+    const all = await db.plants.toArray();
+    return all.filter(p => p.active);
+  });
   const bookings = useLiveQuery(() => db.bookings.toArray());
   const lots = useLiveQuery(() => db.lots.toArray());
   const allotments = useLiveQuery(() => db.allotments.toArray());

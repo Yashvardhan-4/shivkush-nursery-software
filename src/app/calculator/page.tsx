@@ -52,7 +52,10 @@ export default function CalculatorPage() {
   const [discount, setDiscount] = useState('');
 
   // Database Query for Plants dropdown
-  const plants = useLiveQuery(() => db.plants.where('active').equals(true as any).toArray());
+  const plants = useLiveQuery(async () => {
+    const all = await db.plants.toArray();
+    return all.filter(p => p.active);
+  });
   const selectedPlant = plants?.find(p => p.id === plantId);
 
   // Constants for conversions
