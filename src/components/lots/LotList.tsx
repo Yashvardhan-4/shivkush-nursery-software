@@ -67,21 +67,26 @@ export default function LotList() {
 
   return (
     <div className="space-y-4">
-      {/* Status Filter Tabs */}
-      <div className="flex space-x-2 overflow-x-auto pb-1">
-        {(['All', 'Growing', 'Ready', 'Completed'] as const).map(s => (
-          <button
-            key={s}
-            onClick={() => setStatusFilter(s)}
-            className={`px-4 py-2 rounded-xl text-xs font-black whitespace-nowrap transition-all ${
-              statusFilter === s
-                ? s === 'Ready' ? 'bg-green-600 text-white' : s === 'Growing' ? 'bg-yellow-500 text-white' : s === 'Completed' ? 'bg-gray-600 text-white' : 'bg-gray-900 text-white'
-                : 'bg-gray-100 text-gray-500'
-            }`}
-          >
-            {s}
-          </button>
-        ))}
+      {/* Status Filter Tabs & Hint */}
+      <div className="flex flex-col gap-2 mb-2">
+        <div className="flex space-x-2 overflow-x-auto pb-1">
+          {(['All', 'Growing', 'Ready', 'Completed'] as const).map(s => (
+            <button
+              key={s}
+              onClick={() => setStatusFilter(s)}
+              className={`px-4 py-2 rounded-xl text-xs font-black whitespace-nowrap transition-all ${
+                statusFilter === s
+                  ? s === 'Ready' ? 'bg-green-600 text-white' : s === 'Growing' ? 'bg-yellow-500 text-white' : s === 'Completed' ? 'bg-gray-600 text-white' : 'bg-gray-900 text-white'
+                  : 'bg-gray-100 text-gray-500'
+              }`}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+        <p className="text-[10px] text-gray-400 italic px-1">
+          (Ready = Overdue/Ready to deliver, Completed = Stock is 0)
+        </p>
       </div>
 
       <div className="grid gap-4">
@@ -168,6 +173,11 @@ export default function LotList() {
                   </div>
                 </div>
 
+                {lot.notes && (
+                  <p className="text-xs text-gray-500 italic mt-3 bg-gray-50 p-2 rounded-lg border border-gray-100">
+                    {lot.notes}
+                  </p>
+                )}
                 <p className="text-xs text-gray-400 font-semibold mt-3">
                   Ready: {readyDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
                 </p>

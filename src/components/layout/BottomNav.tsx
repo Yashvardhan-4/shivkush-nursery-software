@@ -22,7 +22,7 @@ export function BottomNav() {
   
   const OWNER_LINKS = [
     { href: '/dashboard', label: t('dashboard'),     icon: Home },
-    { href: '/sell',      label: t('directSales'),     icon: ShoppingCart },
+    { href: '/sales/new',      label: t('directSales'),     icon: ShoppingCart },
     { href: '/bookings',  label: t('bookings'), icon: BookOpen },
     { href: '/customers', label: 'Customers', icon: ClipboardList },
     { href: '/lots',      label: t('lots'),     icon: Layers },
@@ -32,7 +32,7 @@ export function BottomNav() {
 
   const WORKER_LINKS = [
     { href: '/dashboard', label: t('dashboard'),    icon: Home },
-    { href: '/sell',      label: t('directSales'),    icon: ShoppingCart },
+    { href: '/sales/new',      label: t('directSales'),    icon: ShoppingCart },
     { href: '/bookings',  label: t('bookings'), icon: BookOpen },
     { href: '/lots',      label: t('lots'),   icon: Package },
     { href: '/profile',   label: 'Profile', icon: User },

@@ -51,7 +51,8 @@ function TabBtn({
 
 // ─── RECONCILIATION TAB ───────────────────────────────────────────────────────
 function ReconciliationTab() {
-  const todayStr = today();
+  const [selectedDate, setSelectedDate] = useState(today());
+  const todayStr = selectedDate;
 
   const salesRaw = useLiveQuery(() => db.direct_sales.toArray());
   const plantsRaw = useLiveQuery(() => db.plants.toArray());
@@ -183,15 +184,26 @@ function ReconciliationTab() {
 
   return (
     <div className="space-y-4">
+      {/* Date Picker Header */}
+      <div className="bg-white rounded-2xl p-4 border border-gray-100 shadow-sm flex items-center justify-between">
+        <h3 className="font-bold text-gray-700 text-sm">Select Date</h3>
+        <input 
+          type="date" 
+          value={selectedDate} 
+          onChange={(e) => setSelectedDate(e.target.value)} 
+          className="px-3 py-2 border border-gray-200 rounded-xl text-sm font-medium text-gray-700 focus:outline-none focus:ring-2 focus:ring-green-500"
+        />
+      </div>
+
       {/* Grand Total Hero */}
       <div className="bg-gradient-to-br from-green-600 to-emerald-800 rounded-3xl p-7 text-white relative overflow-hidden shadow-lg">
         <div className="absolute -right-8 -top-8 bg-white opacity-10 w-36 h-36 rounded-full" />
         <div className="absolute -left-6 -bottom-6 bg-white opacity-5 w-28 h-28 rounded-full" />
         <p className="text-xs font-bold uppercase tracking-widest opacity-80 mb-2">
-          Today's Grand Total
+          Grand Total
         </p>
         <p className="text-5xl font-black tracking-tight">{fmt(grandTotal)}</p>
-        <p className="text-xs opacity-70 mt-2">Direct sales · {todayStr}</p>
+        <p className="text-xs opacity-70 mt-2">Collections for {todayStr}</p>
       </div>
 
       {/* Cash / UPI split */}
@@ -225,13 +237,13 @@ function ReconciliationTab() {
         <div className="px-5 py-4 border-b border-gray-50 flex items-center gap-2">
           <ClipboardList className="w-4 h-4 text-gray-400" />
           <h3 className="font-bold text-gray-700 text-sm">
-            Today's Collections ({collectionEvents.length})
+            Collections ({collectionEvents.length})
           </h3>
         </div>
 
         {collectionEvents.length === 0 ? (
           <div className="p-8 text-center text-gray-400 text-sm font-medium">
-            No collections recorded today.
+            No collections recorded for {todayStr}.
           </div>
         ) : (
           <ul className="divide-y divide-gray-50">
@@ -281,8 +293,9 @@ function ProductionDemandTab() {
   const plants = useLiveQuery(() => db.plants.where('active').equals(1).toArray());
   const bookings = useLiveQuery(() => db.bookings.toArray());
   const lots = useLiveQuery(() => db.lots.toArray());
+  const allotments = useLiveQuery(() => db.allotments.toArray());
 
-  if (!plants || !bookings || !lots) {
+  if (!plants || !bookings || !lots || !allotments) {
     return <LoadingCard />;
   }
 
@@ -296,18 +309,27 @@ function ProductionDemandTab() {
   };
 
   const demands: PlantDemand[] = plants.map((plant) => {
-    const totalBooked = bookings
-      .filter(
-        (b) =>
-          b.plant_id === plant.id &&
-          b.status !== 'Cancelled' &&
-          b.status !== 'Delivered'
-      )
-      .reduce((sum, b) => sum + b.quantity, 0);
+    const activeBookings = bookings.filter(
+      (b) =>
+        b.plant_id === plant.id &&
+        b.status !== 'Cancelled' &&
+        b.status !== 'Delivered'
+    );
 
-    const totalGrowing = lots
+    const rawTotalBooked = activeBookings.reduce((sum, b) => sum + b.quantity, 0);
+
+    const activeBookingIds = new Set(activeBookings.map(b => b.id));
+    const allottedToBookings = allotments
+      .filter(a => activeBookingIds.has(a.booking_id))
+      .reduce((sum, a) => sum + a.quantity, 0);
+
+    const totalBooked = Math.max(0, rawTotalBooked - allottedToBookings);
+
+    const totalStock = lots
       .filter((l) => l.plant_id === plant.id && l.status !== 'Completed')
       .reduce((sum, l) => sum + l.total_quantity, 0);
+
+    const totalGrowing = Math.max(0, totalStock - allottedToBookings);
 
     const deficit = Math.max(0, totalBooked - totalGrowing);
 

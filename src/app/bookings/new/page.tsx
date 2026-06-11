@@ -53,17 +53,25 @@ export default function NewBookingPage() {
   const availableQty = selectedLot ? selectedLot.total_quantity - bookedQty : 0;
 
   const handleAddToCart = () => {
-    if (!selectedPlant || !quantity) return;
+    if (!selectedPlant || !quantity || !selectedLot) {
+      if (!selectedLot) alert('Please select a specific lot.');
+      return;
+    }
     
     const qty = parseInt(quantity);
+    if (qty > availableQty) {
+      alert(`Cannot add more than available quantity (${availableQty}) for this lot.`);
+      return;
+    }
+
     const price = selectedPlant.selling_price || 0;
     
     setCart([...cart, {
       id: crypto.randomUUID(),
       plantId: selectedPlant.id,
       plantName: selectedPlant.variety ? `${selectedPlant.plant_name} - ${selectedPlant.variety}` : selectedPlant.plant_name,
-      lotId: selectedLot?.id || '',
-      lotName: selectedLot?.lot_number || 'Any Lot',
+      lotId: selectedLot.id,
+      lotName: selectedLot.lot_number,
       quantity: qty,
       price: price,
       amount: price * qty
@@ -272,9 +280,9 @@ export default function NewBookingPage() {
           {plantId && lots && lots.length > 0 && (
             <div className="space-y-2">
               <select value={lotId} onChange={e => setLotId(e.target.value)} className="w-full p-4 bg-white border border-blue-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold text-blue-900">
-                <option value="">Any Lot</option>
+                <option value="" disabled>Choose a lot...</option>
                 {lots.map(l => {
-                  const lotBookedQty = bookings?.filter(b => b.lot_id === l.id && b.status !== 'Cancelled').reduce((sum, b) => sum + b.quantity, 0) || 0;
+                  const lotBookedQty = bookings?.filter(b => b.lot_id === l.id && b.status !== 'Cancelled' && b.status !== 'Delivered').reduce((sum, b) => sum + b.quantity, 0) || 0;
                   return (
                     <option key={l.id} value={l.id}>{l.lot_number} (Available: {l.total_quantity - lotBookedQty})</option>
                   );

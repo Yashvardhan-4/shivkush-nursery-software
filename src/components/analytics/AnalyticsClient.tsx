@@ -37,6 +37,8 @@ export default function AnalyticsClient() {
   const filteredBookings = filterData(bookings).filter((b: any) => b.status !== 'Cancelled');
   const filteredSales = filterData(directSales);
 
+  const uniqueBookingsCount = new Set(filteredBookings.map((b: any) => b.booking_number)).size;
+
   // 1. Overall Metrics
   const totalRevenue = 
     filteredBookings.reduce((sum, b) => sum + (Number(b.total_amount) || 0), 0) +
@@ -126,7 +128,7 @@ export default function AnalyticsClient() {
         </div>
         <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
           <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">{t('totalBookings')}</p>
-          <p className="text-2xl font-black text-gray-900 mt-1">{filteredBookings.length}</p>
+          <p className="text-2xl font-black text-gray-900 mt-1">{uniqueBookingsCount}</p>
         </div>
         <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
           <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">{t('pendingAdvance')}</p>
