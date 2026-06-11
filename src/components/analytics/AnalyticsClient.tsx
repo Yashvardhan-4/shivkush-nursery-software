@@ -22,35 +22,43 @@ export default function AnalyticsClient() {
   }
 
   const now = new Date();
-  const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
-  const isCurrentMonth = (dateStr: string) => dateStr.startsWith(currentMonthStr);
+  const isCurrentMonth = (dateVal: any) => {
+    if (!dateVal) return false;
+    const d = new Date(dateVal);
+    if (isNaN(d.getTime())) return false;
+    return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+  };
 
   const filterData = (data: any[]) => timeRange === 'all' 
     ? data 
     : data.filter(d => isCurrentMonth(d.booking_date || d.created_at));
 
-  const filteredBookings = filterData(bookings);
+  const filteredBookings = filterData(bookings).filter((b: any) => b.status !== 'Cancelled');
   const filteredSales = filterData(directSales);
 
   // 1. Overall Metrics
   const totalRevenue = 
-    filteredBookings.reduce((sum, b) => sum + b.total_amount, 0) +
-    filteredSales.reduce((sum, s) => sum + s.amount, 0);
+    filteredBookings.reduce((sum, b) => sum + (Number(b.total_amount) || 0), 0) +
+    filteredSales.reduce((sum, s) => sum + (Number(s.amount) || 0), 0);
   
-  const totalAdvances = filteredBookings.reduce((sum, b) => sum + b.advance_paid, 0);
-  const pendingAdvances = filteredBookings.reduce((sum, b) => sum + Math.max(0, b.total_amount - b.advance_paid), 0);
+  const totalAdvances = filteredBookings.reduce((sum, b) => sum + (Number(b.advance_paid) || 0), 0);
+  const pendingAdvances = filteredBookings.reduce((sum, b) => sum + Math.max(0, (Number(b.total_amount) || 0) - (Number(b.advance_paid) || 0)), 0);
 
   // 2. Monthly Trend Aggregation
   const monthlyRevenueMap: Record<string, number> = {};
   
   const processMonthly = (items: any[], dateField: string, amountField: string) => {
     items.forEach(item => {
-      const month = item[dateField].substring(0, 7); // YYYY-MM
-      monthlyRevenueMap[month] = (monthlyRevenueMap[month] || 0) + item[amountField];
+      const dateVal = item[dateField];
+      if (!dateVal) return;
+      const d = new Date(dateVal);
+      if (isNaN(d.getTime())) return;
+      const month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      monthlyRevenueMap[month] = (monthlyRevenueMap[month] || 0) + (Number(item[amountField]) || 0);
     });
   };
-  processMonthly(bookings, 'booking_date', 'total_amount');
+  processMonthly(bookings.filter((b: any) => b.status !== 'Cancelled'), 'booking_date', 'total_amount');
   processMonthly(directSales, 'created_at', 'amount');
 
   const monthlyTrendData = Object.keys(monthlyRevenueMap).sort().map(month => ({
@@ -64,10 +72,13 @@ export default function AnalyticsClient() {
   filteredSales.forEach(s => plantSalesMap[s.plant_id] = (plantSalesMap[s.plant_id] || 0) + s.quantity);
 
   const topPlantsData = Object.keys(plantSalesMap)
-    .map(id => ({
-      name: plants.find(p => p.id === id)?.plant_name || 'Unknown',
-      value: plantSalesMap[id]
-    }))
+    .map(id => {
+      const plant = plants.find(p => p.id === id);
+      const name = plant 
+        ? `${plant.plant_name}${plant.variety ? ' - ' + plant.variety : ''}` 
+        : 'Unknown';
+      return { name, value: plantSalesMap[id] };
+    })
     .sort((a, b) => b.value - a.value)
     .slice(0, 5); // Top 5
 

@@ -3,15 +3,39 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/lib/db';
 import { useState } from 'react';
-import { Pencil, AlertTriangle } from 'lucide-react';
+import { Pencil, AlertTriangle, Check } from 'lucide-react';
 
 export default function LotList() {
   const [statusFilter, setStatusFilter] = useState<'All' | 'Growing' | 'Ready' | 'Completed'>('All');
 
-  const lots = useLiveQuery(() => db.lots.toArray());
+  const lots = useLiveQuery(() => db.lots.orderBy('created_at').reverse().toArray());
   const plants = useLiveQuery(() => db.plants.toArray());
   const allotments = useLiveQuery(() => db.allotments.toArray());
   const sales = useLiveQuery(() => db.direct_sales.toArray());
+
+  const handleMarkReady = async (lotId: string) => {
+    try {
+      const lot = await db.lots.get(lotId);
+      if (!lot) return;
+      
+      const updates = {
+        status: 'Ready' as const,
+        updated_at: new Date().toISOString()
+      };
+      
+      await db.lots.update(lotId, updates);
+      await db.sync_queue.add({
+        table: 'lots',
+        action: 'UPDATE',
+        payload: { id: lotId, ...updates },
+        created_at: Date.now(),
+      });
+      window.dispatchEvent(new Event('online'));
+    } catch (error) {
+      console.error('Failed to mark lot as ready:', error);
+      alert('Failed to update lot status');
+    }
+  };
 
   if (!lots || !plants || !allotments || !sales) {
     return <div className="p-4 text-center text-gray-500 font-medium">Loading lots...</div>;
@@ -110,9 +134,17 @@ export default function LotList() {
 
                 {/* Overdue nudge */}
                 {isReady && lot.status === 'Growing' && (
-                  <div className="flex items-center gap-2 bg-orange-50 border border-orange-200 rounded-xl p-2 mb-3 text-xs font-bold text-orange-700">
-                    <AlertTriangle className="w-4 h-4 shrink-0" />
-                    Ready date passed — update status or extend date
+                  <div className="flex flex-col gap-2 bg-orange-50 border border-orange-200 rounded-xl p-3 mb-3">
+                    <div className="flex items-center gap-2 text-xs font-bold text-orange-700">
+                      <AlertTriangle className="w-4 h-4 shrink-0" />
+                      Ready date passed — update status or extend date
+                    </div>
+                    <button
+                      onClick={() => handleMarkReady(lot.id)}
+                      className="bg-orange-600 text-white text-xs font-bold py-2 px-3 rounded-lg flex items-center justify-center gap-1 active:scale-95 transition-transform"
+                    >
+                      <Check className="w-3.5 h-3.5" /> Mark as Ready
+                    </button>
                   </div>
                 )}
 

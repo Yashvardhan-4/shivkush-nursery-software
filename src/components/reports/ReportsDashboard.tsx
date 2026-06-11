@@ -103,6 +103,12 @@ function ReconciliationTab() {
 
   const plantMap = new Map(plantsRaw.map((p) => [p.id, p]));
 
+  const getPlantName = (plantId: string) => {
+    const plant = plantMap.get(plantId);
+    if (!plant) return 'Unknown';
+    return `${plant.plant_name}${plant.variety ? ' - ' + plant.variety : ''}`;
+  };
+
   // Combine events for the list
   type CollectionEvent = {
     id: string;
@@ -123,7 +129,7 @@ function ReconciliationTab() {
     collectionEvents.push({
       id: s.id!,
       type: 'Direct Sale',
-      plant_name: plantMap.get(s.plant_id)?.plant_name ?? 'Unknown',
+      plant_name: getPlantName(s.plant_id),
       customer_name: s.customer_name || 'Walk-in',
       quantity: s.quantity,
       amount: s.amount,
@@ -140,7 +146,7 @@ function ReconciliationTab() {
       collectionEvents.push({
         id: b.id! + '_del',
         type: 'Booking Delivery',
-        plant_name: plantMap.get(b.plant_id)?.plant_name ?? 'Unknown',
+        plant_name: getPlantName(b.plant_id),
         customer_name: b.customer_name || 'Customer',
         quantity: b.quantity,
         amount: collectedNow,
@@ -160,7 +166,7 @@ function ReconciliationTab() {
       collectionEvents.push({
         id: b.id! + '_adv',
         type: 'Booking Advance',
-        plant_name: plantMap.get(b.plant_id)?.plant_name ?? 'Unknown',
+        plant_name: getPlantName(b.plant_id),
         customer_name: b.customer_name || 'Customer',
         quantity: b.quantity,
         amount: b.advance_paid,

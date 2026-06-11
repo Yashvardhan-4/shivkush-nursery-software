@@ -21,12 +21,7 @@ export default function NewBookingPage() {
   const [bookingNumber, setBookingNumber] = useState('BKG-...');
   
   useEffect(() => {
-    async function initNum() {
-      const bookings = await db.bookings.toArray();
-      const uniqueBookings = new Set(bookings.map(b => b.booking_number));
-      setBookingNumber(`BKG-${uniqueBookings.size + 1001}`);
-    }
-    initNum();
+    setBookingNumber(`BKG-${Date.now().toString().slice(-6)}`);
   }, []);
   
   const [customerName, setCustomerName] = useState('');
@@ -119,6 +114,10 @@ export default function NewBookingPage() {
   const handleSaveBooking = async (e: React.FormEvent) => {
     e.preventDefault();
     if (cart.length === 0) return alert('Add at least one plant to the booking.');
+    if ((parseFloat(advancePaid) || 0) > totalAmount) {
+      alert('Advance cannot exceed total amount');
+      return;
+    }
     
     setLoading(true);
 
@@ -245,7 +244,7 @@ export default function NewBookingPage() {
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <label className="text-xs font-bold text-gray-500 uppercase">Phone</label>
-              <input required type="tel" value={customerPhone} onChange={e => setCustomerPhone(e.target.value)} className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold" placeholder="9876543210" />
+              <input required type="tel" pattern="[0-9]{10}" maxLength={10} title="Phone number must be exactly 10 digits" value={customerPhone} onChange={e => setCustomerPhone(e.target.value)} className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold" placeholder="9876543210" />
             </div>
             <div className="space-y-2">
               <label className="text-xs font-bold text-gray-500 uppercase">City</label>

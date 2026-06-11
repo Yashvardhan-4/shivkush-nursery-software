@@ -9,8 +9,7 @@ export default function NewLotPage() {
   
   useEffect(() => {
     async function initLotNumber() {
-      const lots = await db.lots.toArray();
-      setLotNumber(`LOT-${lots.length + 101}`);
+      setLotNumber(`LOT-${Date.now().toString().slice(-6)}`);
     }
     initLotNumber();
   }, []);
@@ -68,7 +67,7 @@ export default function NewLotPage() {
           <select required value={plantId} onChange={e => setPlantId(e.target.value)} className="w-full p-4 bg-white border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-medium transition-shadow">
             <option value="">Select a plant...</option>
             {plants?.map(p => (
-              <option key={p.id} value={p.id}>{p.plant_name}</option>
+              <option key={p.id} value={p.id}>{p.plant_name}{p.variety ? ' - ' + p.variety : ''}</option>
             ))}
           </select>
         </div>

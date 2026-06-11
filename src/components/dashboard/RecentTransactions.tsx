@@ -92,6 +92,29 @@ export default function RecentTransactions({ workerId }: { workerId?: string }) 
   // Take top 10
   const recentLedger = ledger.slice(0, 10);
 
+  // Group by date
+  const groupedLedger: { [key: string]: typeof ledger } = {};
+  for (const item of recentLedger) {
+    const d = new Date(item.date);
+    const dateKey = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    if (!groupedLedger[dateKey]) groupedLedger[dateKey] = [];
+    groupedLedger[dateKey].push(item);
+  }
+
+  function getDateLabel(dateKey: string) {
+    const today = new Date();
+    const todayStr = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+    
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = yesterday.getFullYear() + '-' + String(yesterday.getMonth() + 1).padStart(2, '0') + '-' + String(yesterday.getDate()).padStart(2, '0');
+
+    if (dateKey === todayStr) return 'Today';
+    if (dateKey === yesterdayStr) return 'Yesterday';
+    
+    return new Date(dateKey).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+  }
+
   function fmt(n: number) {
     return '₹' + n.toLocaleString('en-IN');
   }
@@ -111,35 +134,46 @@ export default function RecentTransactions({ workerId }: { workerId?: string }) 
         {ledger.length === 0 ? (
           <p className="text-sm text-gray-500 text-center py-4">{t('No recent collections')}</p>
         ) : (
-        <div className="divide-y divide-gray-100">
-          {recentLedger.map((item) => (
-            <div key={item.id} className="p-4 flex items-center justify-between hover:bg-gray-50 transition-colors">
-              <div className="flex items-center gap-3">
-                <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${
-                  item.type === 'sale' ? 'bg-green-100 text-green-600' : 'bg-blue-100 text-blue-600'
-                }`}>
-                  <ShoppingCart className="w-5 h-5" />
+          <div className="flex flex-col">
+            {Object.entries(groupedLedger).map(([dateKey, items]) => (
+              <div key={dateKey} className="flex flex-col mb-4 last:mb-0">
+                <div className="py-2 px-1">
+                  <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">
+                    {getDateLabel(dateKey)}
+                  </span>
                 </div>
-                <div>
-                  <p className="font-bold text-gray-900 text-sm">{item.title}</p>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    <span className="text-xs font-semibold text-gray-500">{item.displayDate}</span>
-                    <span className="w-1 h-1 rounded-full bg-gray-300"></span>
-                    <span className="text-xs font-bold text-gray-400 flex items-center gap-1">
-                      <User className="w-3 h-3" />
-                      {item.worker}
-                    </span>
-                  </div>
+                <div className="divide-y divide-gray-100 border border-gray-100 rounded-2xl overflow-hidden">
+                  {items.map((item) => (
+                    <div key={item.id} className="p-4 flex items-center justify-between hover:bg-gray-50 transition-colors">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${
+                          item.type === 'sale' ? 'bg-green-100 text-green-600' : 'bg-blue-100 text-blue-600'
+                        }`}>
+                          <ShoppingCart className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <p className="font-bold text-gray-900 text-sm">{item.title}</p>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className="text-xs font-semibold text-gray-500">{item.displayDate}</span>
+                            <span className="w-1 h-1 rounded-full bg-gray-300"></span>
+                            <span className="text-xs font-bold text-gray-400 flex items-center gap-1">
+                              <User className="w-3 h-3" />
+                              {item.worker}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className="font-black text-gray-900">{fmt(item.amount)}</p>
+                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{item.mode}</p>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
-              <div className="text-right">
-                <p className="font-black text-gray-900">{fmt(item.amount)}</p>
-                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{item.mode}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

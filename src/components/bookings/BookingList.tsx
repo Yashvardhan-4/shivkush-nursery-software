@@ -7,9 +7,9 @@ import { Search, Phone, MapPin, Package, Truck, XCircle, CheckCircle2, FileSprea
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { exportToExcel, exportToPDF } from '@/lib/exportUtils';
 
-type TabStatus = 'All' | 'Pending' | 'Allocated' | 'Delivered' | 'Cancelled';
+type TabStatus = 'All' | 'Pending' | 'Allocated' | 'Ready' | 'Delivered' | 'Cancelled';
 
-const TABS: TabStatus[] = ['All', 'Pending', 'Allocated', 'Delivered', 'Cancelled'];
+const TABS: TabStatus[] = ['All', 'Pending', 'Allocated', 'Ready', 'Delivered', 'Cancelled'];
 
 const STATUS_COLORS: Record<string, string> = {
   Pending:   'bg-yellow-100 text-yellow-700 border-yellow-200',
@@ -23,6 +23,7 @@ const TAB_ACTIVE: Record<TabStatus, string> = {
   All:       'bg-gray-800 text-white',
   Pending:   'bg-yellow-500 text-white',
   Allocated: 'bg-blue-600 text-white',
+  Ready:     'bg-indigo-600 text-white',
   Delivered: 'bg-green-600 text-white',
   Cancelled: 'bg-red-500 text-white',
 };
@@ -60,7 +61,8 @@ export default function BookingList({ role, userId, userName }: BookingListProps
       'Customer': g.customer_name,
       'Phone': g.customer_phone,
       'City': g.city || '',
-      'Status': t(g.status.toLowerCase() as any),
+      'Status': g.status,
+      'Items': g.items.map((i: any) => `${i.quantity} x ${getPlantName(i.plant_id)}`).join(', '),
       'Total Amount': g.total_amount,
       'Advance Paid': g.advance_paid,
       'Balance': g.balance,
@@ -75,7 +77,8 @@ export default function BookingList({ role, userId, userName }: BookingListProps
       bookingNo: g.booking_number,
       customer: g.customer_name,
       phone: g.customer_phone,
-      status: t(g.status.toLowerCase() as any),
+      status: g.status,
+      items: g.items.map((i: any) => `${i.quantity} x ${getPlantName(i.plant_id)}`).join(', '),
       amount: g.total_amount,
       balance: g.balance
     }));
@@ -83,6 +86,7 @@ export default function BookingList({ role, userId, userName }: BookingListProps
       { header: 'Booking No', dataKey: 'bookingNo' },
       { header: 'Customer', dataKey: 'customer' },
       { header: 'Phone', dataKey: 'phone' },
+      { header: 'Items', dataKey: 'items' },
       { header: 'Status', dataKey: 'status' },
       { header: 'Amount', dataKey: 'amount' },
       { header: 'Balance', dataKey: 'balance' }
@@ -163,6 +167,7 @@ export default function BookingList({ role, userId, userName }: BookingListProps
     All: groupedList.length,
     Pending: groupedList.filter(g => g.status === 'Pending').length,
     Allocated: groupedList.filter(g => g.status === 'Allocated').length,
+    Ready: groupedList.filter(g => g.status === 'Ready').length,
     Delivered: groupedList.filter(g => g.status === 'Delivered').length,
     Cancelled: groupedList.filter(g => g.status === 'Cancelled').length,
   };
@@ -265,6 +270,16 @@ export default function BookingList({ role, userId, userName }: BookingListProps
            ops.push(async () => {
              await db.bookings.update(row.id, { status: 'Delivered', delivery_date: todayStr, sync_status: 'pending' });
              await db.sync_queue.add({ table: 'bookings', action: 'UPDATE', payload: { id: row.id, status: 'Delivered', delivery_date: todayStr }, created_at: Date.now() });
+             
+             if (row.lot_id) {
+               const lot = await db.lots.get(row.lot_id);
+               if (lot) {
+                 const newQty = Math.max(0, lot.total_quantity - deliverQty);
+                 const newStatus = newQty === 0 ? 'Completed' : lot.status;
+                 await db.lots.update(row.lot_id, { total_quantity: newQty, status: newStatus });
+                 await db.sync_queue.add({ table: 'lots', action: 'UPDATE', payload: { id: row.lot_id, total_quantity: newQty, status: newStatus }, created_at: Date.now() });
+               }
+             }
            });
         } else {
            const deliveredAmount = deliverQty * unitPrice;
@@ -284,6 +299,16 @@ export default function BookingList({ role, userId, userName }: BookingListProps
              
              await db.bookings.add(newPending);
              await db.sync_queue.add({ table: 'bookings', action: 'INSERT', payload: newPending, created_at: Date.now() });
+             
+             if (row.lot_id) {
+               const lot = await db.lots.get(row.lot_id);
+               if (lot) {
+                 const newQty = Math.max(0, lot.total_quantity - deliverQty);
+                 const newStatus = newQty === 0 ? 'Completed' : lot.status;
+                 await db.lots.update(row.lot_id, { total_quantity: newQty, status: newStatus });
+                 await db.sync_queue.add({ table: 'lots', action: 'UPDATE', payload: { id: row.lot_id, total_quantity: newQty, status: newStatus }, created_at: Date.now() });
+               }
+             }
            });
         }
       }

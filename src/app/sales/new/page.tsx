@@ -199,6 +199,37 @@ export default function NewDirectSalePage() {
       });
     }
 
+    // Deduct sold quantities from active lots
+    for (const item of cart) {
+      let qtyToDeduct = item.quantity;
+      const activeLots = await db.lots
+        .filter(l => l.plant_id === item.plantId && l.status !== 'Completed')
+        .toArray();
+
+      activeLots.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+      for (const lot of activeLots) {
+        if (qtyToDeduct <= 0) break;
+        if (lot.total_quantity <= 0) continue;
+
+        const deductAmount = Math.min(lot.total_quantity, qtyToDeduct);
+        lot.total_quantity -= deductAmount;
+        qtyToDeduct -= deductAmount;
+
+        if (lot.total_quantity <= 0) {
+          lot.status = 'Completed';
+        }
+
+        await db.lots.put(lot);
+        await db.sync_queue.add({
+          table: 'lots',
+          action: 'UPDATE',
+          payload: lot,
+          created_at: Date.now()
+        });
+      }
+    }
+
     // Audit log for the entire sale
     await logAudit(user.id, user.name, 'CREATE_SALE', 'direct_sales', saleNumber, {
       totalAmount,

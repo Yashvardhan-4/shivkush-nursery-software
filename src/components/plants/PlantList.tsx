@@ -10,7 +10,10 @@ export default function PlantList({ role }: { role: string }) {
   
   const plants = useLiveQuery(
     () => db.plants
-      .filter(p => p.active !== false && p.plant_name.toLowerCase().includes(search.toLowerCase()))
+      .filter(p => p.active !== false && (
+        p.plant_name.toLowerCase().includes(search.toLowerCase()) || 
+        (p.variety && p.variety.toLowerCase().includes(search.toLowerCase()))
+      ))
       .toArray(),
     [search]
   );

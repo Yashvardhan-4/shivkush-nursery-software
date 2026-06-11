@@ -170,7 +170,7 @@ export async function logAudit(userId: string, userName: string, action: string,
 
 // =========================================
 // HELPER: Calculate Free Stock for a plant
-// Free Stock = Total in Lots - Allotted to Bookings - Sold via Direct Sales
+// Free Stock = Total in Lots - Allotted to Bookings
 // =========================================
 export async function getFreeStock(plantId: string): Promise<number> {
   const lots = await db.lots.where('plant_id').equals(plantId).toArray();
@@ -187,10 +187,7 @@ export async function getFreeStock(plantId: string): Promise<number> {
     .filter(a => activeBookingIds.has(a.booking_id))
     .reduce((sum, a) => sum + a.quantity, 0);
 
-  const sales = await db.direct_sales.where('plant_id').equals(plantId).toArray();
-  const soldQty = sales.reduce((sum, s) => sum + s.quantity, 0);
-
-  return Math.max(0, totalStock - allottedQty - soldQty);
+  return Math.max(0, totalStock - allottedQty);
 }
 
 // =========================================

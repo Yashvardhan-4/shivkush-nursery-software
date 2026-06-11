@@ -5,10 +5,6 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/lib/db';
 import { CheckCircle, XCircle, Clock, ChevronDown, ChevronUp, Calendar } from 'lucide-react';
 
-const WORKERS = [
-  { id: 'w1', name: 'Worker 1' },
-  { id: 'w2', name: 'Worker 2' },
-];
 
 type AttendanceStatus = 'Present' | 'Absent' | 'Half Day';
 
@@ -20,6 +16,8 @@ interface AttendanceManagerProps {
 export default function AttendanceManager({ ownerId, ownerName }: AttendanceManagerProps) {
   const [loading, setLoading] = useState<Record<string, boolean>>({});
   const [historyOpen, setHistoryOpen] = useState(true);
+
+  const workers = useLiveQuery(() => db.users.where('role').equals('worker').toArray());
 
   const attendanceRecords = useLiveQuery(() =>
     db.attendance.orderBy('date').reverse().toArray()
@@ -129,7 +127,7 @@ export default function AttendanceManager({ ownerId, ownerName }: AttendanceMana
         </div>
 
         <div className="divide-y divide-gray-50">
-          {WORKERS.map(worker => {
+          {(workers || []).map(worker => {
             const currentStatus = todayMap[worker.id];
             return (
               <div key={worker.id} className="p-5">

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, logAudit } from '@/lib/db';
 import type { Booking, Lot, Plant, Allotment } from '@/lib/db';
@@ -72,11 +73,13 @@ function StatusBadge({ status }: { status: string }) {
 // ──────────────────────────────────────────────
 function AllotmentRow({
   booking,
+  bookings,
   lots,
   allotments,
   plants,
 }: {
   booking: Booking;
+  bookings: Booking[];
   lots: Lot[];
   allotments: Allotment[];
   plants: Plant[];
@@ -94,7 +97,11 @@ function AllotmentRow({
     const lot = lots.find((l) => l.id === lotId);
     if (!lot) return 0;
     const used = allotments
-      .filter((a) => a.lot_id === lotId)
+      .filter((a) => {
+        if (a.lot_id !== lotId) return false;
+        const b = bookings.find(b => b.id === a.booking_id);
+        return b && b.status !== 'Delivered' && b.status !== 'Cancelled';
+      })
       .reduce((sum, a) => sum + a.quantity, 0);
     return Math.max(0, lot.total_quantity - used);
   }
@@ -283,50 +290,23 @@ function AllotmentRow({
 // ──────────────────────────────────────────────
 function BookingCard({
   group,
+  bookings,
   lots,
   allotments,
   plants,
 }: {
   group: GroupedBooking;
+  bookings: Booking[];
   lots: Lot[];
   allotments: Allotment[];
   plants: Plant[];
 }) {
-  const [delivering, setDelivering] = useState(false);
+  const router = useRouter();
 
   const balanceDue = group.total_amount - group.total_advance;
 
   // Only show "Mark as Delivered" if ALL items are Allocated (not yet Delivered)
   const canDeliver = group.items.every((i) => i.status === 'Allocated');
-
-  async function handleDeliver() {
-    setDelivering(true);
-    try {
-      const user = getUser();
-      const now = new Date().toISOString();
-      for (const item of group.items) {
-        if (item.status === 'Allocated') {
-          await db.bookings.update(item.id, { status: 'Delivered', sync_status: 'pending' });
-          await db.sync_queue.add({
-            table: 'bookings',
-            action: 'UPDATE',
-            payload: { id: item.id, status: 'Delivered' },
-            created_at: Date.now(),
-          });
-          await logAudit(
-            user.id || 'owner',
-            user.name || 'Owner',
-            'DELIVER_BOOKING',
-            'bookings',
-            item.id,
-            { booking_number: group.booking_number, customer: group.customer_name }
-          );
-        }
-      }
-    } finally {
-      setDelivering(false);
-    }
-  }
 
   // Card accent based on status
   const accentMap: Record<string, string> = {
@@ -375,6 +355,7 @@ function BookingCard({
           <AllotmentRow
             key={item.id}
             booking={item}
+            bookings={bookings}
             lots={lots}
             allotments={allotments}
             plants={plants}
@@ -412,12 +393,11 @@ function BookingCard({
             Call {group.customer_name.split(' ')[0]} — Order Ready!
           </a>
           <button
-            onClick={handleDeliver}
-            disabled={delivering}
-            className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-black text-sm py-3 rounded-xl transition-all active:scale-95 shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-2"
+            onClick={() => router.push('/bookings?search=' + group.booking_number)}
+            className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-black text-sm py-3 rounded-xl transition-all active:scale-95 shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-2"
           >
             <Truck className="w-4 h-4" />
-            {delivering ? 'Marking Delivered…' : 'Mark as Delivered'}
+            Process Delivery in Bookings
           </button>
         </div>
       )}
@@ -538,6 +518,7 @@ export default function AllotmentManager() {
             <BookingCard
               key={group.booking_number}
               group={group}
+              bookings={bookings}
               lots={lots}
               allotments={allotments}
               plants={plants}

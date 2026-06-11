@@ -24,7 +24,11 @@ function fmt(n: number) {
   return '₹' + n.toLocaleString('en-IN');
 }
 function today() {
-  return new Date().toISOString().split('T')[0];
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
 }
 
 export default function OwnerDashboard() {
@@ -38,14 +42,14 @@ export default function OwnerDashboard() {
 
   const todaySalesTotal = (allSales && allBookings)
     ? allSales
-        .filter((s) => s.created_at.startsWith(todayStr))
-        .reduce((sum, s) => sum + s.amount, 0)
+        .filter((s) => s.created_at && s.created_at.startsWith(todayStr))
+        .reduce((sum, s) => sum + Number(s.amount || 0), 0)
       + allBookings
         .filter((b) => b.delivery_date === todayStr && b.status === 'Delivered')
-        .reduce((sum, b) => sum + Math.max(0, b.total_amount - (b.advance_paid || 0)), 0)
+        .reduce((sum, b) => sum + Math.max(0, Number(b.total_amount || 0) - Number(b.advance_paid || 0)), 0)
       + allBookings
-        .filter((b) => b.created_at?.startsWith(todayStr))
-        .reduce((sum, b) => sum + (b.advance_paid || 0), 0)
+        .filter((b) => (b.created_at && b.created_at.startsWith(todayStr)) || (!b.created_at && b.booking_date === todayStr))
+        .reduce((sum, b) => sum + Number(b.advance_paid || 0), 0)
     : null;
 
   const pendingBookingsCount = allBookings
