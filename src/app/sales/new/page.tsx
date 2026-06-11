@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { db, logAudit } from '@/lib/db';
+import { db, generateId, logAudit } from '@/lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Trash2 } from 'lucide-react';
 import Link from 'next/link';
@@ -100,7 +100,7 @@ export default function NewDirectSalePage() {
     const price = selectedPlant.selling_price || 0;
     
     setCart([...cart, {
-      id: crypto.randomUUID(),
+      id: generateId(),
       plantId: selectedPlant.id,
       plantName: selectedPlant.variety ? `${selectedPlant.plant_name} - ${selectedPlant.variety}` : selectedPlant.plant_name,
       quantity: qty,
@@ -161,7 +161,7 @@ export default function NewDirectSalePage() {
     const finalUpi  = paymentMode === 'UPI'  ? totalAmount : paymentMode === 'Cash' ? 0 : upiNum;
 
     const newSales = cart.map((item) => ({
-      id: crypto.randomUUID(),
+      id: generateId(),
       sale_number: saleNumber,
       customer_name: customerName || undefined,
       customer_phone: customerPhone || undefined,
@@ -179,7 +179,7 @@ export default function NewDirectSalePage() {
     if (customerPhone && customerName) {
       let cust = await db.customers.where('mobile').equals(customerPhone).first();
       if (!cust) {
-        cust = { id: crypto.randomUUID(), name: customerName, mobile: customerPhone, city: null };
+        cust = { id: generateId(), name: customerName, mobile: customerPhone, city: null };
         await db.customers.add(cust);
       } else {
         cust.name = customerName;

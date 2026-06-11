@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { db } from '@/lib/db';
+import { db, generateId } from '@/lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 
 export default function NewLotPage() {
@@ -28,7 +28,7 @@ export default function NewLotPage() {
     setLoading(true);
 
     const newLot = {
-      id: crypto.randomUUID(),
+      id: generateId(),
       lot_number: lotNumber,
       plant_id: plantId,
       total_quantity: parseInt(quantity),

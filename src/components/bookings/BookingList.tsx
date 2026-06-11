@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, logAudit } from '@/lib/db';
+import { db, logAudit, generateId } from '@/lib/db';
 import { Search, Phone, MapPin, Package, Truck, XCircle, CheckCircle2, FileSpreadsheet, FileText } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { exportToExcel, exportToPDF } from '@/lib/exportUtils';
@@ -139,9 +139,11 @@ export default function BookingList({ role, userId, userName }: BookingListProps
     const hasReady = g.items.some((i: any) => i.status === 'Ready');
     const allDelivered = g.items.every((i: any) => i.status === 'Delivered');
     const allCancelled = g.items.every((i: any) => i.status === 'Cancelled');
+    const allFinalized = g.items.every((i: any) => i.status === 'Delivered' || i.status === 'Cancelled');
 
     if (allDelivered) g.status = 'Delivered';
     else if (allCancelled) g.status = 'Cancelled';
+    else if (allFinalized) g.status = 'Delivered';
     else if (hasAllocated) g.status = 'Allocated';
     else if (hasReady) g.status = 'Ready';
     else g.status = 'Pending';
@@ -221,11 +223,14 @@ export default function BookingList({ role, userId, userName }: BookingListProps
 
   async function confirmDelivery() {
     if (!deliveryModal) return;
-    const { bookingNumber, items, advance_paid } = deliveryModal;
+    const { bookingNumber, items } = deliveryModal;
     setActionLoading(`deliver_${bookingNumber}`);
     setDeliveryModal(null);
 
     try {
+      const pendingItems = items.filter((i: any) => i.status !== 'Delivered' && i.status !== 'Cancelled');
+      const availableAdvance = pendingItems.reduce((sum: number, i: any) => sum + (i.advance_paid || 0), 0);
+
       // 1. Determine total delivery value
       let deliveryValue = 0;
       items.forEach((item: any) => {
@@ -234,7 +239,7 @@ export default function BookingList({ role, userId, userName }: BookingListProps
         deliveryValue += deliverQty * unitPrice;
       });
 
-      const advanceToUse = Math.min(advance_paid, deliveryValue);
+      const advanceToUse = Math.min(availableAdvance, deliveryValue);
       const targetCollection = deliveryValue - advanceToUse;
 
       // 2. Compute final payment
@@ -269,7 +274,7 @@ export default function BookingList({ role, userId, userName }: BookingListProps
         
         const updatedRemarks = remarksToAppend 
           ? (row.remarks ? row.remarks + '\nDelivery Note: ' + remarksToAppend : 'Delivery Note: ' + remarksToAppend)
-          : row.remarks;
+          : (row.remarks || null);
 
         if (deliverQty === totalQty) {
            const updated = { ...row, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, sync_status: 'pending' };
@@ -296,8 +301,8 @@ export default function BookingList({ role, userId, userName }: BookingListProps
            const updatedDelivered = { ...row, quantity: deliverQty, total_amount: deliveredAmount, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, sync_status: 'pending' };
            newlyProcessedRows.push(updatedDelivered);
            
-           const newPendingId = crypto.randomUUID();
-           const newPending = { ...row, id: newPendingId, quantity: remainingQty, total_amount: remainingAmount, status: 'Pending' as const, sync_status: 'pending' as const, created_at: new Date().toISOString() };
+           const newPendingId = generateId();
+           const newPending = { ...row, id: newPendingId, quantity: remainingQty, total_amount: remainingAmount, status: 'Pending' as const, sync_status: 'pending' as const };
            newlyProcessedRows.push(newPending);
 
            ops.push(async () => {
@@ -322,7 +327,7 @@ export default function BookingList({ role, userId, userName }: BookingListProps
 
       // Re-distribute advance_paid across newly processed rows (Delivered first)
       newlyProcessedRows.sort((a, b) => (a.status === 'Delivered' ? -1 : 1));
-      let remainingAdvance = advance_paid; // advance_paid from the modal is exactly the usable advance
+      let remainingAdvance = availableAdvance; // advance_paid from the modal is exactly the usable advance
       
       for (const fRow of newlyProcessedRows) {
          let rowAdvance = 0;

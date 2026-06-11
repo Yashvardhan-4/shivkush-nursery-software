@@ -120,7 +120,7 @@ function AllotmentRow({
     setLoading(true);
     try {
       const user = getUser();
-      const newId = crypto.randomUUID();
+      const newId = generateId();
       const now = new Date().toISOString();
 
       // 1. Add allotment record

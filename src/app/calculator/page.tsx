@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '@/lib/db';
+import { db, generateId } from '@/lib/db';
 import { Leaf, Info, Trash2, Plus, Share2, Printer, X, FileText } from 'lucide-react';
 
 interface TempItem {
@@ -106,7 +106,7 @@ export default function CalculatorPage() {
     }
 
     const newItem: TempItem = {
-      id: crypto.randomUUID(),
+      id: generateId(),
       plantName: itemName,
       variety: itemVariety,
       hectares: h,

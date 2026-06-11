@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { db } from '@/lib/db';
+import { db, generateId } from '@/lib/db';
 import { ArrowLeft } from 'lucide-react';
 
 export default function NewPlantPage() {
@@ -17,7 +17,7 @@ export default function NewPlantPage() {
     setLoading(true);
 
     const newPlant = {
-      id: crypto.randomUUID(),
+      id: generateId(),
       plant_name: name,
       variety: variety,
       category: category,

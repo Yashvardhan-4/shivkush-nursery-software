@@ -45,7 +45,7 @@ export default function AttendanceManager({ ownerId, ownerName }: AttendanceMana
         await db.attendance.bulkDelete(existing.map(r => r.id));
       }
 
-      const id = crypto.randomUUID();
+      const id = generateId();
       const record = {
         id,
         worker_id,

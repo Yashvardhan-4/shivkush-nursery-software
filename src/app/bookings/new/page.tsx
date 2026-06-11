@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { db } from '@/lib/db';
+import { db, generateId } from '@/lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { PlusCircle, Trash2 } from 'lucide-react';
 import Link from 'next/link';
@@ -71,7 +71,7 @@ export default function NewBookingPage() {
     const price = selectedPlant.selling_price || 0;
     
     setCart([...cart, {
-      id: crypto.randomUUID(),
+      id: generateId(),
       plantId: selectedPlant.id,
       plantName: selectedPlant.variety ? `${selectedPlant.plant_name} - ${selectedPlant.variety}` : selectedPlant.plant_name,
       lotId: selectedLot.id,
@@ -182,7 +182,7 @@ export default function NewBookingPage() {
       const finalItemPayMode = itemAdvance > 0 ? itemPayMode : null;
 
       return {
-        id: crypto.randomUUID(),
+        id: generateId(),
         booking_number: bookingNumber,
         customer_name: customerName,
         customer_phone: customerPhone,
@@ -208,7 +208,7 @@ export default function NewBookingPage() {
     if (customerPhone && customerName) {
       let cust = await db.customers.where('mobile').equals(customerPhone).first();
       if (!cust) {
-        cust = { id: crypto.randomUUID(), name: customerName, mobile: customerPhone, city: city || null };
+        cust = { id: generateId(), name: customerName, mobile: customerPhone, city: city || null };
         await db.customers.add(cust);
       } else {
         cust.name = customerName;
