@@ -138,7 +138,7 @@ export default function StaffManagementPage() {
             </div>
             <div className="space-y-1">
               <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Password PIN</label>
-              <input required type="text" value={password} onChange={e => setPassword(e.target.value)} className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold tracking-widest" placeholder="****" />
+              <input required type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold tracking-widest" placeholder="****" />
             </div>
           </div>
 

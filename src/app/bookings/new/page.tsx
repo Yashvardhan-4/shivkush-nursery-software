@@ -27,6 +27,7 @@ export default function NewBookingPage() {
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [city, setCity] = useState('');
+  const [deliveryDate, setDeliveryDate] = useState('');
   
   const [cart, setCart] = useState<CartItem[]>([]);
   
@@ -45,6 +46,9 @@ export default function NewBookingPage() {
   const plants = useLiveQuery(() => db.plants.toArray());
   const lots = useLiveQuery(() => db.lots.where('plant_id').equals(plantId).toArray(), [plantId]);
   const bookings = useLiveQuery(() => db.bookings.toArray());
+  const customers = useLiveQuery(() => db.customers.toArray());
+
+  const uniqueCities = Array.from(new Set(customers?.map(c => c.city).filter(Boolean) as string[]));
 
   const selectedPlant = plants?.find(p => p.id === plantId);
   const selectedLot = lots?.find(l => l.id === lotId);
@@ -192,7 +196,7 @@ export default function NewBookingPage() {
         advance_upi_amount: itemUpi > 0 ? itemUpi : null,
         total_amount: item.amount,
         booking_date: createdAt,
-        delivery_date: null,
+        delivery_date: deliveryDate || null,
         status: 'Pending' as const,
         worker_id: user.id,
         sync_status: 'pending' as const,
@@ -256,8 +260,18 @@ export default function NewBookingPage() {
             </div>
             <div className="space-y-2">
               <label className="text-xs font-bold text-gray-500 uppercase">City</label>
-              <input type="text" value={city} onChange={e => setCity(e.target.value)} className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold" placeholder="Pune" />
+              <input type="text" value={city} onChange={e => setCity(e.target.value)} className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold" placeholder="Pune" list="cities" />
+              <datalist id="cities">
+                {uniqueCities.map(c => (
+                  <option key={c} value={c} />
+                ))}
+              </datalist>
             </div>
+          </div>
+
+          <div className="space-y-2 pt-2 border-t border-gray-100">
+            <label className="text-xs font-bold text-gray-500 uppercase">Requested Delivery Date</label>
+            <input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold" />
           </div>
         </div>
 

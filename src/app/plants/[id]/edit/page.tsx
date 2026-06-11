@@ -153,6 +153,7 @@ export default function EditPlantPage({ params }: { params: Promise<{ id: string
             className="w-full p-4 bg-white border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-medium transition-shadow"
             placeholder="e.g. 150"
           />
+          <p className="text-sm text-amber-600 mt-1">Warning: Changing this price will only apply to future bookings. Existing bookings will retain their original price.</p>
         </div>
 
         {/* Save button */}

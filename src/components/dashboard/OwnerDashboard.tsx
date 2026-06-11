@@ -129,7 +129,7 @@ export default function OwnerDashboard() {
 
       {/* ── Production Alerts Block ────────────────────────────────────── */}
       {productionAlertsCount !== null && productionAlertsCount > 0 ? (
-        <Link href="/reports" className="block bg-red-50 rounded-2xl shadow-sm border border-red-200 p-5 active:scale-95 transition-transform">
+        <Link href="/reports?tab=production" className="block bg-red-50 rounded-2xl shadow-sm border border-red-200 p-5 active:scale-95 transition-transform">
           <div className="flex items-center gap-3">
             <div className="bg-red-100 text-red-600 p-3 rounded-2xl">
               <AlertTriangle className="w-6 h-6" />

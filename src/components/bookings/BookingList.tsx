@@ -159,7 +159,8 @@ export default function BookingList({ role, userId, userName }: BookingListProps
   const filtered = tabFiltered.filter(g =>
     g.customer_name.toLowerCase().includes(search.toLowerCase()) ||
     g.customer_phone.includes(search) ||
-    g.booking_number.toLowerCase().includes(search.toLowerCase())
+    g.booking_number.toLowerCase().includes(search.toLowerCase()) ||
+    g.items.some((i: any) => getPlantName(i.plant_id).toLowerCase().includes(search.toLowerCase()))
   );
 
   // Count per tab
@@ -531,7 +532,7 @@ export default function BookingList({ role, userId, userName }: BookingListProps
                   </div>
                   <div>
                     <p className="text-[9px] font-bold text-blue-400 uppercase tracking-wider">Balance</p>
-                    <p className={`font-black ${grp.balance > 0 ? 'text-red-600' : 'text-green-700'}`}>
+                    <p className={`font-black ${grp.balance > 0 ? 'text-red-600' : grp.balance < 0 ? 'text-blue-600' : 'text-green-600'}`}>
                       ₹{grp.balance.toLocaleString('en-IN')}
                     </p>
                   </div>
