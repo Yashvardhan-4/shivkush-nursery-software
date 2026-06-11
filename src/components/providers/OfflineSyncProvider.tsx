@@ -63,17 +63,39 @@ export function OfflineSyncProvider({ children }: { children: React.ReactNode })
 
         // Bulk put all data into IndexedDB
         await db.transaction('rw', [db.plants, db.lots, db.bookings, db.allotments, db.direct_sales, db.attendance, db.audit_logs, db.customers, db.users], async () => {
-          const filterSynced = (list: any[]) => list.filter(item => !pendingIds.has(item.id));
+          const syncTable = async (localTable: any, serverList: any[]) => {
+            const list = serverList || [];
+            const localItems = await localTable.toArray();
+            const serverIds = new Set(list.map((item: any) => item.id).filter(Boolean));
 
-          if (data.plants?.length) await db.plants.bulkPut(filterSynced(data.plants));
-          if (data.lots?.length) await db.lots.bulkPut(filterSynced(data.lots));
-          if (data.bookings?.length) await db.bookings.bulkPut(filterSynced(data.bookings));
-          if (data.allotments?.length) await db.allotments.bulkPut(filterSynced(data.allotments));
-          if (data.direct_sales?.length) await db.direct_sales.bulkPut(filterSynced(data.direct_sales));
-          if (data.attendance?.length) await db.attendance.bulkPut(filterSynced(data.attendance));
-          if (data.audit_logs?.length) await db.audit_logs.bulkPut(filterSynced(data.audit_logs));
-          if (data.customers?.length) await db.customers.bulkPut(filterSynced(data.customers));
-          if (data.users?.length) await db.users.bulkPut(filterSynced(data.users));
+            // Identify items to delete: present locally, not on server, not pending in sync queue
+            const toDelete = localItems.filter((item: any) => !serverIds.has(item.id) && !pendingIds.has(item.id));
+            if (toDelete.length > 0) {
+              const deleteIds = toDelete.map((item: any) => item.id);
+              await localTable.bulkDelete(deleteIds);
+            }
+
+            // Put/update server items (excluding ones that are pending sync)
+            const toPut = list.filter((item: any) => !pendingIds.has(item.id));
+            if (toPut.length > 0) {
+              await localTable.bulkPut(toPut);
+            }
+          };
+
+          await syncTable(db.plants, data.plants);
+          await syncTable(db.lots, data.lots);
+          await syncTable(db.bookings, data.bookings);
+          await syncTable(db.allotments, data.allotments);
+          await syncTable(db.direct_sales, data.direct_sales);
+          await syncTable(db.attendance, data.attendance);
+          await syncTable(db.customers, data.customers);
+          await syncTable(db.users, data.users);
+
+          // Audit logs are append-only with auto-incrementing local ids
+          const filterSynced = (list: any[]) => list.filter(item => !pendingIds.has(item.id));
+          if (data.audit_logs?.length) {
+            await db.audit_logs.bulkPut(filterSynced(data.audit_logs));
+          }
         });
         console.log('Successfully pulled and updated local offline database from Supabase.');
       }

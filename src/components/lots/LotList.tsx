@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { Pencil, AlertTriangle, Check } from 'lucide-react';
 
 export default function LotList() {
-  const [statusFilter, setStatusFilter] = useState<'All' | 'Growing' | 'Ready' | 'Completed'>('All');
+  const [statusFilter, setStatusFilter] = useState<'Growing' | 'Ready' | 'Completed'>('Growing');
 
   const lots = useLiveQuery(() => db.lots.toArray());
   const plants = useLiveQuery(() => db.plants.toArray());
@@ -41,7 +41,7 @@ export default function LotList() {
     return <div className="p-4 text-center text-gray-500 font-medium">Loading lots...</div>;
   }
 
-  const baseFiltered = statusFilter === 'All' ? lots : lots.filter(l => l.status === statusFilter);
+  const baseFiltered = lots.filter(l => l.status === statusFilter);
   const filtered = [...baseFiltered].sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
 
   // Pre-calculate sequential sales deduction (FIFO)
@@ -70,13 +70,13 @@ export default function LotList() {
       {/* Status Filter Tabs & Hint */}
       <div className="flex flex-col gap-2 mb-2">
         <div className="flex space-x-2 overflow-x-auto pb-1">
-          {(['All', 'Growing', 'Ready', 'Completed'] as const).map(s => (
+          {(['Growing', 'Ready', 'Completed'] as const).map(s => (
             <button
               key={s}
               onClick={() => setStatusFilter(s)}
               className={`px-4 py-2 rounded-xl text-xs font-black whitespace-nowrap transition-all ${
                 statusFilter === s
-                  ? s === 'Ready' ? 'bg-green-600 text-white' : s === 'Growing' ? 'bg-yellow-500 text-white' : s === 'Completed' ? 'bg-gray-600 text-white' : 'bg-gray-900 text-white'
+                  ? s === 'Ready' ? 'bg-green-600 text-white' : s === 'Growing' ? 'bg-yellow-500 text-white' : 'bg-gray-600 text-white'
                   : 'bg-gray-100 text-gray-500'
               }`}
             >
@@ -187,7 +187,7 @@ export default function LotList() {
         })}
         {filtered.length === 0 && (
           <div className="text-center p-12 bg-white rounded-2xl border border-gray-100 border-dashed">
-            <p className="text-gray-500 font-medium">No {statusFilter !== 'All' ? statusFilter.toLowerCase() : ''} lots found.</p>
+            <p className="text-gray-500 font-medium">No {statusFilter.toLowerCase()} lots found.</p>
           </div>
         )}
       </div>

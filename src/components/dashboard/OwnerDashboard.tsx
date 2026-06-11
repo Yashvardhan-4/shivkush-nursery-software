@@ -38,7 +38,7 @@ export default function OwnerDashboard() {
   const allSales = useLiveQuery(() => db.direct_sales.toArray());
   const allBookings = useLiveQuery(() => db.bookings.toArray());
   const allLots = useLiveQuery(() => db.lots.toArray());
-  const allPlants = useLiveQuery(() => db.plants.where('active').equals(1).toArray());
+  const allPlants = useLiveQuery(() => db.plants.where('active').equals(true as any).toArray());
 
   const todaySalesTotal = (allSales && allBookings)
     ? allSales
