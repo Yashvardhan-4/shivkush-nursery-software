@@ -1,8 +1,8 @@
 'use client';
 
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '@/lib/db';
-import { Banknote, ShoppingCart, User } from 'lucide-react';
+import { db, toLocalDateStr } from '@/lib/db';
+import { Banknote, ShoppingCart, User, BookOpen, Truck } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 
 export default function RecentTransactions({ workerId }: { workerId?: string }) {
@@ -30,87 +30,143 @@ export default function RecentTransactions({ workerId }: { workerId?: string }) 
   // Build unified ledger
   const ledger: any[] = [];
 
-  // 1. Direct Sales
+  // 1. Direct Sales (Grouped by sale_number)
+  const salesByNo: Record<string, typeof allSales> = {};
   for (const sale of allSales) {
     if (workerId && sale.worker_id !== workerId) continue;
+    if (!salesByNo[sale.sale_number]) {
+      salesByNo[sale.sale_number] = [];
+    }
+    salesByNo[sale.sale_number].push(sale);
+  }
+
+  for (const [saleNo, items] of Object.entries(salesByNo)) {
+    const first = items[0];
+    const totalAmount = items.reduce((sum, item) => sum + item.amount, 0);
+    const plantNames = items.map(item => `${plantMap.get(item.plant_id) || 'Plant'} (x${item.quantity})`).join(', ');
+
     ledger.push({
-      id: sale.id,
-      date: new Date(sale.created_at).getTime(),
-      displayDate: new Date(sale.created_at).toLocaleString('en-IN', { hour: 'numeric', minute: 'numeric', hour12: true }),
-      title: `${t('Sale')}: ${plantMap.get(sale.plant_id) || 'Plant'} (x${sale.quantity})`,
-      amount: sale.amount,
-      mode: sale.payment_mode,
-      worker: userMap.get(sale.worker_id) || 'Unknown Worker',
+      id: `ds_${saleNo}`,
+      date: new Date(first.created_at).getTime(),
+      displayDate: new Date(first.created_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour: 'numeric', minute: 'numeric', hour12: true }),
+      title: `${t('Sale')} - ${first.customer_name || t('walkIn')} (${plantNames})`,
+      amount: totalAmount,
+      mode: first.payment_mode,
+      cashAmount: first.cash_amount,
+      upiAmount: first.upi_amount,
+      worker: userMap.get(first.worker_id) || 'Unknown Worker',
       type: 'sale'
     });
   }
 
-  // 2. Bookings (Advance Payments)
+  // 2. Bookings (Advance & Final Payments Grouped by booking_number)
+  const bookingsByNo: Record<string, typeof allBookings> = {};
   for (const b of allBookings) {
     if (workerId && b.worker_id !== workerId) continue;
-    if (b.advance_paid && b.advance_paid > 0) {
-      const dateStr = b.created_at || b.booking_date;
+    if (!bookingsByNo[b.booking_number]) {
+      bookingsByNo[b.booking_number] = [];
+    }
+    bookingsByNo[b.booking_number].push(b);
+  }
+
+  for (const [bookingNo, items] of Object.entries(bookingsByNo)) {
+    const first = items[0];
+    const plantNames = items.map(item => `${plantMap.get(item.plant_id) || 'Plant'} (x${item.quantity})`).join(', ');
+
+    // Grouped Advance
+    const totalAdvance = items.reduce((sum, item) => sum + (item.advance_paid || 0), 0);
+    if (totalAdvance > 0) {
+      const dateStr = first.created_at || first.booking_date;
+      
+      // Sum split details
+      let totalCash: number | undefined = undefined;
+      let totalUpi: number | undefined = undefined;
+      items.forEach(item => {
+        if (item.advance_cash_amount !== undefined && item.advance_cash_amount !== null) {
+          totalCash = (totalCash || 0) + item.advance_cash_amount;
+        }
+        if (item.advance_upi_amount !== undefined && item.advance_upi_amount !== null) {
+          totalUpi = (totalUpi || 0) + item.advance_upi_amount;
+        }
+      });
+
       ledger.push({
-        id: b.id + '_adv',
+        id: `adv_${bookingNo}`,
         date: new Date(dateStr).getTime(),
-        displayDate: new Date(dateStr).toLocaleString('en-IN', { hour: 'numeric', minute: 'numeric', hour12: true }),
-        title: `${t('Advance')}: ${t('bookingNo')} #${b.booking_number}`,
-        amount: b.advance_paid,
-        mode: b.advance_payment_mode || 'Unknown',
-        worker: userMap.get(b.worker_id || '') || 'Unknown Worker',
-        type: 'booking'
+        displayDate: new Date(dateStr).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour: 'numeric', minute: 'numeric', hour12: true }),
+        title: `${t('Advance')} - ${first.customer_name || t('walkIn')} (${plantNames})`,
+        amount: totalAdvance,
+        mode: first.advance_payment_mode || 'Cash',
+        cashAmount: totalCash,
+        upiAmount: totalUpi,
+        worker: userMap.get(first.worker_id || '') || 'Unknown Worker',
+        type: 'advance'
       });
     }
 
-    // 3. Bookings (Final Payments upon Delivery)
-    if (b.status === 'Delivered' && b.total_amount > (b.advance_paid || 0)) {
-       const balance = b.total_amount - (b.advance_paid || 0);
-       
-       // Priority: exact delivery timestamp from Audit Log > End of delivery day > End of booking day
-       let exactTime = deliveryLogs.get(b.booking_number);
-       if (!exactTime) {
-         const dStr = b.delivery_date || b.booking_date;
-         exactTime = new Date(dStr).setHours(23, 59, 59, 999);
-       }
-       
-       ledger.push({
-         id: b.id + '_final',
-         date: exactTime,
-         displayDate: new Date(exactTime).toLocaleString('en-IN', { hour: 'numeric', minute: 'numeric', hour12: true }),
-         title: `${t('Final Pay')}: ${t('bookingNo')} #${b.booking_number}`,
-         amount: balance,
-         mode: b.payment_mode || 'Unknown',
-         worker: userMap.get(b.worker_id || '') || 'Unknown Worker',
-         type: 'booking'
-       });
+    // Grouped Final Payment (collected on delivery)
+    const deliveredItems = items.filter(item => item.status === 'Delivered');
+    if (deliveredItems.length > 0) {
+      const totalBalance = deliveredItems.reduce((sum, item) => sum + Math.max(0, item.total_amount - (item.advance_paid || 0)), 0);
+      if (totalBalance > 0) {
+        // Priority: exact delivery timestamp from Audit Log > End of delivery day > End of booking day
+        let exactTime = deliveryLogs.get(bookingNo);
+        if (!exactTime) {
+          const dStr = first.delivery_date || first.booking_date;
+          exactTime = new Date(dStr).setHours(23, 59, 59, 999);
+        }
+
+        // Sum split details
+        let totalCash: number | undefined = undefined;
+        let totalUpi: number | undefined = undefined;
+        deliveredItems.forEach(item => {
+          if (item.cash_amount !== undefined && item.cash_amount !== null) {
+            totalCash = (totalCash || 0) + item.cash_amount;
+          }
+          if (item.upi_amount !== undefined && item.upi_amount !== null) {
+            totalUpi = (totalUpi || 0) + item.upi_amount;
+          }
+        });
+
+        ledger.push({
+          id: `final_${bookingNo}`,
+          date: exactTime,
+          displayDate: new Date(exactTime).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour: 'numeric', minute: 'numeric', hour12: true }),
+          title: `${t('Final Pay')} - ${first.customer_name || t('walkIn')} (${plantNames})`,
+          amount: totalBalance,
+          mode: first.payment_mode || 'Cash',
+          cashAmount: totalCash,
+          upiAmount: totalUpi,
+          worker: userMap.get(first.worker_id || '') || 'Unknown Worker',
+          type: 'final'
+        });
+      }
     }
   }
 
   // Sort by newest first
   ledger.sort((a, b) => b.date - a.date);
 
-  // Take top 10
-  const recentLedger = ledger.slice(0, 10);
+  // Take top 30
+  const recentLedger = ledger.slice(0, 30);
 
-  // Group by date
+  // Group by date in Asia/Kolkata timezone
   const groupedLedger: { [key: string]: typeof ledger } = {};
   for (const item of recentLedger) {
-    const d = new Date(item.date);
-    const dateKey = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    const dateKey = toLocalDateStr(item.date);
     if (!groupedLedger[dateKey]) groupedLedger[dateKey] = [];
     groupedLedger[dateKey].push(item);
   }
 
   function getDateLabel(dateKey: string) {
-    const today = new Date();
-    const todayStr = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+    const todayStr = toLocalDateStr();
     
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayStr = yesterday.getFullYear() + '-' + String(yesterday.getMonth() + 1).padStart(2, '0') + '-' + String(yesterday.getDate()).padStart(2, '0');
+    const yesterdayStr = toLocalDateStr(yesterday);
 
-    if (dateKey === todayStr) return 'Today';
-    if (dateKey === yesterdayStr) return 'Yesterday';
+    if (dateKey === todayStr) return t('today');
+    if (dateKey === yesterdayStr) return t('yesterday');
     
     return new Date(dateKey).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
   }
@@ -143,32 +199,52 @@ export default function RecentTransactions({ workerId }: { workerId?: string }) 
                   </span>
                 </div>
                 <div className="divide-y divide-gray-100 border border-gray-100 rounded-2xl overflow-hidden">
-                  {items.map((item) => (
-                    <div key={item.id} className="p-4 flex items-center justify-between hover:bg-gray-50 transition-colors">
-                      <div className="flex items-center gap-3">
-                        <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${
-                          item.type === 'sale' ? 'bg-green-100 text-green-600' : 'bg-blue-100 text-blue-600'
-                        }`}>
-                          <ShoppingCart className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <p className="font-bold text-gray-900 text-sm">{item.title}</p>
-                          <div className="flex items-center gap-2 mt-0.5">
-                            <span className="text-xs font-semibold text-gray-500">{item.displayDate}</span>
-                            <span className="w-1 h-1 rounded-full bg-gray-300"></span>
-                            <span className="text-xs font-bold text-gray-400 flex items-center gap-1">
-                              <User className="w-3 h-3" />
-                              {item.worker}
-                            </span>
+                  {items.map((item) => {
+                    const iconColor = item.type === 'sale' ? 'bg-green-100 text-green-600' :
+                                      item.type === 'advance' ? 'bg-blue-100 text-blue-600' :
+                                      'bg-emerald-100 text-emerald-600';
+                    const IconComponent = item.type === 'sale' ? ShoppingCart :
+                                          item.type === 'advance' ? BookOpen :
+                                          Truck;
+                    return (
+                      <div key={item.id} className="p-4 flex items-center justify-between hover:bg-gray-50 transition-colors">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${iconColor}`}>
+                            <IconComponent className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <p className="font-bold text-gray-900 text-sm">{item.title}</p>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <span className="text-xs font-semibold text-gray-500">{item.displayDate}</span>
+                              <span className="w-1 h-1 rounded-full bg-gray-300"></span>
+                              <span className="text-xs font-bold text-gray-400 flex items-center gap-1">
+                                <User className="w-3 h-3" />
+                                {item.worker}
+                              </span>
+                            </div>
                           </div>
                         </div>
+                        <div className="text-right ml-4 shrink-0">
+                          <p className="font-black text-gray-900">{fmt(item.amount)}</p>
+                          <span
+                            className={`text-[9px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap inline-block mt-1 ${
+                              item.mode === 'Cash'
+                                ? 'bg-green-100 text-green-700'
+                                : item.mode === 'UPI'
+                                ? 'bg-blue-100 text-blue-700'
+                                : item.mode === 'Split'
+                                ? 'bg-purple-100 text-purple-700'
+                                : 'bg-gray-100 text-gray-600'
+                            }`}
+                          >
+                            {item.mode === 'Split'
+                              ? `${t('split')} (₹${item.cashAmount} 💵 + ₹${item.upiAmount} 📱)`
+                              : t(String(item.mode || 'unknown').toLowerCase() as any).toUpperCase()}
+                          </span>
+                        </div>
                       </div>
-                      <div className="text-right">
-                        <p className="font-black text-gray-900">{fmt(item.amount)}</p>
-                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{item.mode}</p>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             ))}

@@ -2,9 +2,9 @@
 
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, generateId } from '@/lib/db';
+import { db, generateId, toLocalDateStr } from '@/lib/db';
 import { CheckCircle, XCircle, Clock, ChevronDown, ChevronUp, Calendar } from 'lucide-react';
-
+import { useLanguage } from '@/lib/i18n/LanguageContext';
 
 type AttendanceStatus = 'Present' | 'Absent' | 'Half Day';
 
@@ -14,6 +14,7 @@ interface AttendanceManagerProps {
 }
 
 export default function AttendanceManager({ ownerId, ownerName }: AttendanceManagerProps) {
+  const { t, language } = useLanguage();
   const [loading, setLoading] = useState<Record<string, boolean>>({});
   const [historyOpen, setHistoryOpen] = useState(true);
 
@@ -23,7 +24,7 @@ export default function AttendanceManager({ ownerId, ownerName }: AttendanceMana
     db.attendance.orderBy('date').reverse().toArray()
   );
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = toLocalDateStr();
 
   // Map of workerId -> today's status
   const todayMap = attendanceRecords?.reduce((acc, r) => {
@@ -79,7 +80,7 @@ export default function AttendanceManager({ ownerId, ownerName }: AttendanceMana
 
   const statusConfig: Record<AttendanceStatus, { label: string; activeBg: string; activeText: string; dot: string; badgeBg: string; badgeText: string; icon: React.ReactNode }> = {
     Present: {
-      label: 'Present',
+      label: t('present'),
       activeBg: 'bg-green-600',
       activeText: 'text-white',
       dot: 'bg-green-500',
@@ -88,7 +89,7 @@ export default function AttendanceManager({ ownerId, ownerName }: AttendanceMana
       icon: <CheckCircle className="w-4 h-4" />,
     },
     Absent: {
-      label: 'Absent',
+      label: t('absent'),
       activeBg: 'bg-red-500',
       activeText: 'text-white',
       dot: 'bg-red-500',
@@ -97,7 +98,7 @@ export default function AttendanceManager({ ownerId, ownerName }: AttendanceMana
       icon: <XCircle className="w-4 h-4" />,
     },
     'Half Day': {
-      label: 'Half Day',
+      label: t('halfDay'),
       activeBg: 'bg-orange-500',
       activeText: 'text-white',
       dot: 'bg-orange-400',
@@ -109,7 +110,7 @@ export default function AttendanceManager({ ownerId, ownerName }: AttendanceMana
 
   const formatDate = (dateStr: string) => {
     const d = new Date(dateStr + 'T00:00:00');
-    return d.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+    return d.toLocaleDateString(language === 'mr' ? 'mr-IN' : 'en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
   };
 
   return (
@@ -120,7 +121,7 @@ export default function AttendanceManager({ ownerId, ownerName }: AttendanceMana
           <div className="flex items-center space-x-2 text-white">
             <Calendar className="w-5 h-5" />
             <div>
-              <h2 className="font-black text-lg leading-tight">Mark Today's Attendance</h2>
+              <h2 className="font-black text-lg leading-tight">{t('markTodaysAttendance')}</h2>
               <p className="text-green-100 text-xs font-semibold mt-0.5">{formatDate(today)}</p>
             </div>
           </div>
@@ -141,7 +142,7 @@ export default function AttendanceManager({ ownerId, ownerName }: AttendanceMana
                       {currentStatus && (
                         <div className={`flex items-center space-x-1 text-xs font-bold mt-0.5 ${statusConfig[currentStatus].badgeText}`}>
                           <span className={`w-2 h-2 rounded-full ${statusConfig[currentStatus].dot}`} />
-                          <span>{currentStatus}</span>
+                          <span>{statusConfig[currentStatus].label}</span>
                         </div>
                       )}
                     </div>
@@ -167,8 +168,8 @@ export default function AttendanceManager({ ownerId, ownerName }: AttendanceMana
                         `}
                       >
                         {cfg.icon}
-                        <span className="hidden sm:inline">{status}</span>
-                        <span className="sm:hidden">{status === 'Half Day' ? 'Half' : status}</span>
+                        <span className="hidden sm:inline">{cfg.label}</span>
+                        <span className="sm:hidden">{status === 'Half Day' ? (language === 'mr' ? 'अर्धा' : 'Half') : cfg.label}</span>
                       </button>
                     );
                   })}
@@ -186,8 +187,8 @@ export default function AttendanceManager({ ownerId, ownerName }: AttendanceMana
           className="w-full flex items-center justify-between p-5 text-left"
         >
           <div>
-            <h2 className="font-black text-gray-900 text-lg">Attendance History</h2>
-            <p className="text-xs font-semibold text-gray-400 mt-0.5">{sortedDates.length} day(s) recorded</p>
+            <h2 className="font-black text-gray-900 text-lg">{t('attendanceHistory')}</h2>
+            <p className="text-xs font-semibold text-gray-400 mt-0.5">{sortedDates.length} {t('daysRecorded')}</p>
           </div>
           {historyOpen ? <ChevronUp className="w-5 h-5 text-gray-400" /> : <ChevronDown className="w-5 h-5 text-gray-400" />}
         </button>
@@ -196,14 +197,14 @@ export default function AttendanceManager({ ownerId, ownerName }: AttendanceMana
           <div className="border-t border-gray-50">
             {sortedDates.length === 0 && (
               <div className="text-center py-10 text-gray-400 font-semibold">
-                No attendance records yet.
+                {t('noAttendanceRecords')}
               </div>
             )}
             {sortedDates.map(date => (
               <div key={date} className="border-b border-gray-50 last:border-0">
                 <div className="px-5 py-3 bg-gray-50">
                   <p className="text-xs font-black text-gray-500 uppercase tracking-wider">
-                    {date === today ? '📅 Today — ' : ''}{formatDate(date)}
+                    {date === today ? `📅 ${t('today')} — ` : ''}{formatDate(date)}
                   </p>
                 </div>
                 <div className="divide-y divide-gray-50">
@@ -219,7 +220,7 @@ export default function AttendanceManager({ ownerId, ownerName }: AttendanceMana
                         </div>
                         <span className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black ${cfg.badgeBg} ${cfg.badgeText}`}>
                           {cfg.icon}
-                          {record.status}
+                          {cfg.label}
                         </span>
                       </div>
                     );

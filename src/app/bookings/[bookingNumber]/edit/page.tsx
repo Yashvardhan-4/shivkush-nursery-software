@@ -1,14 +1,15 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import { db, generateId, toLocalDateStr } from '@/lib/db';
+import { useRouter, useParams } from 'next/navigation';
+import { db, generateId, logAudit, toLocalDateStr } from '@/lib/db';
+import type { Booking } from '@/lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { PlusCircle, Trash2 } from 'lucide-react';
+import { PlusCircle, Trash2, ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 
 interface CartItem {
-  id: string;
+  id: string; // original row id or newly generated uuid
   plantId: string;
   plantName: string;
   lotId: string;
@@ -18,19 +19,16 @@ interface CartItem {
   amount: number;
 }
 
-export default function NewBookingPage() {
+export default function EditBookingPage() {
   const { t } = useLanguage();
-  const [bookingNumber, setBookingNumber] = useState('BKG-...');
-  
-  useEffect(() => {
-    setBookingNumber(`BKG-${Date.now().toString().slice(-6)}`);
-  }, []);
-  
+  const params = useParams();
+  const bookingNumber = params.bookingNumber as string;
+  const router = useRouter();
+
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [city, setCity] = useState('');
   const [deliveryDate, setDeliveryDate] = useState('');
-  
   const [cart, setCart] = useState<CartItem[]>([]);
   
   // Current Item State
@@ -43,12 +41,68 @@ export default function NewBookingPage() {
   const [cashAmount, setCashAmount] = useState('');
   const [upiAmount, setUpiAmount] = useState('');
   const [loading, setLoading] = useState(false);
-  const router = useRouter();
+  const [initialLoaded, setInitialLoaded] = useState(false);
 
   const plants = useLiveQuery(() => db.plants.toArray());
   const lots = useLiveQuery(() => db.lots.where('plant_id').equals(plantId).toArray(), [plantId]);
   const bookings = useLiveQuery(() => db.bookings.toArray());
   const customers = useLiveQuery(() => db.customers.toArray());
+
+  // Load existing booking items
+  const originalBookingRows = useLiveQuery(async () => {
+    if (!bookingNumber) return [];
+    return await db.bookings.where('booking_number').equals(bookingNumber).toArray();
+  }, [bookingNumber]);
+
+  useEffect(() => {
+    if (originalBookingRows && originalBookingRows.length > 0 && plants && lots && !initialLoaded) {
+      const first = originalBookingRows[0];
+      setCustomerName(first.customer_name);
+      setCustomerPhone(first.customer_phone);
+      setCity(first.city || '');
+      setDeliveryDate(first.delivery_date || '');
+
+      const loadedCart = originalBookingRows.map(r => {
+        const p = plants.find(plant => plant.id === r.plant_id);
+        const l = lots.find(lot => lot.id === r.lot_id);
+        const price = p ? p.selling_price : (r.total_amount / r.quantity);
+        return {
+          id: r.id,
+          plantId: r.plant_id,
+          plantName: p ? (p.variety ? `${p.plant_name} - ${p.variety}` : p.plant_name) : 'Unknown Plant',
+          lotId: r.lot_id || '',
+          lotName: l ? l.lot_number : t('noLotAssigned'),
+          quantity: r.quantity,
+          price: price,
+          amount: r.total_amount
+        };
+      });
+      setCart(loadedCart);
+
+      const totalAdvance = originalBookingRows.reduce((sum, r) => sum + r.advance_paid, 0);
+      setAdvancePaid(String(totalAdvance));
+
+      // Resolve payment mode from first item containing advance payment mode
+      const hasSplit = originalBookingRows.some(r => r.advance_payment_mode === 'Split');
+      const hasUpi = originalBookingRows.some(r => r.advance_payment_mode === 'UPI');
+      if (hasSplit) {
+        setPaymentMode('Split');
+        const totalCash = originalBookingRows.reduce((sum, r) => sum + (r.advance_cash_amount || 0), 0);
+        const totalUpi = originalBookingRows.reduce((sum, r) => sum + (r.advance_upi_amount || 0), 0);
+        setSplitAmounts({ cash: String(totalCash), upi: String(totalUpi) });
+      } else if (hasUpi) {
+        setPaymentMode('UPI');
+        setUpiAmount(String(totalAdvance));
+        setCashAmount('0');
+      } else {
+        setPaymentMode('Cash');
+        setCashAmount(String(totalAdvance));
+        setUpiAmount('0');
+      }
+
+      setInitialLoaded(true);
+    }
+  }, [originalBookingRows, plants, lots, initialLoaded]);
 
   const uniqueCities = Array.from(new Set(customers?.map(c => c.city).filter(Boolean) as string[]));
 
@@ -57,30 +111,6 @@ export default function NewBookingPage() {
 
   const bookedQty = bookings?.filter(b => b.lot_id === lotId && b.status !== 'Cancelled' && b.status !== 'Delivered').reduce((sum, b) => sum + b.quantity, 0) || 0;
   const availableQty = selectedLot ? selectedLot.total_quantity - bookedQty : 0;
-
-  // Auto-complete triggers
-  const handlePhoneChange = (val: string) => {
-    const digits = val.replace(/\D/g, '').slice(0, 10);
-    setCustomerPhone(digits);
-    if (digits.length === 10 && customers) {
-      const found = customers.find(c => c.mobile === digits);
-      if (found) {
-        setCustomerName(found.name);
-        if (found.city) setCity(found.city);
-      }
-    }
-  };
-
-  const handleNameChange = (val: string) => {
-    setCustomerName(val);
-    if (customers) {
-      const matches = customers.filter(c => c.name.toLowerCase() === val.toLowerCase());
-      if (matches.length === 1) {
-        setCustomerPhone(matches[0].mobile);
-        if (matches[0].city) setCity(matches[0].city);
-      }
-    }
-  };
 
   const handleAddToCart = () => {
     if (!selectedPlant || !quantity) return;
@@ -163,7 +193,7 @@ export default function NewBookingPage() {
   const handleSaveBooking = async (e: React.FormEvent) => {
     e.preventDefault();
     if (cart.length === 0) return alert(t('addAtLeastOneBookingError'));
-    if ((parseFloat(advancePaid) || 0) > totalAmount) {
+    if (advanceNum > totalAmount) {
       alert(t('advanceExceedTotalError'));
       return;
     }
@@ -171,18 +201,17 @@ export default function NewBookingPage() {
     setLoading(true);
 
     const userStr = localStorage.getItem('snms_user');
-    const user = userStr ? JSON.parse(userStr) : { id: 'unknown' };
-    const advance = parseFloat(advancePaid) || 0;
-    const createdAt = new Date().toISOString();
+    const user = userStr ? JSON.parse(userStr) : { id: 'unknown', name: 'Unknown' };
+    const createdAt = originalBookingRows?.[0]?.created_at || new Date().toISOString();
 
-    const finalCash = paymentMode === 'Cash' ? advance : paymentMode === 'UPI' ? 0 : parseFloat(splitAmounts.cash) || 0;
-    const finalUpi  = paymentMode === 'UPI'  ? advance : paymentMode === 'Cash' ? 0 : parseFloat(splitAmounts.upi) || 0;
+    const finalCash = paymentMode === 'Cash' ? advanceNum : paymentMode === 'UPI' ? 0 : parseFloat(splitAmounts.cash) || 0;
+    const finalUpi  = paymentMode === 'UPI'  ? advanceNum : paymentMode === 'Cash' ? 0 : parseFloat(splitAmounts.upi) || 0;
 
-    let advanceRemaining = advance;
+    let advanceRemaining = advanceNum;
     let cashRemaining = finalCash;
     let upiRemaining = finalUpi;
 
-    const newBookings = cart.map((item, index) => {
+    const modifiedBookings = cart.map((item, index) => {
       let itemAdvance = 0;
       let itemCash = 0;
       let itemUpi = 0;
@@ -216,8 +245,11 @@ export default function NewBookingPage() {
       const itemPayMode: 'Cash' | 'UPI' | 'Split' = (itemCash > 0 && itemUpi > 0) ? 'Split' : (itemUpi > 0 ? 'UPI' : 'Cash');
       const finalItemPayMode = itemAdvance > 0 ? itemPayMode : null;
 
+      // Find if this item already existed originally
+      const original = originalBookingRows?.find(r => r.id === item.id);
+
       return {
-        id: generateId(),
+        id: item.id,
         booking_number: bookingNumber,
         customer_name: customerName,
         customer_phone: customerPhone,
@@ -232,50 +264,97 @@ export default function NewBookingPage() {
         total_amount: item.amount,
         booking_date: toLocalDateStr(createdAt),
         delivery_date: deliveryDate || null,
-        status: 'Pending' as const,
-        worker_id: user.id,
+        status: original ? original.status : 'Pending',
+        worker_id: original ? original.worker_id : user.id,
         sync_status: 'pending' as const,
         created_at: createdAt,
-        remarks: ''
-      };
+        remarks: original ? original.remarks : ''
+      } as Booking;
     });
 
-    if (customerPhone && customerName) {
-      let cust = await db.customers.where('mobile').equals(customerPhone).first();
-      if (!cust) {
-        cust = { id: generateId(), name: customerName, mobile: customerPhone, city: city || null };
-        await db.customers.add(cust);
-      } else {
-        cust.name = customerName;
-        if (city) cust.city = city;
-        await db.customers.put(cust);
+    try {
+      const originalIds = new Set(originalBookingRows?.map(r => r.id));
+      const modifiedIds = new Set(modifiedBookings.map(b => b.id));
+
+      // 1. Identify deleted items
+      const deletedIds = Array.from(originalIds).filter(id => !modifiedIds.has(id));
+      for (const id of deletedIds) {
+        await db.bookings.delete(id);
+        await db.sync_queue.add({
+          table: 'bookings',
+          action: 'DELETE',
+          payload: { id },
+          created_at: Date.now()
+        });
       }
-      await db.sync_queue.add({ table: 'customers', action: 'INSERT', payload: cust, created_at: Date.now() });
-    }
 
-    await db.bookings.bulkAdd(newBookings);
-    
-    for (const b of newBookings) {
-      await db.sync_queue.add({
-        table: 'bookings',
-        action: 'INSERT',
-        payload: b,
-        created_at: Date.now()
+      // 2. Identify inserted & updated items
+      for (const b of modifiedBookings) {
+        if (originalIds.has(b.id)) {
+          // Update
+          await db.bookings.put(b);
+          await db.sync_queue.add({
+            table: 'bookings',
+            action: 'UPDATE',
+            payload: { ...b, sync_status: undefined },
+            created_at: Date.now()
+          });
+        } else {
+          // Insert
+          await db.bookings.add(b);
+          await db.sync_queue.add({
+            table: 'bookings',
+            action: 'INSERT',
+            payload: b,
+            created_at: Date.now()
+          });
+        }
+      }
+
+      // 3. Customer logic
+      if (customerPhone && customerName) {
+        let cust = await db.customers.where('mobile').equals(customerPhone).first();
+        if (!cust) {
+          cust = { id: generateId(), name: customerName, mobile: customerPhone, city: city || null };
+          await db.customers.add(cust);
+        } else {
+          cust.name = customerName;
+          if (city) cust.city = city;
+          await db.customers.put(cust);
+        }
+        await db.sync_queue.add({ table: 'customers', action: 'INSERT', payload: cust, created_at: Date.now() });
+      }
+
+      // 4. Audit Log
+      await logAudit(user.id, user.name, 'EDIT_BOOKING', 'bookings', bookingNumber, {
+        totalAmount,
+        itemCount: modifiedBookings.length,
+        deletedCount: deletedIds.length
       });
-    }
 
-    window.dispatchEvent(new Event('online'));
-    router.push('/bookings');
+      window.dispatchEvent(new Event('online'));
+      router.push('/bookings');
+    } catch (err) {
+      console.error(err);
+      alert('Failed to save booking details');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
     <div className="p-6 mb-24 space-y-6">
       <header className="mb-4">
-        <div className="flex justify-between items-end">
-          <h1 className="text-3xl font-black text-gray-900 tracking-tight">{t('newBooking')}</h1>
-          <span className="bg-gray-100 text-gray-700 px-3 py-1 rounded-lg text-sm font-black border border-gray-200">
-            {bookingNumber}
-          </span>
+        <div className="flex items-center gap-3">
+          <Link href="/bookings" className="p-2 bg-white rounded-xl shadow-sm border border-gray-100 active:scale-95 transition-all text-gray-500 hover:text-gray-700">
+            <ArrowLeft className="w-5 h-5" />
+          </Link>
+          <div className="flex-1 flex justify-between items-end">
+            <h1 className="text-3xl font-black text-gray-900 tracking-tight">{t('editOrderTitle')}</h1>
+            <span className="bg-gray-100 text-gray-700 px-3 py-1 rounded-lg text-sm font-black border border-gray-200">
+              {bookingNumber}
+            </span>
+          </div>
         </div>
       </header>
 
@@ -285,42 +364,13 @@ export default function NewBookingPage() {
           <h2 className="font-black text-gray-800 border-b border-gray-100 pb-2">{t('customerDetails')}</h2>
           <div className="space-y-2">
             <label className="text-xs font-bold text-gray-500 uppercase">{t('customerName')}</label>
-            <input 
-              required 
-              type="text" 
-              value={customerName} 
-              onChange={e => handleNameChange(e.target.value)} 
-              list="customer-names"
-              className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold" 
-              placeholder="e.g. Ramesh Kumar" 
-            />
-            <datalist id="customer-names">
-              {customers?.map(c => (
-                <option key={c.id} value={c.name}>{c.mobile}</option>
-              ))}
-            </datalist>
+            <input required type="text" value={customerName} onChange={e => setCustomerName(e.target.value)} className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold" placeholder="e.g. Ramesh Kumar" />
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <label className="text-xs font-bold text-gray-500 uppercase">{t('customerPhone')}</label>
-              <input 
-                required 
-                type="tel" 
-                pattern="[0-9]{10}" 
-                maxLength={10} 
-                title="Phone number must be exactly 10 digits" 
-                value={customerPhone} 
-                onChange={e => handlePhoneChange(e.target.value)} 
-                list="customer-phones"
-                className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold" 
-                placeholder="9876543210" 
-              />
-              <datalist id="customer-phones">
-                {customers?.map(c => (
-                  <option key={c.id} value={c.mobile}>{c.name}</option>
-                ))}
-              </datalist>
+              <input required type="tel" pattern="[0-9]{10}" maxLength={10} title="Phone number must be exactly 10 digits" value={customerPhone} onChange={e => setCustomerPhone(e.target.value.replace(/\D/g, '').slice(0, 10))} className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold" placeholder="9876543210" />
             </div>
             <div className="space-y-2">
               <label className="text-xs font-bold text-gray-500 uppercase">{t('role')} / City</label>
@@ -343,7 +393,6 @@ export default function NewBookingPage() {
         <div className="bg-blue-50 p-5 rounded-3xl border border-blue-100 space-y-4">
           <div className="flex justify-between items-center border-b border-blue-200 pb-2">
             <h2 className="font-black text-blue-900">{t('addPlants')}</h2>
-            <Link href="/plants/new" className="text-xs font-bold text-blue-600 bg-white px-3 py-1 rounded-full shadow-sm hover:bg-blue-100">+ New Plant</Link>
           </div>
           
           <div className="space-y-2">
@@ -483,7 +532,7 @@ export default function NewBookingPage() {
         )}
 
         <button type="submit" disabled={loading || cart.length === 0 || !splitValid} className="w-full bg-gray-900 text-white font-black text-xl p-5 rounded-2xl active:scale-95 transition-transform disabled:opacity-50 shadow-xl">
-          {loading ? t('processing') : t('confirmEntireBooking')}
+          {loading ? t('processing') : t('saveChanges')}
         </button>
       </form>
     </div>

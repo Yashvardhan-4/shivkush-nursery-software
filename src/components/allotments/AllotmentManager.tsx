@@ -16,6 +16,7 @@ import {
   AlertTriangle,
   CalendarDays,
 } from 'lucide-react';
+import { useLanguage } from '@/lib/i18n/LanguageContext';
 
 // ──────────────────────────────────────────────
 // Types
@@ -54,6 +55,7 @@ function deriveGroupStatus(items: Booking[]): string {
 }
 
 function StatusBadge({ status }: { status: string }) {
+  const { t } = useLanguage();
   const map: Record<string, string> = {
     Pending: 'bg-amber-100 text-amber-600 border border-amber-200',
     Allocated: 'bg-blue-100 text-blue-600 border border-blue-200',
@@ -63,17 +65,11 @@ function StatusBadge({ status }: { status: string }) {
   };
   return (
     <span className={`text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full ${map[status] ?? 'bg-gray-200 text-gray-600'}`}>
-      {status}
+      {t(status.toLowerCase() as any)}
     </span>
   );
 }
 
-// ──────────────────────────────────────────────
-// Per-Item Allotment Row
-// ──────────────────────────────────────────────
-// ──────────────────────────────────────────────
-// Helpers
-// ──────────────────────────────────────────────
 function getAvailableInLot(lotId: string, lots: Lot[], allotments: Allotment[], bookings: Booking[]): number {
   const lot = lots.find((l) => l.id === lotId);
   if (!lot) return 0;
@@ -103,6 +99,7 @@ function AllotmentRow({
   allotments: Allotment[];
   plants: Plant[];
 }) {
+  const { t } = useLanguage();
   const [selectedLotId, setSelectedLotId] = useState('');
   const [qty, setQty] = useState(booking.quantity);
   const [loading, setLoading] = useState(false);
@@ -120,7 +117,7 @@ function AllotmentRow({
   const available = selectedLotId ? availableInLot(selectedLotId) : null;
 
   async function handleRelease() {
-    if (!confirm('Are you sure you want to release this allotment? The booking status will return to Pending.')) return;
+    if (!confirm(t('releaseAllotmentConfirm'))) return;
     setLoading(true);
     setError('');
     try {
@@ -161,7 +158,7 @@ function AllotmentRow({
         { booking_id: booking.id, lot_id: booking.lot_id }
       );
     } catch (e: any) {
-      setError(e.message || 'Failed to release allotment.');
+      setError(e.message || t('releaseAllotmentError'));
     } finally {
       setLoading(false);
     }
@@ -182,7 +179,7 @@ function AllotmentRow({
     });
 
     if (!bestLot) {
-      setError('No stock available in any lot for this plant.');
+      setError(t('noStockAvailableError'));
       return;
     }
 
@@ -241,7 +238,7 @@ function AllotmentRow({
         { booking_id: booking.id, lot_id: bestLot.id, quantity: allotQty }
       );
     } catch (e: any) {
-      setError(e.message || 'Failed to auto-allot.');
+      setError(e.message || t('autoAllotFailedError'));
     } finally {
       setLoading(false);
     }
@@ -249,10 +246,10 @@ function AllotmentRow({
 
   async function handleAllot() {
     setError('');
-    if (!selectedLotId) { setError('Select a lot first.'); return; }
-    if (qty <= 0) { setError('Quantity must be > 0.'); return; }
+    if (!selectedLotId) { setError(t('selectLotFirstError')); return; }
+    if (qty <= 0) { setError(t('qtyGreaterThanZeroError')); return; }
     if (available !== null && qty > available) {
-      setError(`Only ${available} available in this lot.`);
+      setError(t('onlyQtyAvailableError').replace('{available}', String(available)));
       return;
     }
     setLoading(true);
@@ -333,8 +330,8 @@ function AllotmentRow({
           </p>
           {allottedLot && (
             <p className="text-xs text-gray-500 mt-0.5 flex items-center gap-1">
-              <Layers className="w-3 h-3" /> Lot {allottedLot.lot_number}
-              {allotment && <span className="ml-1">· {allotment.quantity} allotted</span>}
+              <Layers className="w-3 h-3" /> {t('lot')} {allottedLot.lot_number}
+              {allotment && <span className="ml-1">· {allotment.quantity} {t('allotted')}</span>}
             </p>
           )}
         </div>
@@ -345,9 +342,9 @@ function AllotmentRow({
               onClick={handleRelease}
               disabled={loading}
               className="px-2.5 py-1.5 bg-red-50 hover:bg-red-100 border border-red-200 text-red-600 rounded-xl text-xs font-black transition-all active:scale-95 shrink-0 flex items-center gap-1"
-              title="Release allotment"
+              title={t('releaseAllotment')}
             >
-              Release
+              {t('release')}
             </button>
           )}
         </div>
@@ -370,13 +367,13 @@ function AllotmentRow({
         <div className="rounded-xl bg-red-50 border border-red-200 p-3 flex flex-col gap-2">
           <p className="text-xs font-bold text-red-700 flex items-center gap-1.5">
             <AlertTriangle className="w-4 h-4 shrink-0" />
-            No growing/ready stock available for this plant!
+            {t('noStockAvailable')}
           </p>
           <a
             href="/lots/new"
-            className="text-xs text-center font-black text-white bg-red-600 hover:bg-red-700 py-1.5 px-3 rounded-lg active:scale-95 transition-all animate-pulse"
+            className="text-xs text-center font-black text-white bg-red-600 hover:bg-red-700 py-1.5 px-3 rounded-lg active:scale-95 transition-all"
           >
-            + Create New Lot
+            {t('createNewLot')}
           </a>
         </div>
       ) : (
@@ -385,7 +382,7 @@ function AllotmentRow({
           <div className="space-y-2">
             <div className="flex justify-between items-center">
               <label className="text-[10px] font-black uppercase tracking-widest text-gray-500">
-                Select Lot
+                {t('selectLot')}
               </label>
               {eligibleLots.length > 0 && (
                 <button
@@ -393,7 +390,7 @@ function AllotmentRow({
                   disabled={loading}
                   className="text-[10px] font-black uppercase tracking-wider text-amber-600 hover:text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-lg flex items-center gap-1 active:scale-95 transition-all"
                 >
-                  ⚡ Auto
+                  {t('autoAllotItem')}
                 </button>
               )}
             </div>
@@ -403,12 +400,12 @@ function AllotmentRow({
                 onChange={(e) => { setSelectedLotId(e.target.value); setError(''); }}
                 className="w-full bg-white border border-gray-200 text-gray-900 text-sm font-semibold rounded-xl px-3 py-2.5 pr-8 appearance-none outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/40 transition-all"
               >
-                <option value="">— Pick a lot —</option>
+                <option value="">{t('pickLot')}</option>
                 {eligibleLots.map((lot) => {
                   const avail = availableInLot(lot.id);
                   return (
                     <option key={lot.id} value={lot.id} disabled={avail === 0}>
-                      {lot.lot_number} · {lot.status} · {avail} available
+                      {lot.lot_number} · {t(lot.status.toLowerCase() as any)} · {avail} {t('free')}
                     </option>
                   );
                 })}
@@ -419,9 +416,9 @@ function AllotmentRow({
             {selectedLotId && (
               <p className="text-xs font-bold text-blue-400 flex items-center gap-1.5">
                 <CalendarDays className="w-3 h-3" />
-                Ready: {selectedLot?.ready_date ?? 'N/A'} ·{' '}
+                {t('ready')}: {selectedLot?.ready_date ?? 'N/A'} ·{' '}
                 <span className={available === 0 ? 'text-red-400' : 'text-emerald-600'}>
-                  {available} available
+                  {available} {t('free')}
                 </span>
               </p>
             )}
@@ -430,7 +427,7 @@ function AllotmentRow({
           {/* Quantity input */}
           <div className="space-y-1.5">
             <label className="text-[10px] font-black uppercase tracking-widest text-gray-500">
-              Allot Quantity
+              {t('allotQty')}
             </label>
             <input
               type="number"
@@ -457,7 +454,7 @@ function AllotmentRow({
             className="w-full bg-amber-500 hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed text-gray-950 font-black text-sm py-2.5 rounded-xl transition-all active:scale-95 shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2"
           >
             <CheckCircle2 className="w-4 h-4" />
-            {loading ? 'Allotting…' : 'Allot to Booking'}
+            {loading ? t('allotting') : t('allotToBooking')}
           </button>
         </>
       )}
@@ -481,6 +478,7 @@ function BookingCard({
   allotments: Allotment[];
   plants: Plant[];
 }) {
+  const { t } = useLanguage();
   const [autoLoading, setAutoLoading] = useState(false);
   const [autoError, setAutoError] = useState('');
 
@@ -564,7 +562,7 @@ function BookingCard({
         );
       }
     } catch (e: any) {
-      setAutoError(e.message || 'Auto-allot failed.');
+      setAutoError(e.message || t('autoAllotFailedError'));
     } finally {
       setAutoLoading(false);
     }
@@ -619,7 +617,7 @@ function BookingCard({
             disabled={autoLoading}
             className="w-full bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 disabled:opacity-50 text-gray-950 font-black text-xs py-2 rounded-xl transition-all active:scale-95 shadow-md flex items-center justify-center gap-1.5"
           >
-            ⚡ {autoLoading ? 'Auto-Allotting...' : 'Auto-Allot Order (All Pending)'}
+            ⚡ {autoLoading ? t('autoAllotting') : t('autoAllotAllPending')}
           </button>
           {autoError && (
             <p className="text-[10px] text-red-500 font-bold mt-1 text-center">{autoError}</p>
@@ -644,15 +642,15 @@ function BookingCard({
       {/* ── Footer: Financial summary ── */}
       <div className="mx-4 mb-4 mt-1 rounded-xl bg-gray-50/50 border border-gray-200/50 px-4 py-3 grid grid-cols-3 gap-2 text-center">
         <div>
-          <p className="text-[9px] font-black uppercase tracking-widest text-gray-500 mb-0.5">Total</p>
+          <p className="text-[9px] font-black uppercase tracking-widest text-gray-500 mb-0.5">{t('stock')}</p>
           <p className="text-sm font-black text-gray-900">₹{group.total_amount.toLocaleString()}</p>
         </div>
         <div>
-          <p className="text-[9px] font-black uppercase tracking-widest text-gray-500 mb-0.5">Advance</p>
+          <p className="text-[9px] font-black uppercase tracking-widest text-gray-500 mb-0.5">{t('advancePaid')}</p>
           <p className="text-sm font-black text-emerald-600">₹{group.total_advance.toLocaleString()}</p>
         </div>
         <div>
-          <p className="text-[9px] font-black uppercase tracking-widest text-gray-500 mb-0.5">Balance</p>
+          <p className="text-[9px] font-black uppercase tracking-widest text-gray-500 mb-0.5">{t('balance')}</p>
           <p className={`text-sm font-black ${balanceDue > 0 ? 'text-red-400' : 'text-emerald-600'}`}>
             ₹{balanceDue.toLocaleString()}
           </p>
@@ -666,6 +664,7 @@ function BookingCard({
 // Main: AllotmentManager
 // ──────────────────────────────────────────────
 export default function AllotmentManager() {
+  const { t } = useLanguage();
   const [filter, setFilter] = useState<'Pending' | 'Allocated' | 'Delivered' | 'All'>('Pending');
 
   const bookings = useLiveQuery(() => db.bookings.toArray());
@@ -677,7 +676,7 @@ export default function AllotmentManager() {
     return (
       <div className="flex flex-col items-center justify-center py-24 text-gray-600">
         <div className="w-8 h-8 border-2 border-gray-200 border-t-amber-500 rounded-full animate-spin mb-4" />
-        <p className="text-sm font-bold">Loading…</p>
+        <p className="text-sm font-bold">{t('loadingLots')}</p>
       </div>
     );
   }
@@ -748,7 +747,7 @@ export default function AllotmentManager() {
                 : 'bg-white text-gray-500 border-gray-800 hover:border-gray-200'
             }`}
           >
-            {tab.label}
+            {t(tab.key.toLowerCase() as any)}
             <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-full ${
               filter === tab.key ? 'bg-white/10' : 'bg-gray-50'
             }`}>
@@ -764,10 +763,7 @@ export default function AllotmentManager() {
           <div className="w-16 h-16 rounded-full bg-gray-50 border border-gray-200 flex items-center justify-center mb-4">
             <Package className="w-7 h-7 text-gray-600" />
           </div>
-          <p className="text-gray-500 font-bold">No {filter !== 'All' ? filter.toLowerCase() : ''} bookings</p>
-          <p className="text-gray-700 text-xs mt-1">
-            {filter === 'Pending' ? 'All bookings have been processed.' : 'Nothing to show here.'}
-          </p>
+          <p className="text-gray-500 font-bold">{t('noBookingsFound')}</p>
         </div>
       ) : (
         <div className="space-y-4">

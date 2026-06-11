@@ -92,7 +92,7 @@ export default function WorkerDashboard() {
         <div className="relative z-10">
           <div className="flex items-center space-x-3 opacity-90 mb-3">
             <Banknote className="w-5 h-5" />
-            <span className="text-sm font-bold uppercase tracking-wider">Today's Sales</span>
+            <span className="text-sm font-bold uppercase tracking-wider">{t('todaysSales')}</span>
           </div>
           <p className="text-5xl font-black tracking-tighter">
             ₹{(todaySalesTotal ?? 0).toLocaleString('en-IN')}
@@ -107,8 +107,8 @@ export default function WorkerDashboard() {
             <PlusCircle className="w-7 h-7" />
           </div>
           <div>
-            <h3 className="text-lg font-extrabold text-gray-900">Sell</h3>
-            <p className="text-xs font-medium text-gray-500 mt-1">Direct sale or deliver booked order</p>
+            <h3 className="text-lg font-extrabold text-gray-900">{t('sell')}</h3>
+            <p className="text-xs font-medium text-gray-500 mt-1">{t('sellSub')}</p>
           </div>
         </Link>
 
@@ -117,8 +117,8 @@ export default function WorkerDashboard() {
             <BookOpen className="w-7 h-7" />
           </div>
           <div>
-            <h3 className="text-lg font-extrabold text-gray-900">Manage Bookings</h3>
-            <p className="text-xs font-medium text-gray-500 mt-1">View, deliver, or create bookings</p>
+            <h3 className="text-lg font-extrabold text-gray-900">{t('manageBookings')}</h3>
+            <p className="text-xs font-medium text-gray-500 mt-1">{t('manageBookingsSub')}</p>
           </div>
         </Link>
 
@@ -127,8 +127,8 @@ export default function WorkerDashboard() {
             <Layers className="w-7 h-7" />
           </div>
           <div>
-            <h3 className="text-lg font-extrabold text-gray-900">View Stock</h3>
-            <p className="text-xs font-medium text-gray-500 mt-1">Check available plants in lots</p>
+            <h3 className="text-lg font-extrabold text-gray-900">{t('viewStock')}</h3>
+            <p className="text-xs font-medium text-gray-500 mt-1">{t('viewStockSub')}</p>
           </div>
         </Link>
       </div>
@@ -140,15 +140,15 @@ export default function WorkerDashboard() {
       <div className="space-y-3">
         <div className="flex items-center space-x-2 px-1">
           <Leaf className="w-5 h-5 text-green-600" />
-          <h2 className="font-black text-gray-800 text-lg">Free Stock by Plant</h2>
+          <h2 className="font-black text-gray-800 text-lg">{t('freeStockByPlant')}</h2>
         </div>
 
         {!freeStockData && (
-          <p className="text-sm text-gray-400 text-center py-4">Loading stock...</p>
+          <p className="text-sm text-gray-400 text-center py-4">{t('loadingStock')}</p>
         )}
 
         {freeStockData && freeStockData.length === 0 && (
-          <p className="text-sm text-gray-400 text-center py-4">No plant stock available.</p>
+          <p className="text-sm text-gray-400 text-center py-4">{t('noPlantStock')}</p>
         )}
 
         {freeStockData && freeStockData.map(({ plant, totalStock, allottedQty, freeStock }) => (
@@ -158,17 +158,17 @@ export default function WorkerDashboard() {
           >
             <div>
               <p className="font-extrabold text-gray-900 text-base">{plant.plant_name}</p>
-              <p className="text-xs font-medium text-gray-400 mt-0.5">{plant.variety} · Total: {totalStock}</p>
+              <p className="text-xs font-medium text-gray-400 mt-0.5">{plant.variety} · {t('stock')}: {totalStock}</p>
             </div>
             <div className="flex items-center space-x-3 text-right">
               {allottedQty > 0 && (
                 <div className="text-center">
-                  <p className="text-xs font-bold text-red-500 uppercase tracking-wide">BOOKED</p>
+                  <p className="text-xs font-bold text-red-500 uppercase tracking-wide">{t('booked')}</p>
                   <p className="text-lg font-black text-red-500">{allottedQty}</p>
                 </div>
               )}
               <div className="text-center">
-                <p className="text-xs font-bold text-green-600 uppercase tracking-wide">FREE</p>
+                <p className="text-xs font-bold text-green-600 uppercase tracking-wide">{t('free')}</p>
                 <p className="text-2xl font-black text-green-600">{freeStock}</p>
               </div>
             </div>

@@ -4,8 +4,10 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/lib/db';
 import { useState } from 'react';
 import { Pencil, AlertTriangle, Check } from 'lucide-react';
+import { useLanguage } from '@/lib/i18n/LanguageContext';
 
 export default function LotList() {
+  const { t } = useLanguage();
   const [statusFilter, setStatusFilter] = useState<'Growing' | 'Ready' | 'Completed'>('Growing');
 
   const lots = useLiveQuery(() => db.lots.toArray());
@@ -38,7 +40,7 @@ export default function LotList() {
   };
 
   if (!lots || !plants || !allotments || !bookings) {
-    return <div className="p-4 text-center text-gray-500 font-medium">Loading lots...</div>;
+    return <div className="p-4 text-center text-gray-500 font-medium">{t('loadingLots')}</div>;
   }
 
   const baseFiltered = lots.filter(l => l.status === statusFilter);
@@ -69,12 +71,12 @@ export default function LotList() {
                   : 'bg-gray-100 text-gray-500'
               }`}
             >
-              {s}
+              {t(s.toLowerCase() as any)}
             </button>
           ))}
         </div>
         <p className="text-[10px] text-gray-400 italic px-1">
-          (Ready = Overdue/Ready to deliver, Completed = Stock is 0)
+          {t('lotFilterHint')}
         </p>
       </div>
 
@@ -116,7 +118,11 @@ export default function LotList() {
                   </div>
                   <div className="flex items-center gap-2">
                     <span className={`px-3 py-1 rounded-full text-xs font-black ${statusColors[lot.status] || 'bg-gray-100 text-gray-600'}`}>
-                      {isReady && lot.status === 'Growing' ? 'OVERDUE ⚠️' : lot.status === 'Growing' ? `IN ${daysUntilReady}D` : lot.status.toUpperCase()}
+                      {isReady && lot.status === 'Growing'
+                        ? t('overdueBadge')
+                        : lot.status === 'Growing'
+                          ? t('inDays').replace('{days}', String(daysUntilReady))
+                          : t(lot.status.toLowerCase() as any).toUpperCase()}
                     </span>
                     <a
                       href={`/lots/${lot.id}/edit`}
@@ -132,32 +138,36 @@ export default function LotList() {
                   <div className="flex flex-col gap-2 bg-orange-50 border border-orange-200 rounded-xl p-3 mb-3">
                     <div className="flex items-center gap-2 text-xs font-bold text-orange-700">
                       <AlertTriangle className="w-4 h-4 shrink-0" />
-                      Ready date passed — update status or extend date
+                      {t('readyDatePassed')}
                     </div>
                     <button
                       onClick={() => handleMarkReady(lot.id)}
                       className="bg-orange-600 text-white text-xs font-bold py-2 px-3 rounded-lg flex items-center justify-center gap-1 active:scale-95 transition-transform"
                     >
-                      <Check className="w-3.5 h-3.5" /> Mark as Ready
+                      <Check className="w-3.5 h-3.5" /> {t('markAsReady')}
                     </button>
                   </div>
                 )}
 
-                <div className="grid grid-cols-4 gap-2 bg-gray-50 p-3 rounded-xl">
+                <div className="grid grid-cols-5 gap-1 bg-gray-50 p-3 rounded-xl">
                   <div className="text-center">
-                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest">Stock</p>
+                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest">{t('total')}</p>
+                    <p className="font-black text-gray-700 text-lg">{lot.initial_quantity ?? lot.total_quantity}</p>
+                  </div>
+                  <div className="text-center border-l border-gray-200">
+                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest">{t('stock')}</p>
                     <p className="font-black text-gray-900 text-lg">{lot.total_quantity}</p>
                   </div>
                   <div className="text-center border-l border-gray-200">
-                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest">Allotted</p>
+                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest">{t('allotted')}</p>
                     <p className="font-black text-blue-600 text-lg">{allottedQty}</p>
                   </div>
                   <div className="text-center border-l border-gray-200">
-                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest">Sold</p>
+                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest">{t('sold')}</p>
                     <p className="font-black text-orange-500 text-lg">{soldQty}</p>
                   </div>
                   <div className="text-center border-l border-gray-200">
-                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest">Free</p>
+                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest">{t('free')}</p>
                     <p className={`font-black text-lg ${freeStock > 0 ? 'text-green-600' : 'text-red-500'}`}>{freeStock}</p>
                   </div>
                 </div>
@@ -168,7 +178,7 @@ export default function LotList() {
                   </p>
                 )}
                 <p className="text-xs text-gray-400 font-semibold mt-3">
-                  Ready: {readyDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                  {t('readyDate')}: {readyDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
                 </p>
               </div>
             </div>
@@ -176,7 +186,7 @@ export default function LotList() {
         })}
         {filtered.length === 0 && (
           <div className="text-center p-12 bg-white rounded-2xl border border-gray-100 border-dashed">
-            <p className="text-gray-500 font-medium">No {statusFilter.toLowerCase()} lots found.</p>
+            <p className="text-gray-500 font-medium">{t('noLotsFoundStatus').replace('{status}', t(statusFilter.toLowerCase() as any))}</p>
           </div>
         )}
       </div>

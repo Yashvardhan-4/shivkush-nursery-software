@@ -3,16 +3,20 @@
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, toLocalDateStr } from '@/lib/db';
+import { useLanguage } from '@/lib/i18n/LanguageContext';
 import {
   Banknote,
   Smartphone,
-  TrendingUp,
   AlertTriangle,
   CheckCircle2,
   Sprout,
   ClipboardList,
   BarChart3,
   Layers,
+  ShoppingCart,
+  BookOpen,
+  Truck,
+  CalendarDays,
 } from 'lucide-react';
 
 type Tab = 'reconciliation' | 'production' | 'lots';
@@ -21,8 +25,16 @@ type Tab = 'reconciliation' | 'production' | 'lots';
 function fmt(n: number) {
   return '₹' + n.toLocaleString('en-IN');
 }
-function today() {
-  return new Date().toISOString().split('T')[0];
+function todayIST() {
+  return toLocalDateStr();
+}
+function fmtTime(ts: number) {
+  return new Date(ts).toLocaleTimeString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
 }
 
 // ─── Tab Button ───────────────────────────────────────────────────────────────
@@ -49,16 +61,91 @@ function TabBtn({
   );
 }
 
+// ─── Payment Badge ────────────────────────────────────────────────────────────
+function PaymentBadge({
+  mode,
+  cashAmt,
+  upiAmt,
+}: {
+  mode: string;
+  cashAmt?: number;
+  upiAmt?: number;
+}) {
+  if (mode === 'Split') {
+    return (
+      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 whitespace-nowrap">
+        💵 ₹{cashAmt ?? 0} + 📱 ₹{upiAmt ?? 0}
+      </span>
+    );
+  }
+  if (mode === 'UPI') {
+    return (
+      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 whitespace-nowrap">
+        📱 UPI
+      </span>
+    );
+  }
+  return (
+    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-green-100 text-green-700 whitespace-nowrap">
+      💵 CASH
+    </span>
+  );
+}
+
+// ─── Event Type Pill ──────────────────────────────────────────────────────────
+function EventTypePill({ type }: { type: 'Direct Sale' | 'Booking Delivery' | 'Booking Advance' }) {
+  const styles = {
+    'Direct Sale': 'bg-sky-100 text-sky-700',
+    'Booking Delivery': 'bg-emerald-100 text-emerald-700',
+    'Booking Advance': 'bg-violet-100 text-violet-700',
+  };
+  const labels = {
+    'Direct Sale': 'SALE',
+    'Booking Delivery': 'DELIVERY',
+    'Booking Advance': 'ADVANCE',
+  };
+  return (
+    <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider ${styles[type]}`}>
+      {labels[type]}
+    </span>
+  );
+}
+
+// ─── Event Icon ───────────────────────────────────────────────────────────────
+function EventIcon({ type }: { type: 'Direct Sale' | 'Booking Delivery' | 'Booking Advance' }) {
+  if (type === 'Direct Sale') {
+    return (
+      <div className="w-10 h-10 rounded-2xl bg-sky-100 flex items-center justify-center shrink-0">
+        <ShoppingCart className="w-5 h-5 text-sky-600" />
+      </div>
+    );
+  }
+  if (type === 'Booking Delivery') {
+    return (
+      <div className="w-10 h-10 rounded-2xl bg-emerald-100 flex items-center justify-center shrink-0">
+        <Truck className="w-5 h-5 text-emerald-600" />
+      </div>
+    );
+  }
+  return (
+    <div className="w-10 h-10 rounded-2xl bg-violet-100 flex items-center justify-center shrink-0">
+      <BookOpen className="w-5 h-5 text-violet-600" />
+    </div>
+  );
+}
+
 // ─── RECONCILIATION TAB ───────────────────────────────────────────────────────
 function ReconciliationTab() {
-  const [selectedDate, setSelectedDate] = useState(today());
+  const { t } = useLanguage();
+  const [selectedDate, setSelectedDate] = useState(todayIST());
   const todayStr = selectedDate;
 
   const salesRaw = useLiveQuery(() => db.direct_sales.toArray());
   const plantsRaw = useLiveQuery(() => db.plants.toArray());
   const bookingsRaw = useLiveQuery(() => db.bookings.toArray());
+  const auditLogsRaw = useLiveQuery(() => db.audit_logs.toArray());
 
-  if (!salesRaw || !plantsRaw || !bookingsRaw) {
+  if (!salesRaw || !plantsRaw || !bookingsRaw || !auditLogsRaw) {
     return <LoadingCard />;
   }
 
@@ -103,6 +190,11 @@ function ReconciliationTab() {
   const grandTotal = cashTotal + upiTotal;
 
   const plantMap = new Map(plantsRaw.map((p) => [p.id, p]));
+  const deliveryLogs = new Map(
+    auditLogsRaw
+      .filter(l => l.action === 'DELIVER_BOOKING')
+      .map(l => [l.record_id, new Date(l.created_at).getTime()])
+  );
 
   const getPlantName = (plantId: string) => {
     const plant = plantMap.get(plantId);
@@ -122,59 +214,108 @@ function ReconciliationTab() {
     cash_amount?: number;
     upi_amount?: number;
     timestamp: number;
+    order_number: string;
   };
 
   const collectionEvents: CollectionEvent[] = [];
 
+  // Group Direct Sales by sale_number
+  const salesByNumber: Record<string, typeof sales> = {};
   sales.forEach(s => {
+    if (!salesByNumber[s.sale_number]) salesByNumber[s.sale_number] = [];
+    salesByNumber[s.sale_number].push(s);
+  });
+
+  Object.entries(salesByNumber).forEach(([saleNo, items]) => {
+    const first = items[0];
+    const totalAmount = items.reduce((sum, item) => sum + item.amount, 0);
+    const totalQty = items.reduce((sum, item) => sum + item.quantity, 0);
+    const plantNames = items.map(item => `${getPlantName(item.plant_id)} ×${item.quantity}`).join(', ');
     collectionEvents.push({
-      id: s.id!,
+      id: `ds_${saleNo}`,
       type: 'Direct Sale',
-      plant_name: getPlantName(s.plant_id),
-      customer_name: s.customer_name || 'Walk-in',
-      quantity: s.quantity,
-      amount: s.amount,
-      payment_mode: s.payment_mode,
-      cash_amount: s.cash_amount,
-      upi_amount: s.upi_amount,
-      timestamp: new Date(s.created_at).getTime()
+      plant_name: plantNames,
+      customer_name: first.customer_name || 'Walk-in',
+      quantity: totalQty,
+      amount: totalAmount,
+      payment_mode: first.payment_mode,
+      cash_amount: first.cash_amount ?? undefined,
+      upi_amount: first.upi_amount ?? undefined,
+      timestamp: new Date(first.created_at).getTime(),
+      order_number: saleNo,
     });
   });
 
+  // Group Booking Deliveries by booking_number
+  const delBookingsByNumber: Record<string, typeof deliveredBookings> = {};
   deliveredBookings.forEach(b => {
-    const collectedNow = Math.max(0, b.total_amount - (b.advance_paid || 0));
-    if (collectedNow > 0) {
+    if (!delBookingsByNumber[b.booking_number]) delBookingsByNumber[b.booking_number] = [];
+    delBookingsByNumber[b.booking_number].push(b);
+  });
+
+  Object.entries(delBookingsByNumber).forEach(([bookingNo, items]) => {
+    const first = items[0];
+    const totalQty = items.reduce((sum, item) => sum + item.quantity, 0);
+    const totalCollected = items.reduce((sum, item) => sum + Math.max(0, item.total_amount - (item.advance_paid || 0)), 0);
+    if (totalCollected > 0) {
+      const plantNames = items.map(item => `${getPlantName(item.plant_id)} ×${item.quantity}`).join(', ');
+      let totalCash: number | undefined = undefined;
+      let totalUpi: number | undefined = undefined;
+      items.forEach(item => {
+        if (item.cash_amount !== undefined && item.cash_amount !== null)
+          totalCash = (totalCash || 0) + item.cash_amount;
+        if (item.upi_amount !== undefined && item.upi_amount !== null)
+          totalUpi = (totalUpi || 0) + item.upi_amount;
+      });
       collectionEvents.push({
-        id: b.id! + '_del',
+        id: `del_${bookingNo}`,
         type: 'Booking Delivery',
-        plant_name: getPlantName(b.plant_id),
-        customer_name: b.customer_name || 'Customer',
-        quantity: b.quantity,
-        amount: collectedNow,
-        payment_mode: b.payment_mode || 'Cash',
-        cash_amount: b.cash_amount || undefined,
-        upi_amount: b.upi_amount || undefined,
-        // Since delivery date is only a YYYY-MM-DD, we use 0 to float them, 
-        // or if they just happened today, we can approximate by setting a high timestamp so they appear at the top
-        // But b.created_at might be old. Let's use Date.now() for approximation, or a fake timestamp based on today.
-        timestamp: new Date(b.delivery_date + 'T23:59:59').getTime() 
+        plant_name: plantNames,
+        customer_name: first.customer_name || 'Customer',
+        quantity: totalQty,
+        amount: totalCollected,
+        payment_mode: first.payment_mode || 'Cash',
+        cash_amount: totalCash,
+        upi_amount: totalUpi,
+        timestamp: deliveryLogs.get(bookingNo) || new Date(first.delivery_date + 'T23:59:59').getTime(),
+        order_number: bookingNo,
       });
     }
   });
 
+  // Group Booking Advances by booking_number
+  const newBookingsByNumber: Record<string, typeof newBookings> = {};
   newBookings.forEach(b => {
-    if (b.advance_paid && b.advance_paid > 0) {
+    if (!newBookingsByNumber[b.booking_number]) newBookingsByNumber[b.booking_number] = [];
+    newBookingsByNumber[b.booking_number].push(b);
+  });
+
+  Object.entries(newBookingsByNumber).forEach(([bookingNo, items]) => {
+    const first = items[0];
+    const totalQty = items.reduce((sum, item) => sum + item.quantity, 0);
+    const totalAdvance = items.reduce((sum, item) => sum + (item.advance_paid || 0), 0);
+    if (totalAdvance > 0) {
+      const plantNames = items.map(item => `${getPlantName(item.plant_id)} ×${item.quantity}`).join(', ');
+      let totalCash: number | undefined = undefined;
+      let totalUpi: number | undefined = undefined;
+      items.forEach(item => {
+        if (item.advance_cash_amount !== undefined && item.advance_cash_amount !== null)
+          totalCash = (totalCash || 0) + item.advance_cash_amount;
+        if (item.advance_upi_amount !== undefined && item.advance_upi_amount !== null)
+          totalUpi = (totalUpi || 0) + item.advance_upi_amount;
+      });
       collectionEvents.push({
-        id: b.id! + '_adv',
+        id: `adv_${bookingNo}`,
         type: 'Booking Advance',
-        plant_name: getPlantName(b.plant_id),
-        customer_name: b.customer_name || 'Customer',
-        quantity: b.quantity,
-        amount: b.advance_paid,
-        payment_mode: b.advance_payment_mode || 'Cash',
-        cash_amount: b.advance_cash_amount || undefined,
-        upi_amount: b.advance_upi_amount || undefined,
-        timestamp: new Date(b.created_at || Date.now()).getTime()
+        plant_name: plantNames,
+        customer_name: first.customer_name || 'Customer',
+        quantity: totalQty,
+        amount: totalAdvance,
+        payment_mode: first.advance_payment_mode || 'Cash',
+        cash_amount: totalCash,
+        upi_amount: totalUpi,
+        timestamp: new Date(first.created_at || Date.now()).getTime(),
+        order_number: bookingNo,
       });
     }
   });
@@ -185,12 +326,15 @@ function ReconciliationTab() {
   return (
     <div className="space-y-4">
       {/* Date Picker Header */}
-      <div className="bg-white rounded-2xl p-4 border border-gray-100 shadow-sm flex items-center justify-between">
-        <h3 className="font-bold text-gray-700 text-sm">Select Date</h3>
-        <input 
-          type="date" 
-          value={selectedDate} 
-          onChange={(e) => setSelectedDate(e.target.value)} 
+      <div className="bg-white rounded-2xl p-4 border border-gray-100 shadow-sm flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <CalendarDays className="w-4 h-4 text-green-600" />
+          <h3 className="font-bold text-gray-700 text-sm">{t('selectDate')}</h3>
+        </div>
+        <input
+          type="date"
+          value={selectedDate}
+          onChange={(e) => setSelectedDate(e.target.value)}
           className="px-3 py-2 border border-gray-200 rounded-xl text-sm font-medium text-gray-700 focus:outline-none focus:ring-2 focus:ring-green-500"
         />
       </div>
@@ -200,10 +344,10 @@ function ReconciliationTab() {
         <div className="absolute -right-8 -top-8 bg-white opacity-10 w-36 h-36 rounded-full" />
         <div className="absolute -left-6 -bottom-6 bg-white opacity-5 w-28 h-28 rounded-full" />
         <p className="text-xs font-bold uppercase tracking-widest opacity-80 mb-2">
-          Grand Total
+          {t('grandTotal')}
         </p>
         <p className="text-5xl font-black tracking-tight">{fmt(grandTotal)}</p>
-        <p className="text-xs opacity-70 mt-2">Collections for {todayStr}</p>
+        <p className="text-xs opacity-70 mt-2">{t('collections')} · {todayStr}</p>
       </div>
 
       {/* Cash / UPI split */}
@@ -214,7 +358,7 @@ function ReconciliationTab() {
               <Banknote className="w-4 h-4 text-white" />
             </div>
             <span className="text-xs font-bold text-green-800 uppercase tracking-wide">
-              Cash
+              {t('cash')}
             </span>
           </div>
           <p className="text-3xl font-black text-green-700">{fmt(cashTotal)}</p>
@@ -225,62 +369,74 @@ function ReconciliationTab() {
               <Smartphone className="w-4 h-4 text-white" />
             </div>
             <span className="text-xs font-bold text-purple-800 uppercase tracking-wide">
-              UPI
+              {t('upi')}
             </span>
           </div>
           <p className="text-3xl font-black text-purple-700">{fmt(upiTotal)}</p>
         </div>
       </div>
 
-      {/* Individual Sales List */}
+      {/* Collections List */}
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
         <div className="px-5 py-4 border-b border-gray-50 flex items-center gap-2">
           <ClipboardList className="w-4 h-4 text-gray-400" />
           <h3 className="font-bold text-gray-700 text-sm">
-            Collections ({collectionEvents.length})
+            {t('collections')} ({collectionEvents.length})
           </h3>
         </div>
 
         {collectionEvents.length === 0 ? (
           <div className="p-8 text-center text-gray-400 text-sm font-medium">
-            No collections recorded for {todayStr}.
+            {t('noCollectionsRecorded').replace('{date}', todayStr)}
           </div>
         ) : (
           <ul className="divide-y divide-gray-50">
-            {collectionEvents.map((ev) => {
-              return (
-                <li key={ev.id} className="px-5 py-4 flex items-center justify-between">
+            {collectionEvents.map((ev) => (
+              <li key={ev.id} className="px-4 py-4">
+                <div className="flex items-start gap-3">
+                  {/* Icon */}
+                  <EventIcon type={ev.type} />
+
+                  {/* Content */}
                   <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-gray-800 text-sm truncate flex items-center gap-2">
+                    {/* Row 1: Customer name + type pill */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="font-black text-gray-900 text-sm truncate">
+                        {ev.customer_name}
+                      </p>
+                      <EventTypePill type={ev.type} />
+                    </div>
+
+                    {/* Row 2: Plants list */}
+                    <p className="text-xs text-gray-500 mt-0.5 leading-relaxed truncate">
                       {ev.plant_name}
-                      <span className={`text-[9px] px-1.5 py-0.5 rounded text-white font-bold tracking-widest uppercase ${ev.type === 'Direct Sale' ? 'bg-blue-400' : ev.type === 'Booking Delivery' ? 'bg-green-500' : 'bg-purple-400'}`}>
-                        {ev.type}
+                    </p>
+
+                    {/* Row 3: Time + qty + payment badge */}
+                    <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                      <span className="text-[10px] font-bold text-gray-400">
+                        {fmtTime(ev.timestamp)}
                       </span>
-                    </p>
-                    <p className="text-xs text-gray-400 mt-0.5">
-                      Qty: {ev.quantity} ·{' '}
-                      {ev.customer_name}
-                    </p>
+                      <span className="text-gray-300">·</span>
+                      <span className="text-[10px] text-gray-400 font-medium">
+                        {t('qty')}: {ev.quantity}
+                      </span>
+                      <span className="text-gray-300">·</span>
+                      <PaymentBadge
+                        mode={ev.payment_mode}
+                        cashAmt={ev.cash_amount}
+                        upiAmt={ev.upi_amount}
+                      />
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3 ml-3 shrink-0">
-                    <span
-                      className={`text-[10px] font-bold px-2.5 py-1 rounded-full whitespace-nowrap ${
-                        ev.payment_mode === 'Cash'
-                          ? 'bg-green-100 text-green-700'
-                          : ev.payment_mode === 'UPI'
-                          ? 'bg-blue-100 text-blue-700'
-                          : 'bg-purple-100 text-purple-700'
-                      }`}
-                    >
-                      {ev.payment_mode === 'Split' ? `SPLIT (₹${ev.cash_amount} 💵 + ₹${ev.upi_amount} 📱)` : ev.payment_mode.toUpperCase()}
-                    </span>
-                    <span className="font-black text-gray-900 text-sm">
-                      {fmt(ev.amount)}
-                    </span>
+
+                  {/* Amount */}
+                  <div className="shrink-0 text-right">
+                    <p className="font-black text-gray-900 text-sm">{fmt(ev.amount)}</p>
                   </div>
-                </li>
-              );
-            })}
+                </div>
+              </li>
+            ))}
           </ul>
         )}
       </div>
@@ -290,6 +446,7 @@ function ReconciliationTab() {
 
 // ─── PRODUCTION DEMAND TAB ────────────────────────────────────────────────────
 function ProductionDemandTab() {
+  const { t } = useLanguage();
   const plants = useLiveQuery(async () => {
     const all = await db.plants.toArray();
     return all.filter(p => p.active);
@@ -358,14 +515,14 @@ function ProductionDemandTab() {
         <div className="bg-red-50 border-2 border-red-200 rounded-2xl px-5 py-4 flex items-center gap-3">
           <AlertTriangle className="w-5 h-5 text-red-500 shrink-0" />
           <p className="text-sm font-bold text-red-700">
-            {alertCount} plant{alertCount > 1 ? 's' : ''} need{alertCount === 1 ? 's' : ''} more production
+            {alertCount} {t('needMoreProduction')}
           </p>
         </div>
       ) : (
         <div className="bg-green-50 border-2 border-green-200 rounded-2xl px-5 py-4 flex items-center gap-3">
           <CheckCircle2 className="w-5 h-5 text-green-600 shrink-0" />
           <p className="text-sm font-bold text-green-700">
-            All stock levels are sufficient — great job!
+            {t('allStockSufficient')}
           </p>
         </div>
       )}
@@ -396,7 +553,7 @@ function ProductionDemandTab() {
               <div className="flex gap-4 mt-3">
                 <div className="text-center">
                   <p className="text-xs text-gray-400 font-semibold uppercase tracking-wide">
-                    Booked (Unallotted)
+                    {t('bookedUnallotted')}
                   </p>
                   <p className="text-2xl font-black text-blue-600">
                     {d.totalBooked}
@@ -405,7 +562,7 @@ function ProductionDemandTab() {
                 <div className="text-gray-200 self-stretch border-l" />
                 <div className="text-center">
                   <p className="text-xs text-gray-400 font-semibold uppercase tracking-wide">
-                    Stock (Free)
+                    {t('stockFree')}
                   </p>
                   <p className="text-2xl font-black text-emerald-600">
                     {d.totalGrowing}
@@ -418,13 +575,13 @@ function ProductionDemandTab() {
             <div className="shrink-0">
               {d.deficit > 0 ? (
                 <span className="inline-block bg-red-100 text-red-700 border border-red-300 text-xs font-black px-3 py-2 rounded-xl leading-tight text-center">
-                  ⚠️ Need to Grow
+                  ⚠️ {t('needToGrow')}
                   <br />
-                  <span className="text-lg">{d.deficit}</span> more
+                  <span className="text-lg">{d.deficit}</span> {t('qty').toLowerCase()}
                 </span>
               ) : (
                 <span className="inline-block bg-green-100 text-green-700 border border-green-300 text-xs font-black px-3 py-2 rounded-xl text-center leading-tight">
-                  ✅ Stock OK
+                  ✅ {t('stockOk')}
                 </span>
               )}
             </div>
@@ -434,7 +591,7 @@ function ProductionDemandTab() {
 
       {plants.length === 0 && (
         <div className="p-8 text-center text-gray-400 text-sm font-medium bg-white rounded-2xl border border-gray-100">
-          No active plants found.
+          {t('noActivePlants')}
         </div>
       )}
     </div>
@@ -443,6 +600,7 @@ function ProductionDemandTab() {
 
 // ─── LOT REPORT TAB ───────────────────────────────────────────────────────────
 function LotReportTab() {
+  const { t } = useLanguage();
   const lots = useLiveQuery(() => db.lots.toArray());
   const plants = useLiveQuery(() => db.plants.toArray());
   const allotments = useLiveQuery(() => db.allotments.toArray());
@@ -468,13 +626,13 @@ function LotReportTab() {
 
   const statusGroups: Array<{
     status: 'Growing' | 'Ready' | 'Completed';
-    label: string;
+    labelKey: keyof ReturnType<typeof useLanguage>['t'] extends never ? string : string;
     color: string;
     dotColor: string;
   }> = [
-    { status: 'Ready', label: 'Ready to Deliver', color: 'text-emerald-700', dotColor: 'bg-emerald-500' },
-    { status: 'Growing', label: 'Currently Growing', color: 'text-blue-700', dotColor: 'bg-blue-500' },
-    { status: 'Completed', label: 'Completed', color: 'text-gray-500', dotColor: 'bg-gray-400' },
+    { status: 'Ready', labelKey: 'readyToDeliver', color: 'text-emerald-700', dotColor: 'bg-emerald-500' },
+    { status: 'Growing', labelKey: 'currentlyGrowing', color: 'text-blue-700', dotColor: 'bg-blue-500' },
+    { status: 'Completed', labelKey: 'completed', color: 'text-gray-500', dotColor: 'bg-gray-400' },
   ];
 
   return (
@@ -489,7 +647,7 @@ function LotReportTab() {
             <div className="flex items-center gap-2 mb-3 px-1">
               <span className={`w-2.5 h-2.5 rounded-full ${group.dotColor}`} />
               <h3 className={`text-sm font-black uppercase tracking-wider ${group.color}`}>
-                {group.label}
+                {t(group.labelKey as any)}
                 <span className="ml-2 text-gray-400 font-semibold">
                   ({groupLots.length})
                 </span>
@@ -500,6 +658,8 @@ function LotReportTab() {
               {groupLots.map((lot) => {
                 const plant = plantMap.get(lot.plant_id);
                 const allottedQty = allottedPerLot.get(lot.id) ?? 0;
+                const initialQty = lot.initial_quantity ?? lot.total_quantity;
+                const soldQty = Math.max(0, initialQty - lot.total_quantity);
                 const freeStock = Math.max(0, lot.total_quantity - allottedQty);
 
                 return (
@@ -512,6 +672,9 @@ function LotReportTab() {
                       <div>
                         <p className="font-black text-gray-900 text-sm">
                           {plant?.plant_name ?? 'Unknown Plant'}
+                          {plant?.variety ? (
+                            <span className="text-gray-400 font-medium"> · {plant.variety}</span>
+                          ) : null}
                         </p>
                         <p className="text-xs text-gray-400 font-medium">
                           Lot #{lot.lot_number}
@@ -530,30 +693,51 @@ function LotReportTab() {
                       </span>
                     </div>
 
-                    {/* Stats grid */}
-                    <div className="px-5 py-4 grid grid-cols-3 gap-3 text-center">
+                    {/* Stats grid — 5 columns */}
+                    <div className="px-4 py-4 grid grid-cols-5 gap-1 text-center">
+                      {/* Total */}
                       <div>
-                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
-                          Stock
+                        <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">
+                          {t('total')}
                         </p>
-                        <p className="text-xl font-black text-gray-800 mt-1">
+                        <p className="text-lg font-black text-gray-700 mt-0.5">
+                          {initialQty}
+                        </p>
+                      </div>
+                      {/* Stock */}
+                      <div className="border-l border-gray-100">
+                        <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">
+                          {t('stock')}
+                        </p>
+                        <p className="text-lg font-black text-gray-800 mt-0.5">
                           {lot.total_quantity}
                         </p>
                       </div>
-                      <div>
-                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
-                          Allotted
+                      {/* Allotted */}
+                      <div className="border-l border-gray-100">
+                        <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">
+                          {t('allotted')}
                         </p>
-                        <p className="text-xl font-black text-orange-600 mt-1">
+                        <p className="text-lg font-black text-orange-600 mt-0.5">
                           {allottedQty}
                         </p>
                       </div>
-                      <div>
-                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
-                          Free
+                      {/* Sold */}
+                      <div className="border-l border-gray-100">
+                        <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">
+                          {t('sold')}
+                        </p>
+                        <p className="text-lg font-black text-sky-600 mt-0.5">
+                          {soldQty}
+                        </p>
+                      </div>
+                      {/* Free */}
+                      <div className="border-l border-gray-100">
+                        <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">
+                          {t('free')}
                         </p>
                         <p
-                          className={`text-xl font-black mt-1 ${
+                          className={`text-lg font-black mt-0.5 ${
                             freeStock > 0 ? 'text-green-600' : 'text-red-500'
                           }`}
                         >
@@ -565,7 +749,7 @@ function LotReportTab() {
                     {/* Ready Date */}
                     <div className="px-5 pb-4">
                       <p className="text-xs text-gray-400">
-                        Ready Date:{' '}
+                        {t('expectedReadyDate')}:{' '}
                         <span className="font-semibold text-gray-600">
                           {lot.ready_date}
                         </span>
@@ -581,7 +765,7 @@ function LotReportTab() {
 
       {lots.length === 0 && (
         <div className="p-8 text-center text-gray-400 text-sm font-medium bg-white rounded-2xl border border-gray-100">
-          No lots found. Create your first lot in the Lots section.
+          {t('noLotsFoundReport')}
         </div>
       )}
     </div>
@@ -599,6 +783,7 @@ function LoadingCard() {
 
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 export default function ReportsDashboard() {
+  const { t } = useLanguage();
   const [activeTab, setActiveTab] = useState<Tab>('reconciliation');
 
   return (
@@ -611,7 +796,7 @@ export default function ReportsDashboard() {
         >
           <div className="flex flex-col items-center gap-0.5">
             <Banknote className="w-4 h-4" />
-            Reconciliation
+            {t('collections')}
           </div>
         </TabBtn>
         <TabBtn
@@ -620,7 +805,7 @@ export default function ReportsDashboard() {
         >
           <div className="flex flex-col items-center gap-0.5">
             <BarChart3 className="w-4 h-4" />
-            Production
+            {t('productionAlerts')}
           </div>
         </TabBtn>
         <TabBtn
@@ -629,7 +814,7 @@ export default function ReportsDashboard() {
         >
           <div className="flex flex-col items-center gap-0.5">
             <Layers className="w-4 h-4" />
-            Lot Report
+            {t('lots')}
           </div>
         </TabBtn>
       </div>

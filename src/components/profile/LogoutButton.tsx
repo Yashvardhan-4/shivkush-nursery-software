@@ -1,8 +1,10 @@
 'use client';
 
 import { useState } from 'react';
+import { useLanguage } from '@/lib/i18n/LanguageContext';
 
 export default function LogoutButton({ logoutAction }: { logoutAction: () => Promise<void> }) {
+  const { t } = useLanguage();
   const [loading, setLoading] = useState(false);
 
   const handleLogout = async () => {
@@ -34,7 +36,7 @@ export default function LogoutButton({ logoutAction }: { logoutAction: () => Pro
       disabled={loading}
       className="w-full bg-red-600 hover:bg-red-700 text-white font-black text-base p-4 rounded-2xl active:scale-95 transition-transform shadow-md disabled:opacity-50"
     >
-      {loading ? 'Clearing Data...' : 'Log Out & Clear Device Data'}
+      {loading ? t('clearingData') : t('logoutAndClear')}
     </button>
   );
 }

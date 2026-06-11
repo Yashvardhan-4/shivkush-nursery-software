@@ -24,19 +24,19 @@ export function BottomNav() {
     { href: '/dashboard', label: t('dashboard'),     icon: Home },
     { href: '/sales/new',      label: t('directSales'),     icon: ShoppingCart },
     { href: '/bookings',  label: t('bookings'), icon: BookOpen },
-    { href: '/customers', label: 'Customers', icon: ClipboardList },
+    { href: '/customers', label: t('customers'), icon: ClipboardList },
     { href: '/lots',      label: t('lots'),     icon: Layers },
-    { href: '/attendance', label: 'Attendance', icon: Users },
-    { href: '/profile',   label: 'Profile',  icon: User },
+    { href: '/attendance', label: t('attendance'), icon: Users },
+    { href: '/profile',   label: t('profile'),  icon: User },
   ];
 
   const WORKER_LINKS = [
     { href: '/dashboard', label: t('dashboard'),    icon: Home },
     { href: '/sales/new',      label: t('directSales'),    icon: ShoppingCart },
     { href: '/bookings',  label: t('bookings'), icon: BookOpen },
-    { href: '/notebook',  label: 'Ledger', icon: BookOpen },
+    { href: '/notebook',  label: t('ledger'), icon: BookOpen },
     { href: '/lots',      label: t('lots'),   icon: Package },
-    { href: '/profile',   label: 'Profile', icon: User },
+    { href: '/profile',   label: t('profile'), icon: User },
   ];
 
   const links = isOwner ? OWNER_LINKS : WORKER_LINKS;

@@ -2,9 +2,11 @@
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/lib/db';
-import { Search, Filter, Phone } from 'lucide-react';
+import { Search, Phone } from 'lucide-react';
+import { useLanguage } from '@/lib/i18n/LanguageContext';
 
 export default function NotebookLedger({ role, userId }: { role: string, userId: string }) {
+  const { t } = useLanguage();
   const [tab, setTab] = useState<'Bookings' | 'Sales'>('Bookings');
   const [search, setSearch] = useState('');
 
@@ -49,7 +51,7 @@ export default function NotebookLedger({ role, userId }: { role: string, userId:
     if (!acc[curr.sale_number]) {
       acc[curr.sale_number] = {
         sale_number: curr.sale_number,
-        customer_name: curr.customer_name || 'Walk-in',
+        customer_name: curr.customer_name || t('walkIn'),
         customer_phone: curr.customer_phone || '',
         payment_mode: curr.payment_mode,
         total_amount: 0,
@@ -66,7 +68,7 @@ export default function NotebookLedger({ role, userId }: { role: string, userId:
 
   const getPlantName = (id: string) => {
     const p = plants?.find(p => p.id === id);
-    return p ? (p.variety ? `${p.plant_name} - ${p.variety}` : p.plant_name) : 'Unknown';
+    return p ? (p.variety ? `${p.plant_name} - ${p.variety}` : p.plant_name) : t('unknown');
   };
 
   // Filtering
@@ -85,8 +87,8 @@ export default function NotebookLedger({ role, userId }: { role: string, userId:
   return (
     <div className="space-y-6">
       <div className="bg-white p-2 rounded-2xl flex border border-gray-100 shadow-sm">
-        <button onClick={() => setTab('Bookings')} className={`flex-1 py-3 font-bold rounded-xl transition-all ${tab === 'Bookings' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:bg-gray-50'}`}>Bookings</button>
-        <button onClick={() => setTab('Sales')} className={`flex-1 py-3 font-bold rounded-xl transition-all ${tab === 'Sales' ? 'bg-green-600 text-white shadow-md' : 'text-gray-500 hover:bg-gray-50'}`}>Direct Sales</button>
+        <button onClick={() => setTab('Bookings')} className={`flex-1 py-3 font-bold rounded-xl transition-all ${tab === 'Bookings' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:bg-gray-50'}`}>{t('bookings')}</button>
+        <button onClick={() => setTab('Sales')} className={`flex-1 py-3 font-bold rounded-xl transition-all ${tab === 'Sales' ? 'bg-green-600 text-white shadow-md' : 'text-gray-500 hover:bg-gray-50'}`}>{t('directSales')}</button>
       </div>
 
       <div className="relative">
@@ -95,7 +97,7 @@ export default function NotebookLedger({ role, userId }: { role: string, userId:
           type="text" 
           value={search} 
           onChange={e => setSearch(e.target.value)} 
-          placeholder="Search name, phone, or ID..." 
+          placeholder={t('searchPlaceholder')} 
           className="w-full pl-12 pr-4 py-4 bg-white border border-gray-200 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 font-bold text-gray-800 shadow-sm"
         />
       </div>
@@ -124,7 +126,7 @@ export default function NotebookLedger({ role, userId }: { role: string, userId:
             </div>
 
             <div className="bg-blue-50 p-3 rounded-xl flex justify-between items-center border border-blue-100">
-              <div className="text-xs font-bold text-blue-800 uppercase">Advance: ₹{b.total_advance}</div>
+              <div className="text-xs font-bold text-blue-800 uppercase">{t('bookingAdvance')}: ₹{b.total_advance}</div>
               <div className="text-sm font-black text-blue-900">Total: ₹{b.total_amount}</div>
             </div>
           </div>
@@ -143,7 +145,14 @@ export default function NotebookLedger({ role, userId }: { role: string, userId:
               </div>
               <div className="flex flex-col items-end space-y-1">
                 <span className="text-[10px] font-bold text-gray-400 bg-gray-50 px-2 py-1 rounded-lg">{s.sale_number}</span>
-                <span className={`text-[10px] font-bold px-2 py-1 rounded-lg ${s.payment_mode === 'UPI' ? 'bg-purple-100 text-purple-700' : 'bg-green-100 text-green-700'}`}>{s.payment_mode}</span>
+                <span className={`text-[10px] font-bold px-2 py-1 rounded-lg ${
+                  s.payment_mode === 'UPI' ? 'bg-purple-100 text-purple-700' : 'bg-green-100 text-green-700'
+                }`}>
+                  {(() => {
+                    const modeKey = String(s.payment_mode || 'unknown').toLowerCase();
+                    return ['cash', 'upi', 'split', 'unknown'].includes(modeKey) ? t(modeKey as any) : s.payment_mode;
+                  })()}
+                </span>
               </div>
             </div>
             
@@ -157,7 +166,7 @@ export default function NotebookLedger({ role, userId }: { role: string, userId:
             </div>
 
             <div className="bg-green-50 p-3 rounded-xl flex justify-between items-center border border-green-100">
-              <div className="text-xs font-bold text-green-800 uppercase tracking-wider">Total Bill</div>
+              <div className="text-xs font-bold text-green-800 uppercase tracking-wider">{t('totalBill')}</div>
               <div className="text-xl font-black text-green-900">₹{s.total_amount}</div>
             </div>
           </div>
@@ -165,7 +174,7 @@ export default function NotebookLedger({ role, userId }: { role: string, userId:
 
         {(tab === 'Bookings' ? filteredBookings : filteredSales).length === 0 && (
           <div className="text-center py-12 text-gray-400 font-bold">
-            No records found.
+            {t('noRecordsFound')}
           </div>
         )}
       </div>

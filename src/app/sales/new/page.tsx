@@ -5,6 +5,7 @@ import { db, generateId, logAudit } from '@/lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Trash2 } from 'lucide-react';
 import Link from 'next/link';
+import { useLanguage } from '@/lib/i18n/LanguageContext';
 
 interface CartItem {
   id: string;
@@ -16,6 +17,7 @@ interface CartItem {
 }
 
 export default function NewDirectSalePage() {
+  const { t } = useLanguage();
   const [saleNumber, setSaleNumber] = useState('SALE-...');
   
   useEffect(() => {
@@ -42,14 +44,37 @@ export default function NewDirectSalePage() {
   const [loading, setLoading] = useState(false);
   const router = useRouter();
 
-  // Load all needed data for stock calculation
+  // Load all needed data for stock calculation and customer check
   const plants = useLiveQuery(() => db.plants.toArray());
   const lots = useLiveQuery(() => db.lots.toArray());
   const allotments = useLiveQuery(() => db.allotments.toArray());
   const bookings = useLiveQuery(() => db.bookings.toArray());
   const existingSales = useLiveQuery(() => db.direct_sales.toArray());
+  const customers = useLiveQuery(() => db.customers.toArray());
 
   const selectedPlant = plants?.find(p => p.id === plantId);
+
+  // Auto-complete triggers
+  const handlePhoneChange = (val: string) => {
+    const digits = val.replace(/\D/g, '').slice(0, 10);
+    setCustomerPhone(digits);
+    if (digits.length === 10 && customers) {
+      const found = customers.find(c => c.mobile === digits);
+      if (found) {
+        setCustomerName(found.name);
+      }
+    }
+  };
+
+  const handleNameChange = (val: string) => {
+    setCustomerName(val);
+    if (customers) {
+      const matches = customers.filter(c => c.name.toLowerCase() === val.toLowerCase());
+      if (matches.length === 1) {
+        setCustomerPhone(matches[0].mobile);
+      }
+    }
+  };
 
   // Compute freeStock for a given plantId using all loaded data
   const computeFreeStock = (pid: string): number => {
@@ -67,10 +92,6 @@ export default function NewDirectSalePage() {
     const allottedQty = allotments
       .filter(a => plantBookingIds.has(a.booking_id))
       .reduce((s, a) => s + a.quantity, 0);
-
-    const soldQty = existingSales
-      .filter(s => s.plant_id === pid)
-      .reduce((s, sale) => s + sale.quantity, 0);
 
     // Also subtract already-in-cart qty for this plant
     const cartQty = cart
@@ -91,10 +112,12 @@ export default function NewDirectSalePage() {
 
     const freeStock = computeFreeStock(selectedPlant.id);
     if (qty > freeStock) {
-      const booked = (lots?.filter(l => l.plant_id === selectedPlant.id).reduce((s, l) => s + l.total_quantity, 0) ?? 0)
-        - freeStock - (existingSales?.filter(s => s.plant_id === selectedPlant.id).reduce((s, sale) => s + sale.quantity, 0) ?? 0);
+      const plantBookingIds = new Set(
+        bookings?.filter(b => b.plant_id === selectedPlant.id && b.status !== 'Delivered' && b.status !== 'Cancelled').map(b => b.id) || []
+      );
+      const allottedQty = allotments?.filter(a => plantBookingIds.has(a.booking_id)).reduce((s, a) => s + a.quantity, 0) || 0;
       alert(
-        `Only ${freeStock} plants are free to sell. ${booked > 0 ? booked + ' are reserved for bookings.' : 'Stock limit reached.'}`
+        `Only ${freeStock} plants are free to sell. ${allottedQty > 0 ? allottedQty + ' are reserved for bookings.' : 'Stock limit reached.'}`
       );
       return;
     }
@@ -150,8 +173,8 @@ export default function NewDirectSalePage() {
 
   const handleSaveSale = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (cart.length === 0) return alert('Add at least one plant to the sale.');
-    if (!splitValid) return alert(`Split amounts must add up to ₹${totalAmount}. You are ₹${Math.abs(splitRemaining)} ${splitRemaining > 0 ? 'short' : 'over'}.`);
+    if (cart.length === 0) return alert(t('addAtLeastOnePlantError'));
+    if (!splitValid) return alert(t('splitAmountsMismatchError').replace('{totalAmount}', String(totalAmount)));
     setLoading(true);
 
     const userStr = localStorage.getItem('snms_user');
@@ -246,7 +269,7 @@ export default function NewDirectSalePage() {
     <div className="p-6 mb-24 space-y-6">
       <header className="mb-4">
         <div className="flex justify-between items-end">
-          <h1 className="text-3xl font-black text-gray-900 tracking-tight">Direct Sale</h1>
+          <h1 className="text-3xl font-black text-gray-900 tracking-tight">{t('directSale')}</h1>
           <span className="bg-gray-100 text-gray-700 px-3 py-1 rounded-lg text-sm font-black border border-gray-200">
             {saleNumber}
           </span>
@@ -256,27 +279,42 @@ export default function NewDirectSalePage() {
       <form onSubmit={handleSaveSale} className="space-y-6">
         {/* Optional Customer Details */}
         <div className="bg-white p-5 rounded-3xl shadow-sm border border-gray-100 space-y-4">
-          <h2 className="font-black text-gray-800 border-b border-gray-100 pb-2">Customer (Optional)</h2>
+          <h2 className="font-black text-gray-800 border-b border-gray-100 pb-2">{t('customerDetails')} ({t('optional')})</h2>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <label className="text-xs font-bold text-gray-500 uppercase">Name</label>
-              <input type="text" value={customerName} onChange={e => setCustomerName(e.target.value)} className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-bold" placeholder="Ramesh" />
+              <label className="text-xs font-bold text-gray-500 uppercase">{t('customerName')}</label>
+              <input 
+                type="text" 
+                value={customerName} 
+                onChange={e => handleNameChange(e.target.value)} 
+                list="customer-names"
+                className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-bold" 
+                placeholder="Ramesh" 
+              />
+              <datalist id="customer-names">
+                {customers?.map(c => (
+                  <option key={c.id} value={c.name}>{c.mobile}</option>
+                ))}
+              </datalist>
             </div>
             <div className="space-y-2">
-              <label className="text-xs font-bold text-gray-500 uppercase">Phone</label>
+              <label className="text-xs font-bold text-gray-500 uppercase">{t('customerPhone')}</label>
               <input 
                 type="tel" 
                 pattern="[0-9]{10}"
                 maxLength={10}
                 title="Phone number must be exactly 10 digits"
                 value={customerPhone} 
-                onChange={e => {
-                  const val = e.target.value.replace(/\D/g, '').slice(0, 10);
-                  setCustomerPhone(val);
-                }} 
+                onChange={e => handlePhoneChange(e.target.value)} 
+                list="customer-phones"
                 className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-bold" 
                 placeholder="9876543210" 
               />
+              <datalist id="customer-phones">
+                {customers?.map(c => (
+                  <option key={c.id} value={c.mobile}>{c.name}</option>
+                ))}
+              </datalist>
             </div>
           </div>
         </div>
@@ -284,18 +322,18 @@ export default function NewDirectSalePage() {
         {/* Cart Addition */}
         <div className="bg-green-50 p-5 rounded-3xl border border-green-200 space-y-4">
           <div className="flex justify-between items-center border-b border-green-200 pb-2">
-            <h2 className="font-black text-green-900">Add Plants</h2>
+            <h2 className="font-black text-green-900">{t('addPlants')}</h2>
             <Link href="/plants/new" className="text-xs font-bold text-green-700 bg-white px-3 py-1 rounded-full shadow-sm hover:bg-green-100">+ New Plant</Link>
           </div>
           
           <div className="space-y-2">
             <select value={plantId} onChange={e => { setPlantId(e.target.value); setQuantity(''); }} className="w-full p-4 bg-white border border-green-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-bold text-lg text-green-900">
-              <option value="">Choose plant...</option>
+              <option value="">{t('choosePlantPlaceholder')}</option>
               {plants?.map(p => {
                 const fs = computeFreeStock(p.id);
                 return (
                   <option key={p.id} value={p.id}>
-                    {p.variety ? `${p.plant_name} - ${p.variety}` : p.plant_name} — ₹{p.selling_price} (Free: {fs})
+                    {p.variety ? `${p.plant_name} - ${p.variety}` : p.plant_name} — ₹{p.selling_price} ({t('free')}: {fs})
                   </option>
                 );
               })}
@@ -307,7 +345,7 @@ export default function NewDirectSalePage() {
               {/* Free stock indicator */}
               {selectedFreeStock !== null && (
                 <div className={`flex items-center justify-between px-4 py-2 rounded-xl text-sm font-bold ${selectedFreeStock > 0 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                  <span>Available to sell</span>
+                  <span>{t('availableToSell')}</span>
                   <span className="text-lg font-black">{selectedFreeStock}</span>
                 </div>
               )}
@@ -319,7 +357,7 @@ export default function NewDirectSalePage() {
                   value={quantity}
                   onChange={e => setQuantity(e.target.value)}
                   className="w-2/3 p-4 bg-white border border-green-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-black text-2xl text-green-900"
-                  placeholder="Qty"
+                  placeholder={t('qtyPlaceholder')}
                 />
                 <button
                   type="button"
@@ -327,11 +365,11 @@ export default function NewDirectSalePage() {
                   disabled={!quantity || (selectedFreeStock !== null && selectedFreeStock <= 0)}
                   className="w-1/3 bg-green-600 text-white rounded-xl font-black flex items-center justify-center disabled:opacity-50 active:scale-95 transition-transform"
                 >
-                  ADD
+                  {t('add')}
                 </button>
               </div>
               {selectedFreeStock !== null && selectedFreeStock <= 0 && (
-                <p className="text-xs font-bold text-red-600 text-center">All stock is reserved or sold out.</p>
+                <p className="text-xs font-bold text-red-600 text-center">{t('allStockReserved')}</p>
               )}
             </div>
           )}
@@ -340,7 +378,7 @@ export default function NewDirectSalePage() {
         {/* Cart Display */}
         {cart.length > 0 && (
           <div className="bg-white p-5 rounded-3xl shadow-sm border border-gray-100 space-y-4">
-            <h2 className="font-black text-gray-800 border-b border-gray-100 pb-2">Bill Summary</h2>
+            <h2 className="font-black text-gray-800 border-b border-gray-100 pb-2">{t('billSummary')}</h2>
             <div className="space-y-3">
               {cart.map((item) => (
                 <div key={item.id} className="flex justify-between items-center bg-gray-50 p-3 rounded-xl border border-gray-100">
@@ -359,13 +397,13 @@ export default function NewDirectSalePage() {
             </div>
             
             <div className="border-t border-gray-100 pt-4 flex justify-between items-center">
-              <span className="font-bold text-gray-500 uppercase tracking-widest text-xs">Total Amount</span>
+              <span className="font-bold text-gray-500 uppercase tracking-widest text-xs">{t('totalAmount')}</span>
               <span className="font-black text-3xl text-gray-900">₹{totalAmount}</span>
             </div>
 
             {/* Payment Mode Selection */}
             <div className="pt-4 space-y-3">
-              <p className="text-xs font-black text-gray-500 uppercase tracking-wider">Payment Mode</p>
+              <p className="text-xs font-black text-gray-500 uppercase tracking-wider">{t('paymentMode')}</p>
               <div className="grid grid-cols-3 gap-2">
                 <button
                   type="button"
@@ -374,7 +412,7 @@ export default function NewDirectSalePage() {
                     paymentMode === 'Cash' ? 'bg-green-600 text-white shadow-lg shadow-green-200 scale-105' : 'bg-gray-100 text-gray-500'
                   }`}
                 >
-                  💵 CASH
+                  {t('cashPill')}
                 </button>
                 <button
                   type="button"
@@ -383,7 +421,7 @@ export default function NewDirectSalePage() {
                     paymentMode === 'UPI' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200 scale-105' : 'bg-gray-100 text-gray-500'
                   }`}
                 >
-                  📱 UPI
+                  {t('upiPill')}
                 </button>
                 <button
                   type="button"
@@ -392,17 +430,17 @@ export default function NewDirectSalePage() {
                     paymentMode === 'Split' ? 'bg-purple-600 text-white shadow-lg shadow-purple-200 scale-105' : 'bg-gray-100 text-gray-500'
                   }`}
                 >
-                  ✂️ SPLIT
+                  {t('splitPill')}
                 </button>
               </div>
 
               {/* Split input fields */}
               {paymentMode === 'Split' && (
                 <div className="bg-purple-50 border border-purple-200 rounded-2xl p-4 space-y-3">
-                  <p className="text-xs font-black text-purple-700 uppercase tracking-wider">Enter Split Amounts</p>
+                  <p className="text-xs font-black text-purple-700 uppercase tracking-wider">{t('enterSplitAmounts')}</p>
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1">
-                      <label className="text-xs font-bold text-green-700">💵 Cash (₹)</label>
+                      <label className="text-xs font-bold text-green-700">{t('cashAmtLabel')}</label>
                       <input
                         type="number"
                         min="0"
@@ -415,7 +453,7 @@ export default function NewDirectSalePage() {
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-xs font-bold text-blue-700">📱 UPI (₹)</label>
+                      <label className="text-xs font-bold text-blue-700">{t('upiAmtLabel')}</label>
                       <input
                         type="number"
                         min="0"
@@ -434,7 +472,7 @@ export default function NewDirectSalePage() {
                     splitRemaining > 0 ? 'bg-orange-100 text-orange-800 border border-orange-200' :
                     'bg-red-100 text-red-800 border border-red-200'
                   }`}>
-                    <span>{splitValid ? '✅ Split is correct!' : splitRemaining > 0 ? `₹${splitRemaining.toFixed(0)} still unaccounted` : `₹${Math.abs(splitRemaining).toFixed(0)} over total`}</span>
+                    <span>{splitValid ? t('splitValidMsg') : splitRemaining > 0 ? t('splitShortMsg').replace('{remaining}', splitRemaining.toFixed(0)) : t('splitOverMsg').replace('{excess}', Math.abs(splitRemaining).toFixed(0))}</span>
                     <span>Total: ₹{totalAmount}</span>
                   </div>
                 </div>
@@ -445,7 +483,7 @@ export default function NewDirectSalePage() {
                 <div className={`flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-black ${
                   paymentMode === 'Cash' ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700'
                 }`}>
-                  {paymentMode === 'Cash' ? '💵 Full payment in Cash' : '📱 Full payment via UPI'}
+                  {paymentMode === 'Cash' ? t('cashFullMsg') : t('upiFullMsg')}
                 </div>
               )}
             </div>
@@ -461,10 +499,10 @@ export default function NewDirectSalePage() {
             'bg-purple-700'
           }`}
         >
-          {loading ? 'Processing...' : `Collect ₹${totalAmount} · ${
-            paymentMode === 'Cash' ? 'Cash' :
-            paymentMode === 'UPI' ? 'UPI' :
-            `₹${cashNum} Cash + ₹${upiNum} UPI`
+          {loading ? t('processing') : `${t('collect')} ₹${totalAmount} · ${
+            paymentMode === 'Cash' ? t('cash') :
+            paymentMode === 'UPI' ? t('upi') :
+            `₹${cashNum} ${t('cash')} + ₹${upiNum} ${t('upi')}`
           }`}
         </button>
       </form>
