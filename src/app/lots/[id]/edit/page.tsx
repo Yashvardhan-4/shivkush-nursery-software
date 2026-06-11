@@ -61,10 +61,14 @@ export default function EditLotPage({ params }: Props) {
       const lot = await db.lots.get(id);
       if (!lot) return;
 
+      const oldTotal = lot.total_quantity;
+      const diff = newQty - oldTotal;
+
       const updates = {
         ...lot,
         lot_number: lotNumber,
         total_quantity: newQty,
+        initial_quantity: (lot.initial_quantity || oldTotal) + diff,
         ready_date: readyDate,
         status,
         notes,

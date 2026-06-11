@@ -18,6 +18,7 @@ export interface Lot {
   lot_number: string;
   plant_id: string;
   total_quantity: number;
+  initial_quantity?: number;
   ready_date: string;    // ISO date YYYY-MM-DD
   status: 'Growing' | 'Ready' | 'Completed';
   notes: string | null;
