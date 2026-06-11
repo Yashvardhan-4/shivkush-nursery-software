@@ -36,20 +36,27 @@ export default function EditPlantPage({ params }: { params: Promise<{ id: string
     e.preventDefault();
     setLoading(true);
 
+    const plant = await db.plants.get(id);
+    if (!plant) {
+      setLoading(false);
+      return;
+    }
+
     const updatedPlant = {
+      ...plant,
       plant_name: name,
       variety: variety,
       selling_price: parseFloat(price),
     };
 
     // Update in IndexedDB
-    await db.plants.update(id, updatedPlant);
+    await db.plants.put(updatedPlant);
 
     // Queue sync
     await db.sync_queue.add({
       table: 'plants',
       action: 'UPDATE',
-      payload: { id, ...updatedPlant },
+      payload: { ...updatedPlant, sync_status: undefined },
       created_at: Date.now(),
     });
 
@@ -61,12 +68,20 @@ export default function EditPlantPage({ params }: { params: Promise<{ id: string
     if (!confirm('Archive this plant? It will be hidden from active lists.')) return;
     setArchiving(true);
 
-    await db.plants.update(id, { active: false });
+    const plant = await db.plants.get(id);
+    if (!plant) {
+      setArchiving(false);
+      return;
+    }
+
+    const updatedPlant = { ...plant, active: false };
+
+    await db.plants.put(updatedPlant);
 
     await db.sync_queue.add({
       table: 'plants',
       action: 'UPDATE',
-      payload: { id, active: false },
+      payload: { ...updatedPlant, sync_status: undefined },
       created_at: Date.now(),
     });
 

@@ -47,18 +47,20 @@ export default function AnalyticsClient() {
     ? data 
     : data.filter(d => isDateInRange(d.booking_date || d.created_at));
 
-  const filteredBookings = filterData(bookings).filter((b: any) => b.status !== 'Cancelled');
+  const filteredBookings = filterData(bookings);
   const filteredSales = filterData(directSales);
 
   const uniqueBookingsCount = new Set(filteredBookings.map((b: any) => b.booking_number)).size;
 
+  const validBookings = filteredBookings.filter((b: any) => b.status !== 'Cancelled');
+
   // 1. Overall Metrics
   const totalRevenue = 
-    filteredBookings.reduce((sum, b) => sum + (Number(b.total_amount) || 0), 0) +
+    validBookings.reduce((sum, b) => sum + (Number(b.total_amount) || 0), 0) +
     filteredSales.reduce((sum, s) => sum + (Number(s.amount) || 0), 0);
   
-  const totalAdvances = filteredBookings.reduce((sum, b) => sum + (Number(b.advance_paid) || 0), 0);
-  const pendingAdvances = filteredBookings.reduce((sum, b) => sum + Math.max(0, (Number(b.total_amount) || 0) - (Number(b.advance_paid) || 0)), 0);
+  const totalAdvances = validBookings.reduce((sum, b) => sum + (Number(b.advance_paid) || 0), 0);
+  const pendingAdvances = validBookings.reduce((sum, b) => sum + Math.max(0, (Number(b.total_amount) || 0) - (Number(b.advance_paid) || 0)), 0);
 
   // 2. Monthly Trend Aggregation
   const monthlyRevenueMap: Record<string, number> = {};

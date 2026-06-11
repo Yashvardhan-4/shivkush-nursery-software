@@ -49,21 +49,31 @@ export default function EditLotPage({ params }: Props) {
     setLoading(true);
     try {
       const user = JSON.parse(localStorage.getItem('snms_user') || '{}');
+      const lot = await db.lots.get(id);
+      if (!lot) return;
+
       const updates = {
+        ...lot,
         lot_number: lotNumber,
         total_quantity: newQty,
         ready_date: readyDate,
         status,
         notes,
       };
-      await db.lots.update(id, updates);
+      await db.lots.put(updates);
       await db.sync_queue.add({
         table: 'lots',
         action: 'UPDATE',
-        payload: { id, ...updates },
+        payload: { ...updates, sync_status: undefined },
         created_at: Date.now(),
       });
-      await logAudit(user.id || 'owner', user.name || 'Owner', 'UPDATE_LOT', 'lots', id, updates);
+      await logAudit(user.id || 'owner', user.name || 'Owner', 'UPDATE_LOT', 'lots', id, {
+        lot_number: lotNumber,
+        total_quantity: newQty,
+        ready_date: readyDate,
+        status,
+        notes,
+      });
       window.dispatchEvent(new Event('online'));
       router.push('/lots');
     } finally {

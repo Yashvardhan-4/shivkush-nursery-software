@@ -58,17 +58,22 @@ export function OfflineSyncProvider({ children }: { children: React.ReactNode })
       if (!res.ok) return;
       const { success, data } = await res.json();
       if (success && data) {
+        const pendingQueue = await db.sync_queue.toArray();
+        const pendingIds = new Set(pendingQueue.map(q => q.payload?.id).filter(Boolean));
+
         // Bulk put all data into IndexedDB
         await db.transaction('rw', [db.plants, db.lots, db.bookings, db.allotments, db.direct_sales, db.attendance, db.audit_logs, db.customers, db.users], async () => {
-          if (data.plants?.length) await db.plants.bulkPut(data.plants);
-          if (data.lots?.length) await db.lots.bulkPut(data.lots);
-          if (data.bookings?.length) await db.bookings.bulkPut(data.bookings);
-          if (data.allotments?.length) await db.allotments.bulkPut(data.allotments);
-          if (data.direct_sales?.length) await db.direct_sales.bulkPut(data.direct_sales);
-          if (data.attendance?.length) await db.attendance.bulkPut(data.attendance);
-          if (data.audit_logs?.length) await db.audit_logs.bulkPut(data.audit_logs);
-          if (data.customers?.length) await db.customers.bulkPut(data.customers);
-          if (data.users?.length) await db.users.bulkPut(data.users);
+          const filterSynced = (list: any[]) => list.filter(item => !pendingIds.has(item.id));
+
+          if (data.plants?.length) await db.plants.bulkPut(filterSynced(data.plants));
+          if (data.lots?.length) await db.lots.bulkPut(filterSynced(data.lots));
+          if (data.bookings?.length) await db.bookings.bulkPut(filterSynced(data.bookings));
+          if (data.allotments?.length) await db.allotments.bulkPut(filterSynced(data.allotments));
+          if (data.direct_sales?.length) await db.direct_sales.bulkPut(filterSynced(data.direct_sales));
+          if (data.attendance?.length) await db.attendance.bulkPut(filterSynced(data.attendance));
+          if (data.audit_logs?.length) await db.audit_logs.bulkPut(filterSynced(data.audit_logs));
+          if (data.customers?.length) await db.customers.bulkPut(filterSynced(data.customers));
+          if (data.users?.length) await db.users.bulkPut(filterSynced(data.users));
         });
         console.log('Successfully pulled and updated local offline database from Supabase.');
       }

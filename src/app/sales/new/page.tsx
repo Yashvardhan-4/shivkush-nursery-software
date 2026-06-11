@@ -75,7 +75,7 @@ export default function NewDirectSalePage() {
       .filter(item => item.plantId === pid)
       .reduce((s, item) => s + item.quantity, 0);
 
-    return Math.max(0, totalStock - allottedQty - soldQty - cartQty);
+    return Math.max(0, totalStock - allottedQty - cartQty);
   };
 
   // Get freeStock for the selected plant (for display in qty section)
@@ -206,7 +206,7 @@ export default function NewDirectSalePage() {
         .filter(l => l.plant_id === item.plantId && l.status !== 'Completed')
         .toArray();
 
-      activeLots.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+      activeLots.sort((a, b) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime());
 
       for (const lot of activeLots) {
         if (qtyToDeduct <= 0) break;
@@ -262,7 +262,19 @@ export default function NewDirectSalePage() {
             </div>
             <div className="space-y-2">
               <label className="text-xs font-bold text-gray-500 uppercase">Phone</label>
-              <input type="tel" value={customerPhone} onChange={e => setCustomerPhone(e.target.value)} className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-bold" placeholder="9876..." />
+              <input 
+                type="tel" 
+                pattern="[0-9]{10}"
+                maxLength={10}
+                title="Phone number must be exactly 10 digits"
+                value={customerPhone} 
+                onChange={e => {
+                  const val = e.target.value.replace(/\D/g, '').slice(0, 10);
+                  setCustomerPhone(val);
+                }} 
+                className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-bold" 
+                placeholder="9876543210" 
+              />
             </div>
           </div>
         </div>

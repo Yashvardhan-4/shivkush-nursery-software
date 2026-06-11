@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '@/lib/db';
+import { db, toLocalDateStr } from '@/lib/db';
 import {
   Banknote,
   Smartphone,
@@ -63,13 +63,13 @@ function ReconciliationTab() {
   }
 
   // ── 1. Direct Sales ──
-  const sales = salesRaw.filter((s) => s.created_at.startsWith(todayStr));
+  const sales = salesRaw.filter((s) => s.created_at && toLocalDateStr(s.created_at) === todayStr);
 
   // ── 2. Bookings Delivered Today ──
   const deliveredBookings = bookingsRaw.filter(b => b.delivery_date === todayStr && b.status === 'Delivered');
 
   // ── 3. Bookings Created Today (Advance) ──
-  const newBookings = bookingsRaw.filter(b => b.created_at?.startsWith(todayStr));
+  const newBookings = bookingsRaw.filter(b => b.created_at && toLocalDateStr(b.created_at) === todayStr);
 
   const dsCash = sales.reduce((sum, s) => sum + (s.payment_mode === 'Cash' ? s.amount : s.payment_mode === 'Split' ? (s.cash_amount || 0) : 0), 0);
   const dsUpi = sales.reduce((sum, s) => sum + (s.payment_mode === 'UPI' ? s.amount : s.payment_mode === 'Split' ? (s.upi_amount || 0) : 0), 0);
@@ -393,7 +393,7 @@ function ProductionDemandTab() {
               <div className="flex gap-4 mt-3">
                 <div className="text-center">
                   <p className="text-xs text-gray-400 font-semibold uppercase tracking-wide">
-                    Booked
+                    Booked (Unallotted)
                   </p>
                   <p className="text-2xl font-black text-blue-600">
                     {d.totalBooked}
@@ -402,7 +402,7 @@ function ProductionDemandTab() {
                 <div className="text-gray-200 self-stretch border-l" />
                 <div className="text-center">
                   <p className="text-xs text-gray-400 font-semibold uppercase tracking-wide">
-                    Growing
+                    Stock (Free)
                   </p>
                   <p className="text-2xl font-black text-emerald-600">
                     {d.totalGrowing}

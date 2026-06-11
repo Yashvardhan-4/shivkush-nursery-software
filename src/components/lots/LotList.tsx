@@ -27,7 +27,7 @@ export default function LotList() {
       await db.sync_queue.add({
         table: 'lots',
         action: 'UPDATE',
-        payload: { id: lotId, ...updates },
+        payload: { ...lot, ...updates, sync_status: undefined },
         created_at: Date.now(),
       });
       window.dispatchEvent(new Event('online'));
@@ -102,7 +102,7 @@ export default function LotList() {
           // FIFO apportioned direct sales
           const soldQty = lotSoldQtyMap[lot.id] || 0;
 
-          const freeStock = Math.max(0, lot.total_quantity - allottedQty - soldQty);
+          const freeStock = Math.max(0, lot.total_quantity - allottedQty);
           
           const readyDate = new Date(lot.ready_date);
           const today = new Date();

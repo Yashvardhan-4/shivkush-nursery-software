@@ -11,11 +11,13 @@ export default function PlantList({ role }: { role: string }) {
   
   const plants = useLiveQuery(
     () => db.plants
-      .filter(p => p.active !== false && 
-        (categoryFilter === 'All' || p.category === categoryFilter) &&
-        (p.plant_name.toLowerCase().includes(search.toLowerCase()) || 
-        (p.variety && p.variety.toLowerCase().includes(search.toLowerCase())))
-      )
+      .filter(p => {
+        const matchesActive = p.active !== false;
+        const matchesCategory = categoryFilter === 'All' || p.category === categoryFilter;
+        const matchesSearch = p.plant_name.toLowerCase().includes(search.toLowerCase()) || 
+          (p.variety ? p.variety.toLowerCase().includes(search.toLowerCase()) : false);
+        return matchesActive && matchesCategory && matchesSearch;
+      })
       .toArray(),
     [search, categoryFilter]
   );

@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, logAudit } from '@/lib/db';
+import { db, logAudit, generateId } from '@/lib/db';
 import type { Booking, Lot, Plant, Allotment } from '@/lib/db';
 import {
   Package,
@@ -55,14 +55,14 @@ function deriveGroupStatus(items: Booking[]): string {
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, string> = {
-    Pending: 'bg-amber-500/20 text-amber-300 border border-amber-500/30',
-    Allocated: 'bg-blue-500/20 text-blue-300 border border-blue-500/30',
-    Delivered: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30',
-    Mixed: 'bg-purple-500/20 text-purple-300 border border-purple-500/30',
-    Cancelled: 'bg-red-500/20 text-red-300 border border-red-500/30',
+    Pending: 'bg-amber-100 text-amber-600 border border-amber-200',
+    Allocated: 'bg-blue-100 text-blue-600 border border-blue-200',
+    Delivered: 'bg-emerald-500/20 text-emerald-600 border border-emerald-500/30',
+    Mixed: 'bg-purple-100 text-purple-600 border border-purple-200',
+    Cancelled: 'bg-red-100 text-red-600 border border-red-200',
   };
   return (
-    <span className={`text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full ${map[status] ?? 'bg-gray-700 text-gray-300'}`}>
+    <span className={`text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full ${map[status] ?? 'bg-gray-200 text-gray-600'}`}>
       {status}
     </span>
   );
@@ -160,7 +160,7 @@ function AllotmentRow({
       await db.sync_queue.add({
         table: 'bookings',
         action: 'UPDATE',
-        payload: { id: booking.id, status: 'Allocated', lot_id: selectedLotId },
+        payload: { ...booking, status: 'Allocated', lot_id: selectedLotId, sync_status: undefined },
         created_at: Date.now(),
       });
 
@@ -185,11 +185,11 @@ function AllotmentRow({
     const allotment = allotments.find((a) => a.booking_id === booking.id);
     const allottedLot = lots.find((l) => l.id === (allotment?.lot_id ?? booking.lot_id));
     return (
-      <div className="rounded-xl bg-gray-800/40 border border-gray-700/50 p-3 flex items-center justify-between gap-3">
+      <div className="rounded-xl bg-gray-50/40 border border-gray-200/50 p-3 flex items-center justify-between gap-3">
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-bold text-gray-200 truncate">
+          <p className="text-sm font-bold text-gray-800 truncate">
             {plant?.plant_name ?? 'Unknown Plant'}
-            <span className="ml-2 text-gray-400 font-medium">× {booking.quantity}</span>
+            <span className="ml-2 text-gray-500 font-medium">× {booking.quantity}</span>
           </p>
           {allottedLot && (
             <p className="text-xs text-gray-500 mt-0.5 flex items-center gap-1">
@@ -204,13 +204,13 @@ function AllotmentRow({
   }
 
   return (
-    <div className="rounded-xl bg-gray-800/60 border border-amber-700/30 p-3 space-y-3">
+    <div className="rounded-xl bg-white border border-gray-200 p-3 space-y-3">
       {/* Plant name + qty */}
       <div className="flex items-center gap-2">
-        <Package className="w-4 h-4 text-amber-400 shrink-0" />
-        <span className="text-sm font-bold text-gray-100">
+        <Package className="w-4 h-4 text-amber-600 shrink-0" />
+        <span className="text-sm font-bold text-gray-900">
           {plant?.plant_name ?? 'Unknown Plant'}
-          <span className="ml-2 text-amber-300">× {booking.quantity}</span>
+          <span className="ml-2 text-amber-600">× {booking.quantity}</span>
         </span>
       </div>
 
@@ -223,7 +223,7 @@ function AllotmentRow({
           <select
             value={selectedLotId}
             onChange={(e) => { setSelectedLotId(e.target.value); setError(''); }}
-            className="w-full bg-gray-900 border border-gray-700 text-gray-100 text-sm font-semibold rounded-xl px-3 py-2.5 pr-8 appearance-none outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/40 transition-all"
+            className="w-full bg-white border border-gray-200 text-gray-900 text-sm font-semibold rounded-xl px-3 py-2.5 pr-8 appearance-none outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/40 transition-all"
           >
             <option value="">— Pick a lot —</option>
             {eligibleLots.map((lot) => {
@@ -242,7 +242,7 @@ function AllotmentRow({
           <p className="text-xs font-bold text-blue-400 flex items-center gap-1.5">
             <CalendarDays className="w-3 h-3" />
             Ready: {selectedLot?.ready_date ?? 'N/A'} ·{' '}
-            <span className={available === 0 ? 'text-red-400' : 'text-emerald-400'}>
+            <span className={available === 0 ? 'text-red-400' : 'text-emerald-600'}>
               {available} available
             </span>
           </p>
@@ -260,7 +260,7 @@ function AllotmentRow({
           max={available ?? booking.quantity}
           value={qty}
           onChange={(e) => { setQty(Number(e.target.value)); setError(''); }}
-          className="w-full bg-gray-900 border border-gray-700 text-gray-100 text-sm font-semibold rounded-xl px-3 py-2.5 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/40 transition-all"
+          className="w-full bg-white border border-gray-200 text-gray-900 text-sm font-semibold rounded-xl px-3 py-2.5 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/40 transition-all"
         />
       </div>
 
@@ -310,30 +310,30 @@ function BookingCard({
 
   // Card accent based on status
   const accentMap: Record<string, string> = {
-    Pending: 'border-amber-700/40',
-    Allocated: 'border-blue-700/40',
-    Delivered: 'border-emerald-700/40',
-    Mixed: 'border-purple-700/40',
+    Pending: 'border-amber-200',
+    Allocated: 'border-blue-200',
+    Delivered: 'border-emerald-200',
+    Mixed: 'border-purple-200',
   };
-  const accent = accentMap[group.groupStatus] ?? 'border-gray-700/40';
+  const accent = accentMap[group.groupStatus] ?? 'border-gray-200';
 
   return (
-    <div className={`bg-gray-900 rounded-2xl border ${accent} overflow-hidden shadow-xl`}>
+    <div className={`bg-white rounded-2xl border ${accent} overflow-hidden shadow-xl`}>
       {/* ── Header ── */}
-      <div className="px-4 pt-4 pb-3 border-b border-gray-800/80">
+      <div className="px-4 pt-4 pb-3 border-b border-gray-200">
         <div className="flex items-start justify-between gap-3">
           <div className="flex-1 min-w-0">
-            <h3 className="text-base font-black text-white truncate">{group.customer_name}</h3>
+            <h3 className="text-base font-black text-gray-900 truncate">{group.customer_name}</h3>
             <div className="flex flex-wrap items-center gap-2 mt-1.5">
               <a
                 href={`tel:${group.customer_phone}`}
-                className="flex items-center gap-1.5 text-xs text-emerald-400 font-bold bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-full active:scale-95 transition-all"
+                className="flex items-center gap-1.5 text-xs text-emerald-600 font-bold bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full active:scale-95 transition-all"
               >
                 <Phone className="w-3 h-3" />
                 {group.customer_phone}
               </a>
               {group.city && (
-                <span className="flex items-center gap-1 text-xs text-gray-400 font-medium">
+                <span className="flex items-center gap-1 text-xs text-gray-500 font-medium">
                   <MapPin className="w-3 h-3" />
                   {group.city}
                 </span>
@@ -364,18 +364,18 @@ function BookingCard({
       </div>
 
       {/* ── Footer: Financial summary ── */}
-      <div className="mx-4 mb-4 mt-1 rounded-xl bg-gray-800/50 border border-gray-700/50 px-4 py-3 grid grid-cols-3 gap-2 text-center">
+      <div className="mx-4 mb-4 mt-1 rounded-xl bg-gray-50/50 border border-gray-200/50 px-4 py-3 grid grid-cols-3 gap-2 text-center">
         <div>
           <p className="text-[9px] font-black uppercase tracking-widest text-gray-500 mb-0.5">Total</p>
-          <p className="text-sm font-black text-white">₹{group.total_amount.toLocaleString()}</p>
+          <p className="text-sm font-black text-gray-900">₹{group.total_amount.toLocaleString()}</p>
         </div>
         <div>
           <p className="text-[9px] font-black uppercase tracking-widest text-gray-500 mb-0.5">Advance</p>
-          <p className="text-sm font-black text-emerald-400">₹{group.total_advance.toLocaleString()}</p>
+          <p className="text-sm font-black text-emerald-600">₹{group.total_advance.toLocaleString()}</p>
         </div>
         <div>
           <p className="text-[9px] font-black uppercase tracking-widest text-gray-500 mb-0.5">Balance</p>
-          <p className={`text-sm font-black ${balanceDue > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+          <p className={`text-sm font-black ${balanceDue > 0 ? 'text-red-400' : 'text-emerald-600'}`}>
             ₹{balanceDue.toLocaleString()}
           </p>
         </div>
@@ -387,14 +387,14 @@ function BookingCard({
           {/* Call customer before delivery */}
           <a
             href={`tel:${group.customer_phone}`}
-            className="w-full bg-blue-600/20 border border-blue-500/30 text-blue-300 font-black text-sm py-3 rounded-xl transition-all active:scale-95 flex items-center justify-center gap-2"
+            className="w-full bg-blue-600/20 border border-blue-200 text-blue-600 font-black text-sm py-3 rounded-xl transition-all active:scale-95 flex items-center justify-center gap-2"
           >
             <Phone className="w-4 h-4" />
             Call {group.customer_name.split(' ')[0]} — Order Ready!
           </a>
           <button
             onClick={() => router.push('/bookings?search=' + group.booking_number)}
-            className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-black text-sm py-3 rounded-xl transition-all active:scale-95 shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-2"
+            className="w-full bg-emerald-600 hover:bg-emerald-500 text-gray-900 font-black text-sm py-3 rounded-xl transition-all active:scale-95 shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-2"
           >
             <Truck className="w-4 h-4" />
             Process Delivery in Bookings
@@ -419,7 +419,7 @@ export default function AllotmentManager() {
   if (!bookings || !lots || !plants || !allotments) {
     return (
       <div className="flex flex-col items-center justify-center py-24 text-gray-600">
-        <div className="w-8 h-8 border-2 border-gray-700 border-t-amber-500 rounded-full animate-spin mb-4" />
+        <div className="w-8 h-8 border-2 border-gray-200 border-t-amber-500 rounded-full animate-spin mb-4" />
         <p className="text-sm font-bold">Loading…</p>
       </div>
     );
@@ -471,10 +471,10 @@ export default function AllotmentManager() {
   };
 
   const tabs: Array<{ key: typeof filter; label: string; activeClass: string }> = [
-    { key: 'Pending', label: 'Pending', activeClass: 'bg-amber-500/20 text-amber-300 border-amber-500/40' },
-    { key: 'Allocated', label: 'Allocated', activeClass: 'bg-blue-500/20 text-blue-300 border-blue-500/40' },
-    { key: 'Delivered', label: 'Delivered', activeClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' },
-    { key: 'All', label: 'All', activeClass: 'bg-gray-700 text-gray-200 border-gray-600' },
+    { key: 'Pending', label: 'Pending', activeClass: 'bg-amber-100 text-amber-600 border-amber-500/40' },
+    { key: 'Allocated', label: 'Allocated', activeClass: 'bg-blue-100 text-blue-600 border-blue-500/40' },
+    { key: 'Delivered', label: 'Delivered', activeClass: 'bg-emerald-500/20 text-emerald-600 border-emerald-500/40' },
+    { key: 'All', label: 'All', activeClass: 'bg-gray-200 text-gray-800 border-gray-600' },
   ];
 
   return (
@@ -488,12 +488,12 @@ export default function AllotmentManager() {
             className={`shrink-0 flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black border transition-all ${
               filter === tab.key
                 ? tab.activeClass
-                : 'bg-gray-900 text-gray-500 border-gray-800 hover:border-gray-700'
+                : 'bg-white text-gray-500 border-gray-800 hover:border-gray-200'
             }`}
           >
             {tab.label}
             <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-full ${
-              filter === tab.key ? 'bg-white/10' : 'bg-gray-800'
+              filter === tab.key ? 'bg-white/10' : 'bg-gray-50'
             }`}>
               {counts[tab.key]}
             </span>
@@ -504,7 +504,7 @@ export default function AllotmentManager() {
       {/* ── Cards ── */}
       {displayed.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-center">
-          <div className="w-16 h-16 rounded-full bg-gray-800 border border-gray-700 flex items-center justify-center mb-4">
+          <div className="w-16 h-16 rounded-full bg-gray-50 border border-gray-200 flex items-center justify-center mb-4">
             <Package className="w-7 h-7 text-gray-600" />
           </div>
           <p className="text-gray-500 font-bold">No {filter !== 'All' ? filter.toLowerCase() : ''} bookings</p>

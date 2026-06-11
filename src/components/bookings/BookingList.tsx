@@ -281,7 +281,7 @@ export default function BookingList({ role, userId, userName }: BookingListProps
            newlyProcessedRows.push(updated);
            ops.push(async () => {
              await db.bookings.update(row.id, { status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, sync_status: 'pending' });
-             await db.sync_queue.add({ table: 'bookings', action: 'UPDATE', payload: { id: row.id, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks }, created_at: Date.now() });
+             await db.sync_queue.add({ table: 'bookings', action: 'UPDATE', payload: { ...row, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, sync_status: undefined }, created_at: Date.now() });
              
              if (row.lot_id) {
                const lot = await db.lots.get(row.lot_id);
@@ -289,7 +289,7 @@ export default function BookingList({ role, userId, userName }: BookingListProps
                  const newQty = Math.max(0, lot.total_quantity - deliverQty);
                  const newStatus = newQty === 0 ? 'Completed' : lot.status;
                  await db.lots.update(row.lot_id, { total_quantity: newQty, status: newStatus });
-                 await db.sync_queue.add({ table: 'lots', action: 'UPDATE', payload: { id: row.lot_id, total_quantity: newQty, status: newStatus }, created_at: Date.now() });
+                 await db.sync_queue.add({ table: 'lots', action: 'UPDATE', payload: { ...lot, total_quantity: newQty, status: newStatus, sync_status: undefined }, created_at: Date.now() });
                }
              }
            });
@@ -307,7 +307,7 @@ export default function BookingList({ role, userId, userName }: BookingListProps
 
            ops.push(async () => {
              await db.bookings.update(row.id, { quantity: deliverQty, total_amount: deliveredAmount, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, sync_status: 'pending' });
-             await db.sync_queue.add({ table: 'bookings', action: 'UPDATE', payload: { id: row.id, quantity: deliverQty, total_amount: deliveredAmount, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks }, created_at: Date.now() });
+             await db.sync_queue.add({ table: 'bookings', action: 'UPDATE', payload: { ...row, quantity: deliverQty, total_amount: deliveredAmount, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, sync_status: undefined }, created_at: Date.now() });
              
              await db.bookings.add(newPending);
              await db.sync_queue.add({ table: 'bookings', action: 'INSERT', payload: newPending, created_at: Date.now() });
@@ -318,7 +318,7 @@ export default function BookingList({ role, userId, userName }: BookingListProps
                  const newQty = Math.max(0, lot.total_quantity - deliverQty);
                  const newStatus = newQty === 0 ? 'Completed' : lot.status;
                  await db.lots.update(row.lot_id, { total_quantity: newQty, status: newStatus });
-                 await db.sync_queue.add({ table: 'lots', action: 'UPDATE', payload: { id: row.lot_id, total_quantity: newQty, status: newStatus }, created_at: Date.now() });
+                 await db.sync_queue.add({ table: 'lots', action: 'UPDATE', payload: { ...lot, total_quantity: newQty, status: newStatus, sync_status: undefined }, created_at: Date.now() });
                }
              }
            });
@@ -340,9 +340,10 @@ export default function BookingList({ role, userId, userName }: BookingListProps
          }
          if (fRow.advance_paid !== rowAdvance) {
             fRow.advance_paid = rowAdvance;
+            const capturedRow = { ...fRow, advance_paid: rowAdvance };
             ops.push(async () => {
               await db.bookings.update(fRow.id, { advance_paid: rowAdvance, sync_status: 'pending' });
-              await db.sync_queue.add({ table: 'bookings', action: 'UPDATE', payload: { id: fRow.id, advance_paid: rowAdvance }, created_at: Date.now() });
+              await db.sync_queue.add({ table: 'bookings', action: 'UPDATE', payload: { ...capturedRow, sync_status: undefined }, created_at: Date.now() });
             });
          }
       }
@@ -378,9 +379,10 @@ export default function BookingList({ role, userId, userName }: BookingListProps
             fRow.payment_mode = capturedMode;
             fRow.cash_amount = capturedCash;
             fRow.upi_amount = capturedUpi;
+            const capturedRow = { ...fRow, sync_status: undefined };
             ops.push(async () => {
                await db.bookings.update(capturedId, { payment_mode: capturedMode, cash_amount: capturedCash, upi_amount: capturedUpi, sync_status: 'pending' });
-               await db.sync_queue.add({ table: 'bookings', action: 'UPDATE', payload: { id: capturedId, payment_mode: capturedMode, cash_amount: capturedCash, upi_amount: capturedUpi }, created_at: Date.now() });
+               await db.sync_queue.add({ table: 'bookings', action: 'UPDATE', payload: capturedRow, created_at: Date.now() });
             });
          }
       }
@@ -406,7 +408,8 @@ export default function BookingList({ role, userId, userName }: BookingListProps
     return sum + (qty * (item.total_amount / item.quantity));
   }, 0) : 0;
   
-  const advanceToUse = deliveryModal ? Math.min(deliveryModal.advance_paid, currentDeliveryValue) : 0;
+  const uiAvailableAdvance = deliveryModal ? deliveryModal.items.filter((i: any) => i.status !== 'Delivered' && i.status !== 'Cancelled').reduce((sum: number, i: any) => sum + (i.advance_paid || 0), 0) : 0;
+  const advanceToUse = deliveryModal ? Math.min(uiAvailableAdvance, currentDeliveryValue) : 0;
   const targetCollection = currentDeliveryValue - advanceToUse;
 
   const splitTotal = (parseFloat(splitAmounts.cash) || 0) + (parseFloat(splitAmounts.upi) || 0);
@@ -716,7 +719,14 @@ export default function BookingList({ role, userId, userName }: BookingListProps
                             type="number"
                             min="0"
                             value={splitAmounts.cash}
-                            onChange={(e) => setSplitAmounts(s => ({ ...s, cash: e.target.value }))}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              const numVal = parseFloat(val) || 0;
+                              setSplitAmounts({
+                                cash: val,
+                                upi: Math.max(0, targetCollection - numVal).toString()
+                              });
+                            }}
                             className="w-full p-3 bg-white border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold mt-1"
                             placeholder="0"
                           />
@@ -727,7 +737,14 @@ export default function BookingList({ role, userId, userName }: BookingListProps
                             type="number"
                             min="0"
                             value={splitAmounts.upi}
-                            onChange={(e) => setSplitAmounts(s => ({ ...s, upi: e.target.value }))}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              const numVal = parseFloat(val) || 0;
+                              setSplitAmounts({
+                                upi: val,
+                                cash: Math.max(0, targetCollection - numVal).toString()
+                              });
+                            }}
                             className="w-full p-3 bg-white border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold mt-1"
                             placeholder="0"
                           />

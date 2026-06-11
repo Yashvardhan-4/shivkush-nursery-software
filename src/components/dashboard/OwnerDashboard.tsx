@@ -1,7 +1,7 @@
 'use client';
 
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '@/lib/db';
+import { db, toLocalDateStr } from '@/lib/db';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import {
   Banknote,
@@ -42,13 +42,13 @@ export default function OwnerDashboard() {
 
   const todaySalesTotal = (allSales && allBookings)
     ? allSales
-        .filter((s) => s.created_at && s.created_at.startsWith(todayStr))
+        .filter((s) => s.created_at && toLocalDateStr(s.created_at) === todayStr)
         .reduce((sum, s) => sum + Number(s.amount || 0), 0)
       + allBookings
         .filter((b) => b.delivery_date === todayStr && b.status === 'Delivered')
         .reduce((sum, b) => sum + Math.max(0, Number(b.total_amount || 0) - Number(b.advance_paid || 0)), 0)
       + allBookings
-        .filter((b) => (b.created_at && b.created_at.startsWith(todayStr)) || (!b.created_at && b.booking_date === todayStr))
+        .filter((b) => (b.created_at && toLocalDateStr(b.created_at) === todayStr) || (!b.created_at && b.booking_date === todayStr))
         .reduce((sum, b) => sum + Number(b.advance_paid || 0), 0)
     : null;
 

@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '@/lib/db';
+import { db, generateId } from '@/lib/db';
 import { CheckCircle, XCircle, Clock, ChevronDown, ChevronUp, Calendar } from 'lucide-react';
 
 

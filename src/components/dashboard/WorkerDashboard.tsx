@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '@/lib/db';
+import { db, toLocalDateStr } from '@/lib/db';
 import { Banknote, PlusCircle, BookOpen, Layers, Leaf } from 'lucide-react';
 import Link from 'next/link';
 import RecentTransactions from './RecentTransactions';
@@ -18,7 +18,7 @@ export default function WorkerDashboard() {
   }, []);
 
   const todaySalesTotal = useLiveQuery(async () => {
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = toLocalDateStr();
     const userStr = localStorage.getItem('snms_user');
     const user = userStr ? JSON.parse(userStr) : null;
     const workerId = user?.id;
@@ -29,13 +29,13 @@ export default function WorkerDashboard() {
     ]);
     
     return allSales
-        .filter((s) => s.created_at.startsWith(todayStr) && s.worker_id === workerId)
+        .filter((s) => s.created_at && toLocalDateStr(s.created_at) === todayStr && s.worker_id === workerId)
         .reduce((sum, s) => sum + s.amount, 0)
       + allBookings
         .filter((b) => b.delivery_date === todayStr && b.status === 'Delivered' && b.worker_id === workerId)
         .reduce((sum, b) => sum + Math.max(0, b.total_amount - (b.advance_paid || 0)), 0)
       + allBookings
-        .filter((b) => b.created_at?.startsWith(todayStr) && b.worker_id === workerId)
+        .filter((b) => ((b.created_at && toLocalDateStr(b.created_at) === todayStr) || (!b.created_at && b.booking_date === todayStr)) && b.worker_id === workerId)
         .reduce((sum, b) => sum + (b.advance_paid || 0), 0);
   });
 
@@ -67,7 +67,7 @@ export default function WorkerDashboard() {
           .filter(s => s.plant_id === plant.id)
           .reduce((s, sale) => s + sale.quantity, 0);
 
-        const freeStock = Math.max(0, totalStock - allottedQty - soldQty);
+        const freeStock = Math.max(0, totalStock - allottedQty);
 
         return { plant, totalStock, allottedQty, soldQty, freeStock };
       })

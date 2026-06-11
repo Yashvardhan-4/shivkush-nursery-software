@@ -56,7 +56,18 @@ export default function CustomerLedger() {
   // Add direct sales value matched by phone
   for (const sale of directSales) {
     const phone = sale.customer_phone || '';
-    if (phone && customerMap[phone]) {
+    if (phone) {
+      if (!customerMap[phone]) {
+        customerMap[phone] = {
+          name: sale.customer_name || 'Walk-in',
+          phone,
+          city: '—',
+          bookingCount: 0,
+          totalBookingValue: 0,
+          totalSalesValue: 0,
+          bookingNumbers: [],
+        };
+      }
       customerMap[phone].totalSalesValue += sale.amount;
     }
   }
