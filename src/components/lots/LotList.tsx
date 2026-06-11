@@ -8,7 +8,7 @@ import { Pencil, AlertTriangle, Check } from 'lucide-react';
 export default function LotList() {
   const [statusFilter, setStatusFilter] = useState<'All' | 'Growing' | 'Ready' | 'Completed'>('All');
 
-  const lots = useLiveQuery(() => db.lots.orderBy('created_at').reverse().toArray());
+  const lots = useLiveQuery(() => db.lots.toArray());
   const plants = useLiveQuery(() => db.plants.toArray());
   const allotments = useLiveQuery(() => db.allotments.toArray());
   const sales = useLiveQuery(() => db.direct_sales.toArray());
@@ -41,7 +41,8 @@ export default function LotList() {
     return <div className="p-4 text-center text-gray-500 font-medium">Loading lots...</div>;
   }
 
-  const filtered = statusFilter === 'All' ? lots : lots.filter(l => l.status === statusFilter);
+  const baseFiltered = statusFilter === 'All' ? lots : lots.filter(l => l.status === statusFilter);
+  const filtered = [...baseFiltered].sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
 
   // Pre-calculate sequential sales deduction (FIFO)
   const remainingSalesByPlant: Record<string, number> = {};
@@ -49,7 +50,7 @@ export default function LotList() {
     remainingSalesByPlant[p.id] = sales.filter(s => s.plant_id === p.id).reduce((sum, s) => sum + s.quantity, 0);
   });
 
-  const sortedLots = [...lots].sort((a, b) => new Date(a.ready_date).getTime() - new Date(b.ready_date).getTime());
+  const sortedLots = [...lots].sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
   const lotSoldQtyMap: Record<string, number> = {};
   
   sortedLots.forEach(lot => {

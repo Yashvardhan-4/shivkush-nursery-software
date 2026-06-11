@@ -8,6 +8,7 @@ export interface Plant {
   id: string;
   plant_name: string;
   variety: string;       // e.g. "Grafted", "Seedling"
+  category?: string;
   selling_price: number;
   active: boolean;
 }
@@ -139,7 +140,7 @@ const db = new Dexie('SNMS_OfflineDB') as Dexie & {
 
 // Version 4: Added users table for worker name resolving
 db.version(4).stores({
-  plants: 'id, plant_name, variety, active',
+  plants: 'id, plant_name, variety, category, active',
   lots: 'id, lot_number, plant_id, status',
   customers: 'id, mobile, name',
   users: 'id, name, role',

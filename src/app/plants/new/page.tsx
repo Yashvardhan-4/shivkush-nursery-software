@@ -7,6 +7,7 @@ import { ArrowLeft } from 'lucide-react';
 export default function NewPlantPage() {
   const [name, setName] = useState('');
   const [variety, setVariety] = useState('');
+  const [category, setCategory] = useState('');
   const [price, setPrice] = useState('');
   const [loading, setLoading] = useState(false);
   const router = useRouter();
@@ -19,6 +20,7 @@ export default function NewPlantPage() {
       id: crypto.randomUUID(),
       plant_name: name,
       variety: variety,
+      category: category,
       selling_price: parseFloat(price),
       active: true,
     };
@@ -76,6 +78,23 @@ export default function NewPlantPage() {
             className="w-full p-4 bg-white border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-medium transition-shadow"
             placeholder="e.g. Grafted, Seedling"
           />
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-sm font-bold text-gray-700">Category</label>
+          <select
+            required
+            value={category}
+            onChange={(e) => setCategory(e.target.value)}
+            className="w-full p-4 bg-white border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-medium transition-shadow appearance-none"
+          >
+            <option value="" disabled>Select Category</option>
+            <option value="Vegetable">Vegetable</option>
+            <option value="Fruit">Fruit</option>
+            <option value="Flower">Flower</option>
+            <option value="Timber">Timber</option>
+            <option value="Other">Other</option>
+          </select>
         </div>
 
         <div className="space-y-2">

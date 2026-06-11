@@ -115,9 +115,11 @@ export function OfflineSyncProvider({ children }: { children: React.ReactNode })
         return;
       }
 
+      let bulkSuccess = false;
       if (res.ok) {
         const result = await res.json();
         if (result.success) {
+          bulkSuccess = true;
           const ids = queue.map(q => q.id!);
           await db.sync_queue.bulkDelete(ids);
           
@@ -135,6 +137,48 @@ export function OfflineSyncProvider({ children }: { children: React.ReactNode })
         }
       } else {
         console.error('Push sync request failed:', res.status);
+      }
+
+      if (!bulkSuccess) {
+        console.warn('Bulk push failed. Falling back to sending items one by one to find and eliminate poison pill...');
+        for (let i = 0; i < processedQueue.length; i++) {
+          const item = processedQueue[i];
+          const originalItem = queue[i];
+          try {
+            const singleRes = await fetch('/api/sync/push', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ queue: [item] })
+            });
+
+            if (singleRes.status === 401) {
+              localStorage.removeItem('snms_user');
+              window.location.href = '/login';
+              return;
+            }
+
+            if (singleRes.ok) {
+              const singleResult = await singleRes.json();
+              if (singleResult.success) {
+                await db.sync_queue.delete(originalItem.id!);
+                if (originalItem.action !== 'DELETE') {
+                  const localTable = (db as any)[originalItem.table];
+                  if (localTable && localTable.update) {
+                    await localTable.update(originalItem.payload.id, { sync_status: 'synced' }).catch(() => {});
+                  }
+                }
+              } else {
+                console.error('Poison pill found during individual sync (API Error). Deleting to unblock queue:', originalItem);
+                await db.sync_queue.delete(originalItem.id!);
+              }
+            } else {
+              console.error('Poison pill found during individual sync (HTTP Error). Deleting to unblock queue:', originalItem);
+              await db.sync_queue.delete(originalItem.id!);
+            }
+          } catch (e) {
+             console.error('Network or unexpected error while sending individual item:', e);
+          }
+        }
       }
       
       await pullSync();
