@@ -297,16 +297,6 @@ export default function BookingList({ role, userId, userName }: BookingListProps
            ops.push(async () => {
              await db.bookings.update(row.id, { status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, sync_status: 'pending' });
              await db.sync_queue.add({ table: 'bookings', action: 'UPDATE', payload: { ...row, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, sync_status: undefined }, created_at: Date.now() });
-             
-             if (row.lot_id) {
-               const lot = await db.lots.get(row.lot_id);
-               if (lot) {
-                 const newQty = Math.max(0, lot.total_quantity - deliverQty);
-                 const newStatus = newQty === 0 ? 'Completed' : lot.status;
-                 await db.lots.update(row.lot_id, { total_quantity: newQty, status: newStatus });
-                 await db.sync_queue.add({ table: 'lots', action: 'UPDATE', payload: { ...lot, total_quantity: newQty, status: newStatus, sync_status: undefined }, created_at: Date.now() });
-               }
-             }
            });
         } else {
            const deliveredAmount = deliverQty * unitPrice;
@@ -326,16 +316,6 @@ export default function BookingList({ role, userId, userName }: BookingListProps
              
              await db.bookings.add(newPending);
              await db.sync_queue.add({ table: 'bookings', action: 'INSERT', payload: newPending, created_at: Date.now() });
-             
-             if (row.lot_id) {
-               const lot = await db.lots.get(row.lot_id);
-               if (lot) {
-                 const newQty = Math.max(0, lot.total_quantity - deliverQty);
-                 const newStatus = newQty === 0 ? 'Completed' : lot.status;
-                 await db.lots.update(row.lot_id, { total_quantity: newQty, status: newStatus });
-                 await db.sync_queue.add({ table: 'lots', action: 'UPDATE', payload: { ...lot, total_quantity: newQty, status: newStatus, sync_status: undefined }, created_at: Date.now() });
-               }
-             }
            });
         }
       }

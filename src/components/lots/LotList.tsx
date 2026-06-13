@@ -14,6 +14,7 @@ export default function LotList() {
   const plants = useLiveQuery(() => db.plants.toArray());
   const allotments = useLiveQuery(() => db.allotments.toArray());
   const bookings = useLiveQuery(() => db.bookings.toArray());
+  const directSales = useLiveQuery(() => db.direct_sales.toArray());
 
   const handleMarkReady = async (lotId: string) => {
     try {
@@ -39,7 +40,7 @@ export default function LotList() {
     }
   };
 
-  if (!lots || !plants || !allotments || !bookings) {
+  if (!lots || !plants || !allotments || !bookings || !directSales) {
     return <div className="p-4 text-center text-gray-500 font-medium">{t('loadingLots')}</div>;
   }
 
@@ -50,11 +51,7 @@ export default function LotList() {
     bookings.filter(b => b.status !== 'Delivered' && b.status !== 'Cancelled').map(b => b.id)
   );
 
-  const lotSoldQtyMap: Record<string, number> = {};
-  lots.forEach(lot => {
-    const initial = lot.initial_quantity ?? lot.total_quantity;
-    lotSoldQtyMap[lot.id] = Math.max(0, initial - lot.total_quantity);
-  });
+
 
   return (
     <div className="space-y-4">
@@ -90,10 +87,20 @@ export default function LotList() {
             .filter(a => a.lot_id === lot.id && activeBookingIds.has(a.booking_id))
             .reduce((sum, a) => sum + a.quantity, 0);
 
-          // FIFO apportioned direct sales
-          const soldQty = lotSoldQtyMap[lot.id] || 0;
+          // Delivered booking quantities for this lot
+          const deliveredQty = bookings
+            .filter(b => b.lot_id === lot.id && b.status === 'Delivered')
+            .reduce((sum, b) => sum + b.quantity, 0);
 
-          const freeStock = Math.max(0, lot.total_quantity - allottedQty);
+          // Direct sales for this lot
+          const directSoldQty = directSales
+            .filter(s => s.lot_id === lot.id)
+            .reduce((sum, s) => sum + s.quantity, 0);
+
+          const soldQty = deliveredQty + directSoldQty;
+          
+          const availableStock = lot.available_stock ?? lot.initial_quantity ?? lot.total_quantity;
+          const freeStock = Math.max(0, availableStock - allottedQty - soldQty);
           
           const readyDate = new Date(lot.ready_date);
           const today = new Date();
@@ -155,8 +162,8 @@ export default function LotList() {
                     <p className="font-black text-gray-700 text-lg">{lot.initial_quantity ?? lot.total_quantity}</p>
                   </div>
                   <div className="text-center border-l border-gray-200">
-                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest">{t('stock')}</p>
-                    <p className="font-black text-gray-900 text-lg">{lot.total_quantity}</p>
+                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest">Available</p>
+                    <p className="font-black text-gray-900 text-lg">{availableStock}</p>
                   </div>
                   <div className="text-center border-l border-gray-200">
                     <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest">{t('allotted')}</p>

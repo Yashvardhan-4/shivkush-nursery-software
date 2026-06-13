@@ -80,7 +80,7 @@ function getAvailableInLot(lotId: string, lots: Lot[], allotments: Allotment[], 
       return b && b.status !== 'Delivered' && b.status !== 'Cancelled';
     })
     .reduce((sum, a) => sum + a.quantity, 0);
-  return Math.max(0, lot.total_quantity - used);
+  return Math.max(0, (lot.available_stock ?? lot.total_quantity) - used);
 }
 
 // ──────────────────────────────────────────────

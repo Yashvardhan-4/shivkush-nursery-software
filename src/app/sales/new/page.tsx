@@ -113,7 +113,7 @@ export default function NewDirectSalePage() {
       .filter(a => a.lot_id === lotId && activeBookingIds.has(a.booking_id))
       .reduce((s, a) => s + a.quantity, 0);
     const cartQty = cart.filter(i => i.lotId === lotId).reduce((s, i) => s + i.quantity, 0);
-    return Math.max(0, lot.total_quantity - allottedInLot - cartQty);
+    return Math.max(0, (lot.available_stock ?? lot.total_quantity) - allottedInLot - cartQty);
   };
 
   const selectedFreeStock = (plantId && selectedLotId) ? computeFreeStockForLot(selectedLotId, plantId) : null;
@@ -227,15 +227,6 @@ export default function NewDirectSalePage() {
       await db.sync_queue.add({ table: 'direct_sales', action: 'INSERT', payload: s, created_at: Date.now() });
     }
 
-    // Deduct sold qty directly from the chosen lot — allotment-aware, no blind FIFO
-    for (const item of cart) {
-      const lot = await db.lots.get(item.lotId);
-      if (!lot) continue;
-      lot.total_quantity = Math.max(0, lot.total_quantity - item.quantity);
-      if (lot.total_quantity === 0) lot.status = 'Completed';
-      await db.lots.put(lot);
-      await db.sync_queue.add({ table: 'lots', action: 'UPDATE', payload: lot, created_at: Date.now() });
-    }
 
     // Audit log for the entire sale
     await logAudit(user.id, user.name, 'CREATE_SALE', 'direct_sales', saleNumber, {

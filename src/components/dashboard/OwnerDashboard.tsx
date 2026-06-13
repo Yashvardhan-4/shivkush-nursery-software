@@ -1,5 +1,6 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, toLocalDateStr } from '@/lib/db';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
@@ -39,10 +40,17 @@ export default function OwnerDashboard() {
     return all.filter(p => p.active);
   });
 
-  // Today's cash-in-hand = direct sales collected today
-  //   + balance collected at delivery today (total_amount - advance_paid)
-  // Advances are NOT added separately — they're already captured on booking day
-  // via direct entries into cash. Adding them here would double-count.
+  const [ownerId, setOwnerId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const userStr = localStorage.getItem('snms_user');
+    if (userStr) {
+       const user = JSON.parse(userStr);
+       setOwnerId(user.id);
+    }
+  }, []);
+
+  // Today's total income = direct sales + balance collected at delivery + advances collected today
   const todaySalesTotal = (allSales && allBookings)
     ? allSales
         .filter((s) => s.created_at && toLocalDateStr(s.created_at) === todayStr)
@@ -50,6 +58,22 @@ export default function OwnerDashboard() {
       + allBookings
         .filter((b) => b.delivery_date === todayStr && b.status === 'Delivered')
         .reduce((sum, b) => sum + Math.max(0, Number(b.total_amount || 0) - Number(b.advance_paid || 0)), 0)
+      + allBookings
+        .filter((b) => b.created_at && toLocalDateStr(b.created_at) === todayStr)
+        .reduce((sum, b) => sum + Number(b.advance_paid || 0), 0)
+    : null;
+
+  // Owner's sales = income from transactions by the owner user
+  const ownerSalesTotal = (allSales && allBookings && ownerId)
+    ? allSales
+        .filter((s) => s.created_at && toLocalDateStr(s.created_at) === todayStr && s.worker_id === ownerId)
+        .reduce((sum, s) => sum + Number(s.amount || 0), 0)
+      + allBookings
+        .filter((b) => b.delivery_date === todayStr && b.status === 'Delivered' && b.worker_id === ownerId)
+        .reduce((sum, b) => sum + Math.max(0, Number(b.total_amount || 0) - Number(b.advance_paid || 0)), 0)
+      + allBookings
+        .filter((b) => b.created_at && toLocalDateStr(b.created_at) === todayStr && b.worker_id === ownerId)
+        .reduce((sum, b) => sum + Number(b.advance_paid || 0), 0)
     : null;
 
   const pendingBookingsCount = allBookings
@@ -77,7 +101,8 @@ export default function OwnerDashboard() {
     : null;
 
   const stats = [
-    { label: t('todaysSales'), value: todaySalesTotal !== null ? fmt(todaySalesTotal) : '…', icon: Banknote, color: 'text-green-700 bg-green-100' },
+    { label: "Today's Total Income", value: todaySalesTotal !== null ? fmt(todaySalesTotal) : '…', icon: Banknote, color: 'text-green-700 bg-green-100' },
+    { label: "My Sales (Owner)", value: ownerSalesTotal !== null ? fmt(ownerSalesTotal) : (ownerId ? '…' : 'N/A'), icon: Banknote, color: 'text-emerald-700 bg-emerald-100' },
     { label: t('pending'), value: pendingBookingsCount !== null ? String(pendingBookingsCount) : '…', icon: BookOpen, color: 'text-blue-700 bg-blue-100' },
   ];
 
@@ -102,7 +127,7 @@ export default function OwnerDashboard() {
       </header>
       
       {/* ── Live Stat Cards ──────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         {stats.map((stat, i) => (
           <div key={i} className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-between">
             <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${stat.color}`}>

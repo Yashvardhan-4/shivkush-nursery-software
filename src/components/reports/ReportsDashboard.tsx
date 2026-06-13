@@ -625,8 +625,9 @@ function LotReportTab() {
   const plants = useLiveQuery(() => db.plants.toArray());
   const allotments = useLiveQuery(() => db.allotments.toArray());
   const bookings = useLiveQuery(() => db.bookings.toArray());
+  const directSales = useLiveQuery(() => db.direct_sales.toArray());
 
-  if (!lots || !plants || !allotments || !bookings) {
+  if (!lots || !plants || !allotments || !bookings || !directSales) {
     return <LoadingCard />;
   }
 
@@ -678,9 +679,16 @@ function LotReportTab() {
               {groupLots.map((lot) => {
                 const plant = plantMap.get(lot.plant_id);
                 const allottedQty = allottedPerLot.get(lot.id) ?? 0;
-                const initialQty = lot.initial_quantity ?? lot.total_quantity;
-                const soldQty = Math.max(0, initialQty - lot.total_quantity);
-                const freeStock = Math.max(0, lot.total_quantity - allottedQty);
+                const deliveredQty = bookings
+                  .filter(b => b.lot_id === lot.id && b.status === 'Delivered')
+                  .reduce((sum, b) => sum + b.quantity, 0);
+                const directSoldQty = directSales
+                  .filter(s => s.lot_id === lot.id)
+                  .reduce((sum, s) => sum + s.quantity, 0);
+                const soldQty = deliveredQty + directSoldQty;
+                
+                const availableStock = lot.available_stock ?? lot.initial_quantity ?? lot.total_quantity;
+                const freeStock = Math.max(0, availableStock - allottedQty - soldQty);
 
                 return (
                   <div
@@ -721,16 +729,16 @@ function LotReportTab() {
                           {t('total')}
                         </p>
                         <p className="text-lg font-black text-gray-700 mt-0.5">
-                          {initialQty}
+                          {lot.initial_quantity ?? lot.total_quantity}
                         </p>
                       </div>
                       {/* Stock */}
                       <div className="border-l border-gray-100">
                         <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">
-                          {t('stock')}
+                          Available
                         </p>
                         <p className="text-lg font-black text-gray-800 mt-0.5">
-                          {lot.total_quantity}
+                          {availableStock}
                         </p>
                       </div>
                       {/* Allotted */}

@@ -110,7 +110,7 @@ export default function EditBookingPage() {
   const selectedLot = lots?.find(l => l.id === lotId);
 
   const bookedQty = bookings?.filter(b => b.lot_id === lotId && b.status !== 'Cancelled' && b.status !== 'Delivered').reduce((sum, b) => sum + b.quantity, 0) || 0;
-  const availableQty = selectedLot ? selectedLot.total_quantity - bookedQty : 0;
+  const availableQty = selectedLot ? (selectedLot.available_stock ?? selectedLot.total_quantity) - bookedQty : 0;
 
   const handleAddToCart = () => {
     if (!selectedPlant || !quantity) return;
@@ -411,7 +411,7 @@ export default function EditBookingPage() {
                 {lots?.map(l => {
                   const lotBookedQty = bookings?.filter(b => b.lot_id === l.id && b.status !== 'Cancelled' && b.status !== 'Delivered').reduce((sum, b) => sum + b.quantity, 0) || 0;
                   return (
-                    <option key={l.id} value={l.id}>{l.lot_number} ({t('availableLabel')} {l.total_quantity - lotBookedQty})</option>
+                    <option key={l.id} value={l.id}>{l.lot_number} ({t('availableLabel')} {(l.available_stock ?? l.total_quantity) - lotBookedQty})</option>
                   );
                 })}
               </select>

@@ -19,6 +19,7 @@ export interface Lot {
   plant_id: string;
   total_quantity: number;
   initial_quantity?: number;
+  available_stock?: number;
   ready_date: string;    // ISO date YYYY-MM-DD
   status: 'Growing' | 'Ready' | 'Completed';
   notes: string | null;
@@ -168,8 +169,28 @@ db.version(5).stores({
   sync_queue: '++id, table, action, created_at'
 });
 
-
-
+// Version 6: Added available_stock to lots, fixed initial_quantity
+db.version(6).stores({
+  plants: 'id, plant_name, variety, category, active',
+  lots: 'id, lot_number, plant_id, status',
+  customers: 'id, mobile, name',
+  users: 'id, name, role',
+  bookings: 'id, booking_number, customer_name, customer_phone, plant_id, lot_id, status, sync_status, created_at',
+  allotments: 'id, booking_id, lot_id, sync_status',
+  direct_sales: 'id, sale_number, plant_id, lot_id, sync_status, created_at',
+  attendance: 'id, worker_id, date, status',
+  audit_logs: '++id, user_id, action, table_name, record_id, created_at',
+  sync_queue: '++id, table, action, created_at'
+}).upgrade(async tx => {
+  await tx.table('lots').toCollection().modify(lot => {
+    if (lot.initial_quantity === undefined) {
+      lot.initial_quantity = lot.total_quantity;
+    }
+    if (lot.available_stock === undefined) {
+      lot.available_stock = lot.total_quantity;
+    }
+  });
+});
 // =========================================
 // HELPER: Log an audit event
 // =========================================
@@ -191,7 +212,7 @@ export async function logAudit(userId: string, userName: string, action: string,
 // =========================================
 export async function getFreeStock(plantId: string): Promise<number> {
   const lots = await db.lots.where('plant_id').equals(plantId).toArray();
-  const totalStock = lots.reduce((sum, l) => sum + l.total_quantity, 0);
+  const totalStock = lots.reduce((sum, l) => sum + (l.available_stock ?? l.total_quantity), 0);
 
   const allotments = await db.allotments.toArray();
   // Only count active bookings (not Delivered or Cancelled) as consuming stock

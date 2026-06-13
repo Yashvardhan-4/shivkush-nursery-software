@@ -15,7 +15,7 @@ export default function EditLotPage({ params }: Props) {
   const router = useRouter();
 
   const [lotNumber, setLotNumber] = useState('');
-  const [quantity, setQuantity] = useState('');
+  const [availableStock, setAvailableStock] = useState('');
   const [readyDate, setReadyDate] = useState('');
   const [status, setStatus] = useState<'Growing' | 'Ready' | 'Completed'>('Growing');
   const [notes, setNotes] = useState('');
@@ -40,19 +40,23 @@ export default function EditLotPage({ params }: Props) {
     if (lot === null) { setNotFound(true); return; }
     if (!lot) return;
     setLotNumber(lot.lot_number);
-    setQuantity(String(lot.total_quantity));
+    setAvailableStock(String(lot.available_stock ?? lot.total_quantity));
     setReadyDate(lot.ready_date);
     setStatus(lot.status);
     setNotes(lot.notes || '');
   }, [lot]);
 
   const allottedQty = allotments?.reduce((sum, a) => sum + a.quantity, 0) || 0;
-  const newQty = parseInt(quantity) || 0;
+  const newQty = parseInt(availableStock) || 0;
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (newQty < allottedQty) {
-      alert(`Cannot reduce quantity below ${allottedQty} — that many plants are already allotted to bookings.`);
+      alert(`Cannot reduce available stock below ${allottedQty} — that many plants are already allotted to bookings.`);
+      return;
+    }
+    if (newQty > (lot?.initial_quantity ?? lot?.total_quantity ?? 0)) {
+      alert(`Cannot increase available stock above initial quantity (${lot?.initial_quantity ?? lot?.total_quantity ?? 0}).`);
       return;
     }
     setLoading(true);
@@ -61,14 +65,10 @@ export default function EditLotPage({ params }: Props) {
       const lot = await db.lots.get(id);
       if (!lot) return;
 
-      const oldTotal = lot.total_quantity;
-      const diff = newQty - oldTotal;
-
       const updates = {
         ...lot,
         lot_number: lotNumber,
-        total_quantity: newQty,
-        initial_quantity: (lot.initial_quantity || oldTotal) + diff,
+        available_stock: newQty,
         ready_date: readyDate,
         status,
         notes,
@@ -82,7 +82,7 @@ export default function EditLotPage({ params }: Props) {
       });
       await logAudit(user.id || 'owner', user.name || 'Owner', 'UPDATE_LOT', 'lots', id, {
         lot_number: lotNumber,
-        total_quantity: newQty,
+        available_stock: newQty,
         ready_date: readyDate,
         status,
         notes,
@@ -216,20 +216,24 @@ export default function EditLotPage({ params }: Props) {
           )}
         </div>
 
-        {/* Quantity */}
+        {/* Available Stock */}
         <div className="space-y-2">
           <label className="text-xs font-black text-gray-500 uppercase tracking-wider">
-            Total Quantity
+            Available Stock / Surviving Saplings
             {allottedQty > 0 && <span className="ml-2 text-blue-600 font-semibold normal-case">(min {allottedQty} — already allotted)</span>}
           </label>
           <input
             required
             type="number"
-            min={allottedQty || 1}
-            value={quantity}
-            onChange={e => setQuantity(e.target.value)}
+            min={allottedQty || 0}
+            max={lot.initial_quantity ?? lot.total_quantity}
+            value={availableStock}
+            onChange={e => setAvailableStock(e.target.value)}
             className="w-full p-4 bg-white border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-bold text-xl"
           />
+          <p className="text-xs font-semibold text-gray-500">
+            Initial: {lot.initial_quantity ?? lot.total_quantity} • Wasted: {(lot.initial_quantity ?? lot.total_quantity) - newQty}
+          </p>
         </div>
 
         {/* Notes */}
