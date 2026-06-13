@@ -3,9 +3,8 @@
 import { useEffect, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, toLocalDateStr } from '@/lib/db';
-import { Banknote, PlusCircle, BookOpen, Layers, Leaf } from 'lucide-react';
+import { Banknote, PlusCircle, BookOpen, Layers, Leaf, Package } from 'lucide-react';
 import Link from 'next/link';
-import RecentTransactions from './RecentTransactions';
 import { SyncButton } from '@/components/ui/SyncButton';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 
@@ -112,6 +111,16 @@ export default function WorkerDashboard() {
           </div>
         </Link>
 
+        <Link href="/fulfillment" className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center space-x-5 active:scale-95 transition-all">
+          <div className="bg-indigo-100 p-4 rounded-2xl text-indigo-600 shadow-inner">
+            <Package className="w-7 h-7" />
+          </div>
+          <div>
+            <h3 className="text-lg font-extrabold text-gray-900">My Orders</h3>
+            <p className="text-xs font-medium text-gray-500 mt-1">View and fulfill assigned orders</p>
+          </div>
+        </Link>
+
         <Link href="/bookings" className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center space-x-5 active:scale-95 transition-all">
           <div className="bg-blue-100 p-4 rounded-2xl text-blue-600 shadow-inner">
             <BookOpen className="w-7 h-7" />
@@ -131,10 +140,17 @@ export default function WorkerDashboard() {
             <p className="text-xs font-medium text-gray-500 mt-1">{t('viewStockSub')}</p>
           </div>
         </Link>
-      </div>
 
-      {/* "?"? My Recent Transactions "?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"? */}
-      {workerId && <RecentTransactions workerId={workerId} />}
+        <Link href="/transactions" className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center space-x-5 active:scale-95 transition-all">
+          <div className="bg-emerald-100 p-4 rounded-2xl text-emerald-600 shadow-inner">
+            <Banknote className="w-7 h-7" />
+          </div>
+          <div>
+            <h3 className="text-lg font-extrabold text-gray-900">{t('collections')}</h3>
+            <p className="text-xs font-medium text-gray-500 mt-1">View my collections and transaction history</p>
+          </div>
+        </Link>
+      </div>
 
       {/* Free Stock by Plant Section */}
       <div className="space-y-3">

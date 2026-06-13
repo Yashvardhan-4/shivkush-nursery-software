@@ -18,7 +18,7 @@ import {
   Users
 } from 'lucide-react';
 import Link from 'next/link';
-import RecentTransactions from './RecentTransactions';
+
 import { SyncButton } from '@/components/ui/SyncButton';
 
 function fmt(n: number) {
@@ -117,6 +117,7 @@ export default function OwnerDashboard() {
     { href: '/reports', label: t('reports'), icon: BarChart3, color: 'bg-rose-600', bg: 'bg-rose-50', border: 'border-rose-200' },
     { href: '/analytics', label: t('analytics'), icon: PieChart, color: 'bg-sky-600', bg: 'bg-sky-50', border: 'border-sky-200' },
     { href: '/staff', label: t('manageStaff'), icon: Users, color: 'bg-red-600', bg: 'bg-red-50', border: 'border-red-200' },
+    { href: '/settings/qr', label: 'Manage QRs', icon: Banknote, color: 'bg-pink-600', bg: 'bg-pink-50', border: 'border-pink-200' },
   ];
 
   return (
@@ -177,8 +178,16 @@ export default function OwnerDashboard() {
         </div>
       )}
 
-      {/* "?"? Recent Transactions "?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"? */}
-      <RecentTransactions />
+      {/* ── View All Transactions ──────────────────────────────────────── */}
+      <Link href="/transactions" className="bg-white border border-gray-100 rounded-2xl px-5 py-4 flex items-center justify-between shadow-sm active:scale-95 transition-transform">
+        <div className="flex items-center gap-3">
+          <div className="bg-gray-100 p-2 rounded-xl">
+            <ClipboardList className="w-5 h-5 text-gray-600" />
+          </div>
+          <span className="font-bold text-gray-800">View All Transactions</span>
+        </div>
+        <span className="text-gray-400">→</span>
+      </Link>
     </div>
   );
 }

@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { db, generateId, toLocalDateStr } from '@/lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { PlusCircle, Trash2 } from 'lucide-react';
+import { PlusCircle, Trash2, QrCode, X } from 'lucide-react';
 import Link from 'next/link';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 
@@ -23,7 +23,9 @@ export default function NewBookingPage() {
   const [bookingNumber, setBookingNumber] = useState('BKG-...');
   
   useEffect(() => {
-    setBookingNumber(`BKG-${Date.now().toString().slice(-6)}`);
+    const timestamp = Date.now().toString(36).toUpperCase();
+    const random = Math.random().toString(36).slice(2, 6).toUpperCase();
+    setBookingNumber(`BKG-${timestamp}-${random}`);
   }, []);
   
   const [customerName, setCustomerName] = useState('');
@@ -31,12 +33,20 @@ export default function NewBookingPage() {
   const [city, setCity] = useState('');
   const [deliveryDate, setDeliveryDate] = useState('');
   
+  const activeQrs = useLiveQuery(async () => {
+    const qrs = await db.payment_qrs.toArray();
+    return qrs.filter(q => q.active);
+  });
+  const [showQR, setShowQR] = useState(false);
+  
   const [cart, setCart] = useState<CartItem[]>([]);
   
   // Current Item State
   const [plantId, setPlantId] = useState('');
   const [lotId, setLotId] = useState('');
   const [quantity, setQuantity] = useState('');
+  
+  const [assignedTo, setAssignedTo] = useState('');
   
   const [advancePaid, setAdvancePaid] = useState('');
   const [paymentMode, setPaymentMode] = useState<'Cash' | 'UPI' | 'Split'>('Cash');
@@ -49,6 +59,8 @@ export default function NewBookingPage() {
   const lots = useLiveQuery(() => db.lots.where('plant_id').equals(plantId).toArray(), [plantId]);
   const bookings = useLiveQuery(() => db.bookings.toArray());
   const customers = useLiveQuery(() => db.customers.toArray());
+  const users = useLiveQuery(() => db.users.toArray());
+  const workers = users?.filter(u => u.role === 'worker') || [];
 
   const uniqueCities = Array.from(new Set(customers?.map(c => c.city).filter(Boolean) as string[]));
 
@@ -234,6 +246,7 @@ export default function NewBookingPage() {
         delivery_date: deliveryDate || null,
         status: 'Pending' as const,
         worker_id: user.id,
+        assigned_to: assignedTo || null,
         sync_status: 'pending' as const,
         created_at: createdAt,
         remarks: ''
@@ -338,6 +351,27 @@ export default function NewBookingPage() {
             <input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold" />
           </div>
         </div>
+
+        {/* Worker Assignment (Optional) */}
+        {workers.length > 0 && (
+          <div className="bg-white p-5 rounded-3xl shadow-sm border border-gray-100 space-y-4">
+            <h2 className="font-black text-gray-800 border-b border-gray-100 pb-2">Order Fulfillment</h2>
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-gray-500 uppercase">Assign to Worker (Optional)</label>
+              <select
+                value={assignedTo}
+                onChange={e => setAssignedTo(e.target.value)}
+                className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold"
+              >
+                <option value="">-- Owner will handle delivery --</option>
+                {workers.map(w => (
+                  <option key={w.id} value={w.id}>{w.name}</option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-400 font-medium">If assigned, the worker will see this booking in their pending fulfillment queue.</p>
+            </div>
+          </div>
+        )}
 
         {/* Cart Addition */}
         <div className="bg-blue-50 p-5 rounded-3xl border border-blue-100 space-y-4">
@@ -477,6 +511,18 @@ export default function NewBookingPage() {
                     </div>
                   </div>
                 )}
+
+                {/* Show QR Button */}
+                {(paymentMode === 'UPI' || paymentMode === 'Split') && activeQrs && activeQrs.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowQR(true)}
+                    className="w-full mt-2 py-3 bg-purple-100 text-purple-700 rounded-xl font-bold flex items-center justify-center gap-2 active:scale-95 transition-transform"
+                  >
+                    <QrCode className="w-5 h-5" />
+                    Show Payment QR
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -486,6 +532,40 @@ export default function NewBookingPage() {
           {loading ? t('processing') : t('confirmEntireBooking')}
         </button>
       </form>
+
+      {/* QR Modal */}
+      {showQR && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setShowQR(false)}>
+          <div className="bg-white rounded-3xl w-full max-w-sm overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="bg-purple-600 p-4 flex justify-between items-center">
+              <h3 className="font-black text-white text-lg flex items-center gap-2">
+                <QrCode className="w-5 h-5" /> Scan to Pay Advance
+              </h3>
+              <button onClick={() => setShowQR(false)} className="p-1 rounded-full bg-white/20 text-white active:scale-95">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6 overflow-y-auto max-h-[70vh] space-y-6">
+              {activeQrs?.map(qr => (
+                <div key={qr.id} className="flex flex-col items-center justify-center border-b border-gray-100 pb-6 last:border-0 last:pb-0">
+                  {qr.image_data ? (
+                    <img src={qr.image_data} alt={qr.name} className="w-48 h-48 object-contain rounded-xl border-2 border-purple-100 p-2 shadow-sm mb-3" />
+                  ) : (
+                    <div className="w-48 h-48 bg-gray-100 flex items-center justify-center rounded-xl mb-3">
+                      <QrCode className="w-16 h-16 text-gray-300" />
+                    </div>
+                  )}
+                  <p className="font-black text-gray-900 text-lg">{qr.name}</p>
+                  <p className="text-xs font-bold text-gray-500 uppercase tracking-widest">{qr.upi_id}</p>
+                </div>
+              ))}
+            </div>
+            <div className="p-4 border-t border-gray-100 bg-gray-50">
+              <p className="text-center font-black text-purple-700">Advance Amount: ₹{advanceNum}</p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

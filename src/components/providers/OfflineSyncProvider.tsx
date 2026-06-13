@@ -62,7 +62,7 @@ export function OfflineSyncProvider({ children }: { children: React.ReactNode })
         const pendingIds = new Set(pendingQueue.map(q => q.payload?.id).filter(Boolean));
 
         // Bulk put all data into IndexedDB
-        await db.transaction('rw', [db.plants, db.lots, db.bookings, db.allotments, db.direct_sales, db.attendance, db.audit_logs, db.customers, db.users], async () => {
+        await db.transaction('rw', [db.plants, db.lots, db.bookings, db.allotments, db.direct_sales, db.attendance, db.audit_logs, db.customers, db.users, db.payment_qrs], async () => {
           const syncTable = async (localTable: any, serverList: any[]) => {
             const list = serverList || [];
             const localItems = await localTable.toArray();
@@ -90,6 +90,7 @@ export function OfflineSyncProvider({ children }: { children: React.ReactNode })
           await syncTable(db.attendance, data.attendance);
           await syncTable(db.customers, data.customers);
           await syncTable(db.users, data.users);
+          await syncTable(db.payment_qrs, data.payment_qrs);
 
           // Audit logs are append-only with auto-incrementing local ids
           const filterSynced = (list: any[]) => list.filter(item => !pendingIds.has(item.id));

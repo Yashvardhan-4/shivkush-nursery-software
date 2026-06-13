@@ -32,11 +32,11 @@ export function BottomNav() {
 
   const WORKER_LINKS = [
     { href: '/dashboard', label: t('dashboard'),    icon: Home },
-    { href: '/sales/new',      label: t('directSales'),    icon: ShoppingCart },
-    { href: '/bookings',  label: t('bookings'), icon: BookOpen },
-    { href: '/notebook',  label: t('ledger'), icon: BookOpen },
-    { href: '/lots',      label: t('lots'),   icon: Package },
-    { href: '/profile',   label: t('profile'), icon: User },
+    { href: '/sales/new', label: t('directSales'),  icon: ShoppingCart },
+    { href: '/fulfillment', label: 'My Orders',     icon: Package },
+    { href: '/bookings',  label: t('bookings'),     icon: BookOpen },
+    { href: '/lots',      label: t('lots'),         icon: Layers },
+    { href: '/profile',   label: t('profile'),      icon: User },
   ];
 
   const links = isOwner ? OWNER_LINKS : WORKER_LINKS;

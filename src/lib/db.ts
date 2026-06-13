@@ -13,6 +13,16 @@ export interface Plant {
   active: boolean;
 }
 
+export interface PaymentQR {
+  id: string;
+  upi_id: string;
+  image_data: string | null;  // base64 encoded image or URL
+  name: string;               // e.g. "HDFC Account", "Owner GPay"
+  active: boolean;
+  sync_status: 'synced' | 'pending';
+  created_at: string;
+}
+
 export interface Lot {
   id: string;
   lot_number: string;
@@ -63,6 +73,7 @@ export interface Booking {
   cash_amount?: number;
   upi_amount?: number;
   worker_id?: string;
+  assigned_to?: string | null;
   sync_status: 'synced' | 'pending';
   created_at?: string;
 }
@@ -91,6 +102,8 @@ export interface DirectSale {
   cash_amount?: number;   // filled when mode is Cash or Split
   upi_amount?: number;    // filled when mode is UPI or Split
   worker_id: string;
+  assigned_to?: string | null;
+  fulfillment_status?: 'Pending Handover' | 'Fulfilled';
   sync_status: 'synced' | 'pending';
   created_at: string;
 }
@@ -139,6 +152,7 @@ const db = new Dexie('SNMS_OfflineDB') as Dexie & {
   attendance: EntityTable<AttendanceRecord, 'id'>;
   audit_logs: EntityTable<AuditLog, 'id'>;
   sync_queue: EntityTable<SyncQueueItem, 'id'>;
+  payment_qrs: EntityTable<PaymentQR, 'id'>;
 };
 
 // Version 4: Added users table for worker name resolving
@@ -190,6 +204,36 @@ db.version(6).stores({
       lot.available_stock = lot.total_quantity;
     }
   });
+});
+
+// Version 7: Added payment_qrs table
+db.version(7).stores({
+  plants: 'id, plant_name, variety, category, active',
+  lots: 'id, lot_number, plant_id, status',
+  customers: 'id, mobile, name',
+  users: 'id, name, role',
+  bookings: 'id, booking_number, customer_name, customer_phone, plant_id, lot_id, status, sync_status, created_at',
+  allotments: 'id, booking_id, lot_id, sync_status',
+  direct_sales: 'id, sale_number, plant_id, lot_id, sync_status, created_at',
+  attendance: 'id, worker_id, date, status',
+  audit_logs: '++id, user_id, action, table_name, record_id, created_at',
+  sync_queue: '++id, table, action, created_at',
+  payment_qrs: 'id, active, sync_status'
+});
+
+// Version 8: Added assigned_to index for fulfillment filtering
+db.version(8).stores({
+  plants: 'id, plant_name, variety, category, active',
+  lots: 'id, lot_number, plant_id, status',
+  customers: 'id, mobile, name',
+  users: 'id, name, role',
+  bookings: 'id, booking_number, customer_name, customer_phone, plant_id, lot_id, status, sync_status, created_at, assigned_to',
+  allotments: 'id, booking_id, lot_id, sync_status',
+  direct_sales: 'id, sale_number, plant_id, lot_id, sync_status, created_at, assigned_to',
+  attendance: 'id, worker_id, date, status',
+  audit_logs: '++id, user_id, action, table_name, record_id, created_at',
+  sync_queue: '++id, table, action, created_at',
+  payment_qrs: 'id, active, sync_status'
 });
 // =========================================
 // HELPER: Log an audit event

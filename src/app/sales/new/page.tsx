@@ -1,9 +1,9 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { ShoppingCart, User, Plus, Trash2, X, QrCode } from 'lucide-react';
 import { db, generateId, logAudit } from '@/lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Trash2 } from 'lucide-react';
 import Link from 'next/link';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 
@@ -23,16 +23,19 @@ export default function NewDirectSalePage() {
   const [saleNumber, setSaleNumber] = useState('SALE-...');
   
   useEffect(() => {
-    async function initNum() {
-      const sales = await db.direct_sales.toArray();
-      const uniqueSales = new Set(sales.map(s => s.sale_number));
-      setSaleNumber(`SALE-${uniqueSales.size + 1001}`);
-    }
-    initNum();
+    const timestamp = Date.now().toString(36).toUpperCase();
+    const random = Math.random().toString(36).slice(2, 6).toUpperCase();
+    setSaleNumber(`SALE-${timestamp}-${random}`);
   }, []);
   
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
+  
+  const activeQrs = useLiveQuery(async () => {
+    const qrs = await db.payment_qrs.toArray();
+    return qrs.filter(q => q.active);
+  });
+  const [showQR, setShowQR] = useState(false);
   
   const [cart, setCart] = useState<CartItem[]>([]);
   
@@ -40,6 +43,8 @@ export default function NewDirectSalePage() {
   const [plantId, setPlantId] = useState('');
   const [selectedLotId, setSelectedLotId] = useState('');
   const [quantity, setQuantity] = useState('');
+  
+  const [assignedTo, setAssignedTo] = useState('');
   
   const [paymentMode, setPaymentMode] = useState<'Cash' | 'UPI' | 'Split'>('Cash');
   const [cashAmount, setCashAmount] = useState('');
@@ -54,6 +59,8 @@ export default function NewDirectSalePage() {
   const bookings = useLiveQuery(() => db.bookings.toArray());
   const existingSales = useLiveQuery(() => db.direct_sales.toArray());
   const customers = useLiveQuery(() => db.customers.toArray());
+  const users = useLiveQuery(() => db.users.toArray());
+  const workers = users?.filter(u => u.role === 'worker') || [];
 
   // Auto-select first available lot (FIFO) when plant changes
   useEffect(() => {
@@ -193,22 +200,49 @@ export default function NewDirectSalePage() {
     const finalCash = paymentMode === 'Cash' ? totalAmount : paymentMode === 'UPI' ? 0 : cashNum;
     const finalUpi  = paymentMode === 'UPI'  ? totalAmount : paymentMode === 'Cash' ? 0 : upiNum;
 
-    const newSales = cart.map((item) => ({
-      id: generateId(),
-      sale_number: saleNumber,
-      customer_name: customerName || undefined,
-      customer_phone: customerPhone || undefined,
-      plant_id: item.plantId,
-      lot_id: item.lotId,
-      quantity: item.quantity,
-      amount: item.amount,
-      payment_mode: paymentMode,
-      cash_amount: finalCash,
-      upi_amount: finalUpi,
-      worker_id: user.id,
-      sync_status: 'pending' as const,
-      created_at: createdAt
-    }));
+    let cashRemaining = finalCash;
+    let upiRemaining = finalUpi;
+
+    const newSales = cart.map((item, index) => {
+      let itemCash = 0;
+      let itemUpi = 0;
+
+      if (cashRemaining >= item.amount) {
+        itemCash = item.amount;
+        cashRemaining -= item.amount;
+      } else {
+        itemCash = cashRemaining;
+        cashRemaining = 0;
+        itemUpi = Math.min(item.amount - itemCash, upiRemaining);
+        upiRemaining -= itemUpi;
+      }
+
+      if (index === cart.length - 1) {
+        itemCash += cashRemaining;
+        itemUpi += upiRemaining;
+      }
+
+      const itemPayMode: 'Cash' | 'UPI' | 'Split' = (itemCash > 0 && itemUpi > 0) ? 'Split' : (itemUpi > 0 ? 'UPI' : 'Cash');
+
+      return {
+        id: generateId(),
+        sale_number: saleNumber,
+        customer_name: customerName || undefined,
+        customer_phone: customerPhone || undefined,
+        plant_id: item.plantId,
+        lot_id: item.lotId,
+        quantity: item.quantity,
+        amount: item.amount,
+        payment_mode: itemPayMode,
+        cash_amount: itemCash,
+        upi_amount: itemUpi,
+        worker_id: user.id,
+        assigned_to: assignedTo || null,
+        fulfillment_status: assignedTo ? ('Pending Handover' as const) : undefined,
+        sync_status: 'pending' as const,
+        created_at: createdAt
+      };
+    });
 
     if (customerPhone && customerName) {
       let cust = await db.customers.where('mobile').equals(customerPhone).first();
@@ -291,6 +325,27 @@ export default function NewDirectSalePage() {
             </div>
           </div>
         </div>
+
+        {/* Worker Assignment (Optional) */}
+        {workers.length > 0 && (
+          <div className="bg-white p-5 rounded-3xl shadow-sm border border-gray-100 space-y-4">
+            <h2 className="font-black text-gray-800 border-b border-gray-100 pb-2">Order Fulfillment</h2>
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-gray-500 uppercase">Assign to Worker (Optional)</label>
+              <select
+                value={assignedTo}
+                onChange={e => setAssignedTo(e.target.value)}
+                className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-bold"
+              >
+                <option value="">-- Owner will handle delivery --</option>
+                {workers.map(w => (
+                  <option key={w.id} value={w.id}>{w.name}</option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-400 font-medium">If assigned, the worker will see this order in their pending fulfillment queue.</p>
+            </div>
+          </div>
+        )}
 
         {/* Cart Addition */}
         <div className="bg-green-50 p-5 rounded-3xl border border-green-200 space-y-4">
@@ -484,6 +539,18 @@ export default function NewDirectSalePage() {
                   {paymentMode === 'Cash' ? t('cashFullMsg') : t('upiFullMsg')}
                 </div>
               )}
+
+              {/* Show QR Button */}
+              {(paymentMode === 'UPI' || paymentMode === 'Split') && activeQrs && activeQrs.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowQR(true)}
+                  className="w-full mt-2 py-3 bg-purple-100 text-purple-700 rounded-xl font-bold flex items-center justify-center gap-2 active:scale-95 transition-transform"
+                >
+                  <QrCode className="w-5 h-5" />
+                  Show Payment QR
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -504,6 +571,40 @@ export default function NewDirectSalePage() {
           }`}
         </button>
       </form>
+
+      {/* QR Modal */}
+      {showQR && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setShowQR(false)}>
+          <div className="bg-white rounded-3xl w-full max-w-sm overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="bg-purple-600 p-4 flex justify-between items-center">
+              <h3 className="font-black text-white text-lg flex items-center gap-2">
+                <QrCode className="w-5 h-5" /> Scan to Pay
+              </h3>
+              <button onClick={() => setShowQR(false)} className="p-1 rounded-full bg-white/20 text-white active:scale-95">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6 overflow-y-auto max-h-[70vh] space-y-6">
+              {activeQrs?.map(qr => (
+                <div key={qr.id} className="flex flex-col items-center justify-center border-b border-gray-100 pb-6 last:border-0 last:pb-0">
+                  {qr.image_data ? (
+                    <img src={qr.image_data} alt={qr.name} className="w-48 h-48 object-contain rounded-xl border-2 border-purple-100 p-2 shadow-sm mb-3" />
+                  ) : (
+                    <div className="w-48 h-48 bg-gray-100 flex items-center justify-center rounded-xl mb-3">
+                      <QrCode className="w-16 h-16 text-gray-300" />
+                    </div>
+                  )}
+                  <p className="font-black text-gray-900 text-lg">{qr.name}</p>
+                  <p className="text-xs font-bold text-gray-500 uppercase tracking-widest">{qr.upi_id}</p>
+                </div>
+              ))}
+            </div>
+            <div className="p-4 border-t border-gray-100 bg-gray-50">
+              <p className="text-center font-black text-purple-700">Total: ₹{totalAmount}</p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

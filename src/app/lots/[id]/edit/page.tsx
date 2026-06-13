@@ -4,7 +4,7 @@ import { useState, useEffect, use } from 'react';
 import { useRouter } from 'next/navigation';
 import { db, logAudit } from '@/lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { ArrowLeft, Save, AlertTriangle, CheckCircle, Clock, Archive } from 'lucide-react';
+import { ArrowLeft, Save, AlertTriangle, CheckCircle, Clock, Archive, Trash2 } from 'lucide-react';
 
 interface Props {
   params: Promise<{ id: string }>;
@@ -35,6 +35,8 @@ export default function EditLotPage({ params }: Props) {
     return all.filter(a => activeBookingIds.has(a.booking_id));
   }, [id]);
 
+  const sales = useLiveQuery(() => db.direct_sales.where('lot_id').equals(id).toArray(), [id]);
+
   // Populate form when lot loads
   useEffect(() => {
     if (lot === null) { setNotFound(true); return; }
@@ -47,6 +49,7 @@ export default function EditLotPage({ params }: Props) {
   }, [lot]);
 
   const allottedQty = allotments?.reduce((sum, a) => sum + a.quantity, 0) || 0;
+  const soldQty = sales?.reduce((sum, s) => sum + s.quantity, 0) || 0;
   const newQty = parseInt(availableStock) || 0;
 
   const handleSave = async (e: React.FormEvent) => {
@@ -91,6 +94,32 @@ export default function EditLotPage({ params }: Props) {
       router.push('/lots');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (allottedQty > 0 || soldQty > 0) {
+      alert(`Cannot delete this lot. It has ${allottedQty} allotted plants and ${soldQty} sold plants.`);
+      return;
+    }
+    
+    if (confirm('Are you sure you want to completely delete this lot? This action cannot be undone.')) {
+      setLoading(true);
+      try {
+        const user = JSON.parse(localStorage.getItem('snms_user') || '{}');
+        await db.lots.delete(id);
+        await db.sync_queue.add({
+          table: 'lots',
+          action: 'DELETE',
+          payload: { id },
+          created_at: Date.now(),
+        });
+        await logAudit(user.id || 'owner', user.name || 'Owner', 'DELETE_LOT', 'lots', id, { lot_number: lotNumber });
+        window.dispatchEvent(new Event('online'));
+        router.push('/lots');
+      } finally {
+        setLoading(false);
+      }
     }
   };
 
@@ -246,16 +275,33 @@ export default function EditLotPage({ params }: Props) {
             placeholder="e.g. Plants are growing well, some pest issues detected..."
             className="w-full p-4 bg-white border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-medium resize-none"
           />
-        </div>
+          <div className="pt-6 border-t border-gray-100 flex items-center justify-between">
+          {allottedQty === 0 && soldQty === 0 ? (
+            <button
+              type="button"
+              onClick={handleDelete}
+              disabled={loading}
+              className="px-4 py-4 rounded-xl text-red-600 bg-red-50 hover:bg-red-100 font-black flex items-center gap-2 transition-colors"
+            >
+              <Trash2 className="w-5 h-5" />
+              Delete Lot
+            </button>
+          ) : (
+            <div className="text-xs text-gray-400 font-medium max-w-[200px]">
+              Lot cannot be deleted because it has active orders or sales.
+            </div>
+          )}
 
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full bg-green-600 text-white font-black text-lg p-4 rounded-2xl active:scale-95 transition-transform disabled:opacity-60 shadow-lg flex items-center justify-center gap-2"
-        >
-          <Save className="w-5 h-5" />
-          {loading ? 'Saving...' : 'Update Lot'}
-        </button>
+          <button
+            type="submit"
+            disabled={loading}
+            className="flex-1 ml-4 bg-green-600 hover:bg-green-700 text-white font-black py-4 px-6 rounded-xl flex items-center justify-center gap-2 transition-colors disabled:opacity-50 shadow-sm shadow-green-200"
+          >
+            <Save className="w-5 h-5" />
+            {loading ? 'Saving...' : 'Save Changes'}
+          </button>
+        </div>
+        </div>
       </form>
     </div>
   );

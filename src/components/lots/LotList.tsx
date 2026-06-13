@@ -3,7 +3,7 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/lib/db';
 import { useState } from 'react';
-import { Pencil, AlertTriangle, Check } from 'lucide-react';
+import { Pencil, AlertTriangle, Check, Trash2 } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 
 export default function LotList() {
@@ -33,10 +33,44 @@ export default function LotList() {
         payload: { ...lot, ...updates, sync_status: undefined },
         created_at: Date.now(),
       });
+
+      // Also mark all 'Allocated' bookings for this lot as 'Ready'
+      const allocatedBookings = await db.bookings.where('lot_id').equals(lotId).toArray();
+      for (const b of allocatedBookings) {
+        if (b.status === 'Allocated') {
+          await db.bookings.update(b.id, { status: 'Ready', sync_status: 'pending' });
+          await db.sync_queue.add({
+            table: 'bookings',
+            action: 'UPDATE',
+            payload: { ...b, status: 'Ready', sync_status: undefined },
+            created_at: Date.now(),
+          });
+        }
+      }
+
       window.dispatchEvent(new Event('online'));
     } catch (error) {
       console.error('Failed to mark lot as ready:', error);
       alert('Failed to update lot status');
+    }
+  };
+
+  const handleDeleteLot = async (lotId: string) => {
+    if (confirm('Are you sure you want to completely delete this empty lot? This action cannot be undone.')) {
+      try {
+        const user = JSON.parse(localStorage.getItem('snms_user') || '{}');
+        await db.lots.delete(lotId);
+        await db.sync_queue.add({
+          table: 'lots',
+          action: 'DELETE',
+          payload: { id: lotId },
+          created_at: Date.now(),
+        });
+        window.dispatchEvent(new Event('online'));
+      } catch (error) {
+        console.error('Failed to delete lot:', error);
+        alert('Failed to delete lot');
+      }
     }
   };
 
@@ -137,6 +171,15 @@ export default function LotList() {
                     >
                       <Pencil className="w-4 h-4" />
                     </a>
+                    {allottedQty === 0 && soldQty === 0 && (
+                      <button
+                        onClick={() => handleDeleteLot(lot.id)}
+                        className="p-2 bg-red-50 rounded-xl text-red-500 active:scale-95 transition-all hover:bg-red-100"
+                        title="Delete empty lot"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -159,7 +202,9 @@ export default function LotList() {
                 <div className="grid grid-cols-5 gap-1 bg-gray-50 p-3 rounded-xl">
                   <div className="text-center">
                     <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest">{t('total')}</p>
-                    <p className="font-black text-gray-700 text-lg">{lot.initial_quantity ?? lot.total_quantity}</p>
+                    <p className="font-black text-gray-700 text-lg">
+                      {lot.initial_quantity ?? Math.max(lot.total_quantity, allottedQty + soldQty)}
+                    </p>
                   </div>
                   <div className="text-center border-l border-gray-200">
                     <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest">Available</p>

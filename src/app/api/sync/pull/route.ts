@@ -21,7 +21,8 @@ export async function GET(request: Request) {
       { data: attendance },
       { data: audit_logs },
       { data: customers },
-      { data: users }
+      { data: users },
+      { data: payment_qrs }
     ] = await Promise.all([
       supabaseAdmin.from('plants').select('*'),
       supabaseAdmin.from('lots').select('*'),
@@ -31,7 +32,8 @@ export async function GET(request: Request) {
       supabaseAdmin.from('attendance').select('*'),
       supabaseAdmin.from('audit_logs').select('*'),
       supabaseAdmin.from('customers').select('*'),
-      supabaseAdmin.from('users').select('id, name, role')
+      supabaseAdmin.from('users').select('id, name, role'),
+      supabaseAdmin.from('payment_qrs').select('*')
     ]);
 
     return NextResponse.json({
@@ -45,7 +47,8 @@ export async function GET(request: Request) {
         attendance: attendance || [],
         audit_logs: audit_logs || [],
         customers: customers || [],
-        users: users || []
+        users: users || [],
+        payment_qrs: payment_qrs || []
       }
     });
   } catch (err: any) {
