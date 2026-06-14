@@ -121,7 +121,7 @@
   "autoAllotAllPending": "Auto-Allot Order (All Pending)",
   "unknown": "Unknown",
   "growing": "Growing",
-  "completed": "Completed",
+  "completed": "Sold Out",
   "accessDenied": "Access Denied",
   "accessDeniedSub": "Only the owner can manage attendance records.",
   "loadingLedger": "Loading ledger...",

@@ -210,13 +210,14 @@ export default function AttendanceManager({ ownerId, ownerName }: AttendanceMana
                 <div className="divide-y divide-gray-50">
                   {(groupedHistory[date] ?? []).map(record => {
                     const cfg = statusConfig[record.status];
+                    const workerName = record.worker_name || workers?.find(w => w.id === record.worker_id)?.name || 'Unknown';
                     return (
                       <div key={record.id} className="flex items-center justify-between px-5 py-3.5">
                         <div className="flex items-center space-x-3">
                           <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center font-black text-gray-500 text-xs">
-                            {record.worker_name.charAt(0)}
+                            {workerName.charAt(0)}
                           </div>
-                          <span className="font-bold text-gray-800">{record.worker_name}</span>
+                          <span className="font-bold text-gray-800">{workerName}</span>
                         </div>
                         <span className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black ${cfg.badgeBg} ${cfg.badgeText}`}>
                           {cfg.icon}

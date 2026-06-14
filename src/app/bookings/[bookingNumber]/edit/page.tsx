@@ -46,6 +46,8 @@ export default function EditBookingPage() {
   const plants = useLiveQuery(() => db.plants.toArray());
   const lots = useLiveQuery(() => db.lots.where('plant_id').equals(plantId).toArray(), [plantId]);
   const bookings = useLiveQuery(() => db.bookings.toArray());
+  const allotments = useLiveQuery(() => db.allotments.toArray());
+  const direct_sales = useLiveQuery(() => db.direct_sales.toArray());
   const customers = useLiveQuery(() => db.customers.toArray());
 
   // Load existing booking items
@@ -109,8 +111,30 @@ export default function EditBookingPage() {
   const selectedPlant = plants?.find(p => p.id === plantId);
   const selectedLot = lots?.find(l => l.id === lotId);
 
-  const bookedQty = bookings?.filter(b => b.lot_id === lotId && b.status !== 'Cancelled' && b.status !== 'Delivered').reduce((sum, b) => sum + b.quantity, 0) || 0;
-  const availableQty = selectedLot ? (selectedLot.available_stock ?? selectedLot.total_quantity) - bookedQty : 0;
+  const computeFreeStockForLot = (lId: string, pid: string): number => {
+    if (!lots || !allotments || !bookings || !direct_sales) return 0;
+    const lot = lots.find(l => l.id === lId);
+    if (!lot) return 0;
+    const activeBookingIds = new Set(
+      bookings.filter(b => b.plant_id === pid && b.status !== 'Delivered' && b.status !== 'Cancelled' && b.booking_number !== bookingNumber).map(b => b.id)
+    );
+    const allottedInLot = allotments
+      .filter(a => a.lot_id === lId && activeBookingIds.has(a.booking_id))
+      .reduce((s, a) => s + a.quantity, 0);
+      
+    const deliveredBookingsQty = bookings
+      .filter(b => b.lot_id === lId && b.status === 'Delivered' && b.booking_number !== bookingNumber)
+      .reduce((s, b) => s + b.quantity, 0);
+      
+    const directSalesQty = direct_sales
+      .filter(s => s.lot_id === lId)
+      .reduce((s, sale) => s + sale.quantity, 0);
+
+    const cartQty = cart.filter(i => i.lotId === lId).reduce((s, i) => s + i.quantity, 0);
+    return Math.max(0, (lot.available_stock ?? lot.total_quantity) - allottedInLot - deliveredBookingsQty - directSalesQty - cartQty);
+  };
+
+  const availableQty = (lotId && plantId) ? computeFreeStockForLot(lotId, plantId) : 0;
 
   const handleAddToCart = () => {
     if (!selectedPlant || !quantity) return;
@@ -125,7 +149,10 @@ export default function EditBookingPage() {
       }
     }
 
-    const price = selectedPlant.selling_price || 0;
+    let price = selectedPlant.selling_price || 0;
+    if (selectedPlant.category?.toLowerCase() === 'vegetable' && qty < 100) {
+      price = 2;
+    }
     
     setCart([...cart, {
       id: generateId(),
@@ -409,9 +436,9 @@ export default function EditBookingPage() {
               <select value={lotId} onChange={e => setLotId(e.target.value)} className="w-full p-4 bg-white border border-blue-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold text-blue-900">
                 <option value="">{t('noLotAllotLater')}</option>
                 {lots?.map(l => {
-                  const lotBookedQty = bookings?.filter(b => b.lot_id === l.id && b.status !== 'Cancelled' && b.status !== 'Delivered').reduce((sum, b) => sum + b.quantity, 0) || 0;
+                  const free = computeFreeStockForLot(l.id, plantId);
                   return (
-                    <option key={l.id} value={l.id}>{l.lot_number} ({t('availableLabel')} {(l.available_stock ?? l.total_quantity) - lotBookedQty})</option>
+                    <option key={l.id} value={l.id}>{l.lot_number} ({t('availableLabel')} {free})</option>
                   );
                 })}
               </select>

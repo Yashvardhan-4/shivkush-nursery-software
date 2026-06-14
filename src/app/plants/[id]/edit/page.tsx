@@ -10,6 +10,7 @@ export default function EditPlantPage({ params }: { params: Promise<{ id: string
 
   const [name, setName] = useState('');
   const [variety, setVariety] = useState('');
+  const [category, setCategory] = useState('');
   const [price, setPrice] = useState('');
   const [loading, setLoading] = useState(false);
   const [archiving, setArchiving] = useState(false);
@@ -25,6 +26,7 @@ export default function EditPlantPage({ params }: { params: Promise<{ id: string
       } else {
         setName(plant.plant_name);
         setVariety(plant.variety);
+        setCategory(plant.category || '');
         setPrice(String(plant.selling_price));
       }
       setInitialLoading(false);
@@ -46,6 +48,7 @@ export default function EditPlantPage({ params }: { params: Promise<{ id: string
       ...plant,
       plant_name: name,
       variety: variety,
+      category: category,
       selling_price: parseFloat(price),
     };
 
@@ -153,6 +156,17 @@ export default function EditPlantPage({ params }: { params: Promise<{ id: string
             onChange={(e) => setVariety(e.target.value)}
             className="w-full p-4 bg-white border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-medium transition-shadow"
             placeholder="e.g. Grafted, Seedling"
+          />
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-sm font-bold text-gray-700">Category</label>
+          <input
+            type="text"
+            value={category}
+            onChange={(e) => setCategory(e.target.value)}
+            className="w-full p-4 bg-white border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-medium transition-shadow"
+            placeholder="e.g. Vegetable, Fruit, Flower"
           />
         </div>
 

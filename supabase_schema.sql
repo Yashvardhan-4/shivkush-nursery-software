@@ -31,6 +31,7 @@ CREATE TABLE public.plants (
   id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
   plant_name text NOT NULL,
   variety text NOT NULL,
+  category text,
   selling_price decimal(10,2) NOT NULL,
   description text,
   active boolean DEFAULT true,
@@ -191,11 +192,12 @@ BEGIN
 
         IF tbl = 'plants' THEN
             IF act = 'INSERT' THEN
-                INSERT INTO public.plants (id, plant_name, variety, selling_price, description, active, created_at)
+                INSERT INTO public.plants (id, plant_name, variety, category, selling_price, description, active, created_at)
                 VALUES (
                     (p->>'id')::uuid,
                     p->>'plant_name',
                     p->>'variety',
+                    p->>'category',
                     (p->>'selling_price')::decimal,
                     p->>'description',
                     COALESCE((p->>'active')::boolean, true),
@@ -203,6 +205,7 @@ BEGIN
                 ) ON CONFLICT (id) DO UPDATE SET
                     plant_name = EXCLUDED.plant_name,
                     variety = EXCLUDED.variety,
+                    category = EXCLUDED.category,
                     selling_price = EXCLUDED.selling_price,
                     description = EXCLUDED.description,
                     active = EXCLUDED.active;
@@ -210,6 +213,7 @@ BEGIN
                 UPDATE public.plants SET
                     plant_name = COALESCE(p->>'plant_name', plant_name),
                     variety = COALESCE(p->>'variety', variety),
+                    category = COALESCE(p->>'category', category),
                     selling_price = COALESCE((p->>'selling_price')::decimal, selling_price),
                     description = COALESCE(p->>'description', description),
                     active = COALESCE((p->>'active')::boolean, active)

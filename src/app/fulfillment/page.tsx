@@ -16,9 +16,36 @@ export default function FulfillmentPage() {
   const bookings = useLiveQuery(() => db.bookings.where('assigned_to').equals(userId).toArray(), [userId]);
   const sales = useLiveQuery(() => db.direct_sales.where('assigned_to').equals(userId).toArray(), [userId]);
   const plants = useLiveQuery(() => db.plants.toArray());
+  const lots = useLiveQuery(() => db.lots.toArray());
+  const allotments = useLiveQuery(() => db.allotments.toArray());
 
   const pendingSales = sales?.filter(s => s.fulfillment_status === 'Pending Handover') || [];
   const pendingBookings = bookings?.filter(b => ['Pending', 'Allocated', 'Ready'].includes(b.status)) || [];
+
+  const checkSoldOutLot = async (lotId: string | null | undefined, plantId: string) => {
+    if (!lotId || !lots || !allotments || !bookings || !sales) return;
+    const lot = lots.find(l => l.id === lotId);
+    if (!lot || lot.status === 'Completed') return;
+
+    const currentBookings = await db.bookings.toArray();
+    const currentAllotments = await db.allotments.toArray();
+    const currentSales = await db.direct_sales.toArray();
+
+    const activeBookingIds = new Set(
+      currentBookings.filter(b => b.plant_id === plantId && b.status !== 'Delivered' && b.status !== 'Cancelled').map(b => b.id)
+    );
+    const allottedQty = currentAllotments.filter(a => a.lot_id === lotId && activeBookingIds.has(a.booking_id)).reduce((s,a) => s + a.quantity, 0);
+    const deliveredQty = currentBookings.filter(b => b.lot_id === lotId && b.status === 'Delivered').reduce((s,b) => s + b.quantity, 0);
+    const salesQty = currentSales.filter(s => s.lot_id === lotId).reduce((s, sale) => s + sale.quantity, 0);
+
+    const freeStock = (lot.available_stock ?? lot.total_quantity) - allottedQty - deliveredQty - salesQty;
+    
+    if (freeStock <= 0) {
+       const updatedLot = { ...lot, status: 'Completed' as const };
+       await db.lots.put(updatedLot);
+       await db.sync_queue.add({ table: 'lots', action: 'UPDATE', payload: { ...updatedLot, sync_status: undefined }, created_at: Date.now() });
+    }
+  };
 
   const handleFulfillSale = async (id: string) => {
     try {
@@ -36,6 +63,7 @@ export default function FulfillmentPage() {
 
       const user = JSON.parse(localStorage.getItem('snms_user') || '{}');
       await logAudit(user.id, user.name, 'FULFILL_SALE', 'direct_sales', id, { note: 'Handed over to customer' });
+      await checkSoldOutLot(sale.lot_id, sale.plant_id);
       window.dispatchEvent(new Event('online'));
     } catch (e) {
       console.error(e);
@@ -59,6 +87,7 @@ export default function FulfillmentPage() {
 
       const user = JSON.parse(localStorage.getItem('snms_user') || '{}');
       await logAudit(user.id, user.name, 'DELIVER_BOOKING', 'bookings', id, { note: 'Handed over to customer' });
+      await checkSoldOutLot(booking.lot_id, booking.plant_id);
       window.dispatchEvent(new Event('online'));
     } catch (e) {
       console.error(e);

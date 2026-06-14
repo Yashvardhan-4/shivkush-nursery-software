@@ -21,11 +21,14 @@ interface CartItem {
 export default function NewDirectSalePage() {
   const { t } = useLanguage();
   const [saleNumber, setSaleNumber] = useState('SALE-...');
+  const [currentUser, setCurrentUser] = useState<any>(null);
   
   useEffect(() => {
     const timestamp = Date.now().toString(36).toUpperCase();
     const random = Math.random().toString(36).slice(2, 6).toUpperCase();
     setSaleNumber(`SALE-${timestamp}-${random}`);
+    const userStr = localStorage.getItem('snms_user');
+    if (userStr) setCurrentUser(JSON.parse(userStr));
   }, []);
   
   const [customerName, setCustomerName] = useState('');
@@ -96,21 +99,9 @@ export default function NewDirectSalePage() {
     }
   };
 
-  // Total free stock across all lots for a plant (for dropdown badge)
-  const computeFreeStock = (pid: string): number => {
-    if (!lots || !allotments || !bookings) return 0;
-    const activeBookingIds = new Set(
-      bookings.filter(b => b.plant_id === pid && b.status !== 'Delivered' && b.status !== 'Cancelled').map(b => b.id)
-    );
-    const allottedQty = allotments.filter(a => activeBookingIds.has(a.booking_id)).reduce((s, a) => s + a.quantity, 0);
-    const totalStock = lots.filter(l => l.plant_id === pid && l.status !== 'Completed').reduce((s, l) => s + l.total_quantity, 0);
-    const cartQty = cart.filter(i => i.plantId === pid).reduce((s, i) => s + i.quantity, 0);
-    return Math.max(0, totalStock - allottedQty - cartQty);
-  };
-
-  // Per-lot free stock: respects allotments — the CORRECT formula
+  // Per-lot free stock: respects allotments, delivered bookings, and direct sales
   const computeFreeStockForLot = (lotId: string, pid: string): number => {
-    if (!lots || !allotments || !bookings) return 0;
+    if (!lots || !allotments || !bookings || !existingSales) return 0;
     const lot = lots.find(l => l.id === lotId);
     if (!lot) return 0;
     const activeBookingIds = new Set(
@@ -119,8 +110,25 @@ export default function NewDirectSalePage() {
     const allottedInLot = allotments
       .filter(a => a.lot_id === lotId && activeBookingIds.has(a.booking_id))
       .reduce((s, a) => s + a.quantity, 0);
+      
+    const deliveredBookingsQty = bookings
+      .filter(b => b.lot_id === lotId && b.status === 'Delivered')
+      .reduce((s, b) => s + b.quantity, 0);
+      
+    const directSalesQty = existingSales
+      .filter(s => s.lot_id === lotId)
+      .reduce((s, sale) => s + sale.quantity, 0);
+
     const cartQty = cart.filter(i => i.lotId === lotId).reduce((s, i) => s + i.quantity, 0);
-    return Math.max(0, (lot.available_stock ?? lot.total_quantity) - allottedInLot - cartQty);
+    return Math.max(0, (lot.available_stock ?? lot.total_quantity) - allottedInLot - deliveredBookingsQty - directSalesQty - cartQty);
+  };
+
+  // Total free stock across all active lots for a plant
+  const computeFreeStock = (pid: string): number => {
+    if (!lots) return 0;
+    return lots
+      .filter(l => l.plant_id === pid && l.status !== 'Completed')
+      .reduce((sum, l) => sum + computeFreeStockForLot(l.id, pid), 0);
   };
 
   const selectedFreeStock = (plantId && selectedLotId) ? computeFreeStockForLot(selectedLotId, plantId) : null;
@@ -138,7 +146,12 @@ export default function NewDirectSalePage() {
     }
 
     const lot = lots?.find(l => l.id === selectedLotId);
-    const price = selectedPlant.selling_price || 0;
+    let price = selectedPlant.selling_price || 0;
+    
+    if (selectedPlant.category?.toLowerCase() === 'vegetable' && qty < 100) {
+      price = 2;
+    }
+
     setCart([...cart, {
       id: generateId(),
       plantId: selectedPlant.id,
@@ -192,8 +205,7 @@ export default function NewDirectSalePage() {
     if (!splitValid) return alert(t('splitAmountsMismatchError').replace('{totalAmount}', String(totalAmount)));
     setLoading(true);
 
-    const userStr = localStorage.getItem('snms_user');
-    const user = userStr ? JSON.parse(userStr) : { id: 'unknown', name: 'Unknown' };
+    const user = currentUser || { id: 'unknown', name: 'Unknown' };
     const createdAt = new Date().toISOString();
 
     // Determine actual cash/upi amounts saved
@@ -259,6 +271,27 @@ export default function NewDirectSalePage() {
     await db.direct_sales.bulkAdd(newSales);
     for (const s of newSales) {
       await db.sync_queue.add({ table: 'direct_sales', action: 'INSERT', payload: s, created_at: Date.now() });
+    }
+
+    // Auto-archive sold out lots
+    const lotUpdates = [];
+    for (const item of cart) {
+      const lot = lots?.find(l => l.id === item.lotId);
+      if (lot && lot.status !== 'Completed') {
+        const freeStock = computeFreeStockForLot(item.lotId, item.plantId);
+        if (freeStock <= 0) {
+          lot.status = 'Completed';
+          lotUpdates.push(lot);
+        }
+      }
+    }
+
+    if (lotUpdates.length > 0) {
+      const uniqueLotUpdates = Array.from(new Map(lotUpdates.map(l => [l.id, l])).values());
+      await db.lots.bulkPut(uniqueLotUpdates);
+      for (const l of uniqueLotUpdates) {
+        await db.sync_queue.add({ table: 'lots', action: 'UPDATE', payload: l, created_at: Date.now() });
+      }
     }
 
 
@@ -327,7 +360,7 @@ export default function NewDirectSalePage() {
         </div>
 
         {/* Worker Assignment (Optional) */}
-        {workers.length > 0 && (
+        {workers.length > 0 && currentUser?.role === 'owner' && (
           <div className="bg-white p-5 rounded-3xl shadow-sm border border-gray-100 space-y-4">
             <h2 className="font-black text-gray-800 border-b border-gray-100 pb-2">Order Fulfillment</h2>
             <div className="space-y-2">
@@ -588,10 +621,10 @@ export default function NewDirectSalePage() {
               {activeQrs?.map(qr => (
                 <div key={qr.id} className="flex flex-col items-center justify-center border-b border-gray-100 pb-6 last:border-0 last:pb-0">
                   {qr.image_data ? (
-                    <img src={qr.image_data} alt={qr.name} className="w-48 h-48 object-contain rounded-xl border-2 border-purple-100 p-2 shadow-sm mb-3" />
+                    <img src={qr.image_data} alt={qr.name} className="w-72 h-72 object-contain rounded-xl border-2 border-purple-100 p-2 shadow-sm mb-3" />
                   ) : (
-                    <div className="w-48 h-48 bg-gray-100 flex items-center justify-center rounded-xl mb-3">
-                      <QrCode className="w-16 h-16 text-gray-300" />
+                    <div className="w-72 h-72 bg-gray-100 flex items-center justify-center rounded-xl mb-3">
+                      <QrCode className="w-24 h-24 text-gray-300" />
                     </div>
                   )}
                   <p className="font-black text-gray-900 text-lg">{qr.name}</p>

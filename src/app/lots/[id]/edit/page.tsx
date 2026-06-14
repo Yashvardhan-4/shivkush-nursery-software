@@ -166,7 +166,7 @@ export default function EditLotPage({ params }: Props) {
           <p className={`font-black text-sm ${status === 'Ready' ? 'text-green-800' : status === 'Growing' ? 'text-yellow-800' : 'text-gray-600'}`}>
             {status === 'Ready' ? 'Lot is Ready for delivery' :
              status === 'Growing' ? daysUntilReady !== null ? daysUntilReady > 0 ? `Growing — Ready in ${daysUntilReady} days` : 'Overdue — mark as Ready?' : 'Currently Growing' :
-             'Lot Completed'}
+             'Lot Sold Out'}
           </p>
           <p className="text-xs font-semibold text-gray-500 mt-0.5">
             {allottedQty} plants allotted to bookings · {newQty - allottedQty} free
@@ -211,7 +211,7 @@ export default function EditLotPage({ params }: Props) {
             >
               <option value="Growing">Growing</option>
               <option value="Ready">Ready</option>
-              <option value="Completed">Completed</option>
+              <option value="Completed">Sold Out</option>
             </select>
             <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-gray-500">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>

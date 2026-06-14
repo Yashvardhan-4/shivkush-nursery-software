@@ -8,7 +8,7 @@ import { useLanguage } from '@/lib/i18n/LanguageContext';
 
 export default function LotList() {
   const { t } = useLanguage();
-  const [statusFilter, setStatusFilter] = useState<'Growing' | 'Ready' | 'Completed'>('Growing');
+  const [statusFilter, setStatusFilter] = useState<'Growing' | 'Ready' | 'Completed'>('Ready');
 
   const lots = useLiveQuery(() => db.lots.toArray());
   const plants = useLiveQuery(() => db.plants.toArray());

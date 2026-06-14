@@ -21,11 +21,14 @@ interface CartItem {
 export default function NewBookingPage() {
   const { t } = useLanguage();
   const [bookingNumber, setBookingNumber] = useState('BKG-...');
+  const [currentUser, setCurrentUser] = useState<any>(null);
   
   useEffect(() => {
     const timestamp = Date.now().toString(36).toUpperCase();
     const random = Math.random().toString(36).slice(2, 6).toUpperCase();
     setBookingNumber(`BKG-${timestamp}-${random}`);
+    const userStr = localStorage.getItem('snms_user');
+    if (userStr) setCurrentUser(JSON.parse(userStr));
   }, []);
   
   const [customerName, setCustomerName] = useState('');
@@ -58,6 +61,8 @@ export default function NewBookingPage() {
   const plants = useLiveQuery(() => db.plants.toArray());
   const lots = useLiveQuery(() => db.lots.where('plant_id').equals(plantId).toArray(), [plantId]);
   const bookings = useLiveQuery(() => db.bookings.toArray());
+  const allotments = useLiveQuery(() => db.allotments.toArray());
+  const direct_sales = useLiveQuery(() => db.direct_sales.toArray());
   const customers = useLiveQuery(() => db.customers.toArray());
   const users = useLiveQuery(() => db.users.toArray());
   const workers = users?.filter(u => u.role === 'worker') || [];
@@ -67,8 +72,30 @@ export default function NewBookingPage() {
   const selectedPlant = plants?.find(p => p.id === plantId);
   const selectedLot = lots?.find(l => l.id === lotId);
 
-  const bookedQty = bookings?.filter(b => b.lot_id === lotId && b.status !== 'Cancelled' && b.status !== 'Delivered').reduce((sum, b) => sum + b.quantity, 0) || 0;
-  const availableQty = selectedLot ? selectedLot.total_quantity - bookedQty : 0;
+  const computeFreeStockForLot = (lId: string, pid: string): number => {
+    if (!lots || !allotments || !bookings || !direct_sales) return 0;
+    const lot = lots.find(l => l.id === lId);
+    if (!lot) return 0;
+    const activeBookingIds = new Set(
+      bookings.filter(b => b.plant_id === pid && b.status !== 'Delivered' && b.status !== 'Cancelled').map(b => b.id)
+    );
+    const allottedInLot = allotments
+      .filter(a => a.lot_id === lId && activeBookingIds.has(a.booking_id))
+      .reduce((s, a) => s + a.quantity, 0);
+      
+    const deliveredBookingsQty = bookings
+      .filter(b => b.lot_id === lId && b.status === 'Delivered')
+      .reduce((s, b) => s + b.quantity, 0);
+      
+    const directSalesQty = direct_sales
+      .filter(s => s.lot_id === lId)
+      .reduce((s, sale) => s + sale.quantity, 0);
+
+    const cartQty = cart.filter(i => i.lotId === lId).reduce((s, i) => s + i.quantity, 0);
+    return Math.max(0, (lot.available_stock ?? lot.total_quantity) - allottedInLot - deliveredBookingsQty - directSalesQty - cartQty);
+  };
+
+  const availableQty = (lotId && plantId) ? computeFreeStockForLot(lotId, plantId) : 0;
 
   // Auto-complete triggers
   const handlePhoneChange = (val: string) => {
@@ -107,7 +134,10 @@ export default function NewBookingPage() {
       }
     }
 
-    const price = selectedPlant.selling_price || 0;
+    let price = selectedPlant.selling_price || 0;
+    if (selectedPlant.category?.toLowerCase() === 'vegetable' && qty < 100) {
+      price = 2;
+    }
     
     setCart([...cart, {
       id: generateId(),
@@ -182,8 +212,7 @@ export default function NewBookingPage() {
     
     setLoading(true);
 
-    const userStr = localStorage.getItem('snms_user');
-    const user = userStr ? JSON.parse(userStr) : { id: 'unknown' };
+    const user = currentUser || { id: 'unknown' };
     const advance = parseFloat(advancePaid) || 0;
     const createdAt = new Date().toISOString();
 
@@ -353,7 +382,7 @@ export default function NewBookingPage() {
         </div>
 
         {/* Worker Assignment (Optional) */}
-        {workers.length > 0 && (
+        {workers.length > 0 && currentUser?.role === 'owner' && (
           <div className="bg-white p-5 rounded-3xl shadow-sm border border-gray-100 space-y-4">
             <h2 className="font-black text-gray-800 border-b border-gray-100 pb-2">Order Fulfillment</h2>
             <div className="space-y-2">
@@ -394,9 +423,9 @@ export default function NewBookingPage() {
               <select value={lotId} onChange={e => setLotId(e.target.value)} className="w-full p-4 bg-white border border-blue-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold text-blue-900">
                 <option value="">{t('noLotAllotLater')}</option>
                 {lots?.map(l => {
-                  const lotBookedQty = bookings?.filter(b => b.lot_id === l.id && b.status !== 'Cancelled' && b.status !== 'Delivered').reduce((sum, b) => sum + b.quantity, 0) || 0;
+                  const free = computeFreeStockForLot(l.id, plantId);
                   return (
-                    <option key={l.id} value={l.id}>{l.lot_number} ({t('availableLabel')} {l.total_quantity - lotBookedQty})</option>
+                    <option key={l.id} value={l.id}>{l.lot_number} ({t('availableLabel')} {free})</option>
                   );
                 })}
               </select>
@@ -549,10 +578,10 @@ export default function NewBookingPage() {
               {activeQrs?.map(qr => (
                 <div key={qr.id} className="flex flex-col items-center justify-center border-b border-gray-100 pb-6 last:border-0 last:pb-0">
                   {qr.image_data ? (
-                    <img src={qr.image_data} alt={qr.name} className="w-48 h-48 object-contain rounded-xl border-2 border-purple-100 p-2 shadow-sm mb-3" />
+                    <img src={qr.image_data} alt={qr.name} className="w-72 h-72 object-contain rounded-xl border-2 border-purple-100 p-2 shadow-sm mb-3" />
                   ) : (
-                    <div className="w-48 h-48 bg-gray-100 flex items-center justify-center rounded-xl mb-3">
-                      <QrCode className="w-16 h-16 text-gray-300" />
+                    <div className="w-72 h-72 bg-gray-100 flex items-center justify-center rounded-xl mb-3">
+                      <QrCode className="w-24 h-24 text-gray-300" />
                     </div>
                   )}
                   <p className="font-black text-gray-900 text-lg">{qr.name}</p>

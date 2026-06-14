@@ -36,7 +36,7 @@ interface BookingListProps {
 
 export default function BookingList({ role, userId, userName }: BookingListProps) {
   const { t } = useLanguage();
-  const [tab, setTab] = useState<TabStatus>('All');
+  const [tab, setTab] = useState<TabStatus>('Pending');
   const [search, setSearch] = useState('');
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
@@ -55,6 +55,8 @@ export default function BookingList({ role, userId, userName }: BookingListProps
   const bookings = useLiveQuery(() => db.bookings.orderBy('created_at').reverse().toArray());
   const plants = useLiveQuery(() => db.plants.toArray());
   const lots = useLiveQuery(() => db.lots.toArray());
+  const allotments = useLiveQuery(() => db.allotments.toArray());
+  const direct_sales = useLiveQuery(() => db.direct_sales.toArray());
 
   const handleExportExcel = () => {
     if (!filtered || filtered.length === 0) return;
@@ -384,6 +386,31 @@ export default function BookingList({ role, userId, userName }: BookingListProps
 
       for (const op of ops) {
          await op();
+      }
+
+      // Check for sold-out lots to auto-archive
+      if (direct_sales && allotments && lots && bookings) {
+         const deliveredLots = new Set(newlyProcessedRows.filter(r => r.status === 'Delivered' && r.lot_id).map(r => r.lot_id));
+         for (const lId of deliveredLots) {
+             const lot = lots.find(l => l.id === lId);
+             if (lot && lot.status !== 'Completed') {
+                const currentBookings = await db.bookings.toArray();
+                const currentAllotments = await db.allotments.toArray();
+                const activeBookingIds = new Set(
+                  currentBookings.filter(b => b.plant_id === lot.plant_id && b.status !== 'Delivered' && b.status !== 'Cancelled').map(b => b.id)
+                );
+                const allottedQty = currentAllotments.filter(a => a.lot_id === lId && activeBookingIds.has(a.booking_id)).reduce((s,a) => s + a.quantity, 0);
+                const deliveredQty = currentBookings.filter(b => b.lot_id === lId && b.status === 'Delivered').reduce((s,b) => s + b.quantity, 0);
+                const salesQty = direct_sales.filter(s => s.lot_id === lId).reduce((s, sale) => s + sale.quantity, 0);
+                const freeStock = (lot.available_stock ?? lot.total_quantity) - allottedQty - deliveredQty - salesQty;
+                
+                if (freeStock <= 0) {
+                   const updatedLot = { ...lot, status: 'Completed' as const };
+                   await db.lots.put(updatedLot);
+                   await db.sync_queue.add({ table: 'lots', action: 'UPDATE', payload: { ...updatedLot, sync_status: undefined }, created_at: Date.now() });
+                }
+             }
+         }
       }
 
       await logAudit(userId, userName, 'DELIVER_BOOKING', 'bookings', bookingNumber, {

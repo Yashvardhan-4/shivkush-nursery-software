@@ -50,27 +50,27 @@ export default function WorkerDashboard() {
 
     return plants
       .map(plant => {
-        const totalStock = lots
-          .filter(l => l.plant_id === plant.id)
-          .reduce((s, l) => s + l.total_quantity, 0);
+        let freeStock = 0;
+        let totalStock = 0;
+        let allottedQty = 0;
 
-        // Allotted qty: find bookings for this plant, then sum allotments for those bookings
-        const plantBookingIds = new Set(
-          bookings
-            .filter(b => b.plant_id === plant.id && b.status !== 'Delivered' && b.status !== 'Cancelled')
-            .map(b => b.id)
-        );
-        const allottedQty = allotments
-          .filter(a => plantBookingIds.has(a.booking_id))
-          .reduce((s, a) => s + a.quantity, 0);
+        lots.filter(l => l.plant_id === plant.id && l.status !== 'Completed').forEach(lot => {
+          const lotTotal = lot.available_stock ?? lot.total_quantity;
+          const lotBookings = bookings.filter(b => b.lot_id === lot.id);
+          
+          const activeBookingIds = new Set(
+            lotBookings.filter(b => b.status !== 'Delivered' && b.status !== 'Cancelled').map(b => b.id)
+          );
+          const allottedInLot = allotments.filter(a => a.lot_id === lot.id && activeBookingIds.has(a.booking_id)).reduce((s, a) => s + a.quantity, 0);
+          const deliveredInLot = lotBookings.filter(b => b.status === 'Delivered').reduce((s, b) => s + b.quantity, 0);
+          const salesInLot = sales.filter(s => s.lot_id === lot.id).reduce((s, sale) => s + sale.quantity, 0);
+          
+          freeStock += Math.max(0, lotTotal - allottedInLot - deliveredInLot - salesInLot);
+          totalStock += lotTotal;
+          allottedQty += allottedInLot;
+        });
 
-        const soldQty = sales
-          .filter(s => s.plant_id === plant.id)
-          .reduce((s, sale) => s + sale.quantity, 0);
-
-        const freeStock = Math.max(0, totalStock - allottedQty);
-
-        return { plant, totalStock, allottedQty, soldQty, freeStock };
+        return { plant, totalStock, allottedQty, freeStock };
       })
       .filter(item => item.totalStock > 0);
   });
