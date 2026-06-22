@@ -47,7 +47,8 @@ function getUser() {
 }
 
 function deriveGroupStatus(items: Booking[]): string {
-  const statuses = new Set(items.map((i) => i.status));
+  if (!items || items.length === 0) return 'Pending';
+  const statuses = new Set(items.map((i) => i.status || 'Pending'));
   if (statuses.size === 1) return [...statuses][0];
   if (statuses.has('Delivered')) return 'Mixed';
   if (statuses.has('Allocated')) return 'Allocated';
@@ -56,6 +57,7 @@ function deriveGroupStatus(items: Booking[]): string {
 
 function StatusBadge({ status }: { status: string }) {
   const { t } = useLanguage();
+  if (!status) return null;
   const map: Record<string, string> = {
     Pending: 'bg-amber-100 text-amber-600 border border-amber-200',
     Allocated: 'bg-blue-100 text-blue-600 border border-blue-200',
@@ -63,9 +65,10 @@ function StatusBadge({ status }: { status: string }) {
     Mixed: 'bg-purple-100 text-purple-600 border border-purple-200',
     Cancelled: 'bg-red-100 text-red-600 border border-red-200',
   };
+  const statusKey = status.toLowerCase();
   return (
     <span className={`text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full ${map[status] ?? 'bg-gray-200 text-gray-600'}`}>
-      {t(status.toLowerCase() as any)}
+      {t(statusKey as any) || status}
     </span>
   );
 }
@@ -267,7 +270,7 @@ function AllotmentRow({
           )}
         </div>
         <div className="flex items-center gap-2">
-          <StatusBadge status={remainingQty <= 0 ? 'Allocated' : booking.status} />
+          <StatusBadge status={booking.status === 'Pending' && remainingQty <= 0 ? 'Allocated' : booking.status} />
           {showRelease && (
             <button
               onClick={handleRelease}
@@ -549,7 +552,11 @@ export default function AllotmentManager() {
   // Derive each group's consolidated status
   const groupedList: GroupedBooking[] = Object.values(grouped)
     .map((g) => ({ ...g, groupStatus: deriveGroupStatus(g.items) }))
-    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    .sort((a, b) => {
+      const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return (isNaN(timeB) ? 0 : timeB) - (isNaN(timeA) ? 0 : timeA);
+    });
 
   // Filter
   const displayed =
