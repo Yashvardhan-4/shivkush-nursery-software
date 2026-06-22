@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import { db, generateId, logAudit, toLocalDateStr } from '@/lib/db';
+import { db, generateId, logAudit, toLocalDateStr, resolvePlantPrice } from '@/lib/db';
 import type { Booking } from '@/lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { PlusCircle, Trash2, ArrowLeft } from 'lucide-react';
@@ -155,10 +155,7 @@ export default function EditBookingPage() {
       }
     }
 
-    let price = selectedPlant.selling_price || 0;
-    if (selectedPlant.category?.toLowerCase() === 'vegetable' && qty < 100) {
-      price = 2;
-    }
+    let price = resolvePlantPrice(selectedPlant, qty);
     
     setCart([...cart, {
       id: generateId(),

@@ -35,6 +35,7 @@ CREATE TABLE public.plants (
   selling_price decimal(10,2) NOT NULL,
   description text,
   active boolean DEFAULT true,
+  pricing_tiers jsonb DEFAULT '[]'::jsonb,
   created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
@@ -216,7 +217,7 @@ BEGIN
 
         IF tbl = 'plants' THEN
             IF act = 'INSERT' THEN
-                INSERT INTO public.plants (id, plant_name, variety, category, selling_price, description, active, created_at)
+                INSERT INTO public.plants (id, plant_name, variety, category, selling_price, description, active, pricing_tiers, created_at)
                 VALUES (
                     COALESCE(item_id, uuid_generate_v4()),
                     p->>'plant_name',
@@ -225,6 +226,7 @@ BEGIN
                     (p->>'selling_price')::decimal,
                     p->>'description',
                     COALESCE((p->>'active')::boolean, true),
+                    COALESCE(p->'pricing_tiers', '[]'::jsonb),
                     COALESCE(NULLIF(p->>'created_at','')::timestamp with time zone, now())
                 ) ON CONFLICT (id) DO UPDATE SET
                     plant_name = EXCLUDED.plant_name,
@@ -232,6 +234,7 @@ BEGIN
                     category = EXCLUDED.category,
                     selling_price = EXCLUDED.selling_price,
                     description = EXCLUDED.description,
+                    pricing_tiers = EXCLUDED.pricing_tiers,
                     active = EXCLUDED.active;
             ELSIF act = 'UPDATE' THEN
                 UPDATE public.plants SET
@@ -240,6 +243,7 @@ BEGIN
                     category = COALESCE(p->>'category', category),
                     selling_price = COALESCE((p->>'selling_price')::decimal, selling_price),
                     description = COALESCE(p->>'description', description),
+                    pricing_tiers = COALESCE(p->'pricing_tiers', pricing_tiers),
                     active = COALESCE((p->>'active')::boolean, active)
                 WHERE id = item_id;
             ELSIF act = 'DELETE' THEN

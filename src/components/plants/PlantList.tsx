@@ -55,10 +55,10 @@ export default function PlantList({ role }: { role: string }) {
 
       <div className="grid gap-3">
         {plants.map(plant => (
-          <div key={plant.id} className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center active:scale-[0.98] transition-transform">
-            <div>
+          <div key={plant.id} className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-start active:scale-[0.98] transition-transform">
+            <div className="flex-1 min-w-0">
               <h3 className="font-extrabold text-gray-900 text-lg">{plant.plant_name}</h3>
-              <div className="flex items-center gap-2 mt-1">
+              <div className="flex items-center gap-2 mt-1 flex-wrap">
                 {plant.category && (
                   <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-blue-50 text-blue-600 uppercase tracking-wider border border-blue-100">
                     {plant.category}
@@ -66,8 +66,23 @@ export default function PlantList({ role }: { role: string }) {
                 )}
                 <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{plant.variety}</p>
               </div>
+              {/* Pricing Tiers */}
+              {plant.pricing_tiers && plant.pricing_tiers.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {[...plant.pricing_tiers]
+                    .sort((a, b) => a.min_quantity - b.min_quantity)
+                    .map(tier => (
+                      <span
+                        key={tier.min_quantity}
+                        className="text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200"
+                      >
+                        ≥{tier.min_quantity} → ₹{tier.price}
+                      </span>
+                    ))}
+                </div>
+              )}
             </div>
-            <div className="flex items-center space-x-3">
+            <div className="flex items-center space-x-3 shrink-0 ml-3">
               <div className="text-right bg-green-50 px-3 py-2 rounded-xl">
                 <span className="font-black text-green-700 text-lg">₹{plant.selling_price}</span>
               </div>
@@ -78,6 +93,7 @@ export default function PlantList({ role }: { role: string }) {
               )}
             </div>
           </div>
+
         ))}
         {plants.length === 0 && (
           <div className="text-center p-12 bg-white rounded-2xl border border-gray-100 border-dashed">

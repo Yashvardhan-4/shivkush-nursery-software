@@ -4,6 +4,11 @@ import Dexie, { type EntityTable } from 'dexie';
 // INTERFACES
 // =========================================
 
+export interface PricingTier {
+  min_quantity: number;
+  price: number;
+}
+
 export interface Plant {
   id: string;
   plant_name: string;
@@ -11,6 +16,7 @@ export interface Plant {
   category?: string;
   selling_price: number;
   active: boolean;
+  pricing_tiers?: PricingTier[];
 }
 
 export interface PaymentQR {
@@ -251,6 +257,21 @@ db.version(9).stores({
   sync_queue: '++id, table, action, created_at',
   payment_qrs: 'id, active, sync_status'
 });
+
+// Version 10: pricing_tiers field added to plants (stored as JSON, no index needed)
+db.version(10).stores({
+  plants: 'id, plant_name, variety, category, active',
+  lots: 'id, lot_number, lot_name, plant_id, status',
+  customers: 'id, mobile, name',
+  users: 'id, name, role',
+  bookings: 'id, booking_number, customer_name, customer_phone, plant_id, lot_id, status, sync_status, created_at, assigned_to',
+  allotments: 'id, booking_id, lot_id, sync_status',
+  direct_sales: 'id, sale_number, plant_id, lot_id, sync_status, created_at, assigned_to',
+  attendance: 'id, worker_id, date, status',
+  audit_logs: '++id, user_id, action, table_name, record_id, created_at',
+  sync_queue: '++id, table, action, created_at',
+  payment_qrs: 'id, active, sync_status'
+});
 // =========================================
 // HELPER: Log an audit event
 // =========================================
@@ -300,6 +321,21 @@ export function generateId(): string {
     const v = c === 'x' ? r : (r & 0x3 | 0x8);
     return v.toString(16);
   });
+}
+
+// =========================================
+// HELPER: Resolve plant price based on quantity tiers
+// Returns the best matching tier price, or falls back to selling_price
+// =========================================
+export function resolvePlantPrice(plant: Plant, quantity: number): number {
+  const tiers = plant.pricing_tiers;
+  if (!tiers || tiers.length === 0) return plant.selling_price;
+  // Find all tiers whose min_quantity is <= the ordered quantity
+  const applicable = tiers.filter(t => t.min_quantity <= quantity);
+  if (applicable.length === 0) return plant.selling_price;
+  // Use the tier with the highest min_quantity (most specific match)
+  applicable.sort((a, b) => b.min_quantity - a.min_quantity);
+  return applicable[0].price;
 }
 
 export async function splitAndDeliverBooking(

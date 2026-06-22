@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, generateId } from '@/lib/db';
+import { db, generateId, resolvePlantPrice } from '@/lib/db';
 import { Leaf, Info, Trash2, Plus, Share2, Printer, X, FileText } from 'lucide-react';
 
 interface TempItem {
@@ -83,7 +83,7 @@ export default function CalculatorPage() {
   const spacingArea = rSp * pSp;
   const currentQty = spacingArea > 0 ? Math.floor(currentArea / spacingArea) : 0;
 
-  const currentPrice = selectedPlant ? selectedPlant.selling_price : (parseFloat(customPrice) || 0);
+  const currentPrice = selectedPlant ? resolvePlantPrice(selectedPlant, currentQty) : (parseFloat(customPrice) || 0);
   const currentAmount = currentQty * currentPrice;
 
   // Add Item to Quotation List

@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { ShoppingCart, User, Plus, Trash2, X, QrCode } from 'lucide-react';
-import { db, generateId, logAudit } from '@/lib/db';
+import { db, generateId, logAudit, resolvePlantPrice } from '@/lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 import Link from 'next/link';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
@@ -149,11 +149,7 @@ export default function NewDirectSalePage() {
     }
 
     const lot = lots?.find(l => l.id === selectedLotId);
-    let price = selectedPlant.selling_price || 0;
-    
-    if (selectedPlant.category?.toLowerCase() === 'vegetable' && qty < 100) {
-      price = 2;
-    }
+    let price = resolvePlantPrice(selectedPlant, qty);
 
     setCart([...cart, {
       id: generateId(),
