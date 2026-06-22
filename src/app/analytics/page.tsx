@@ -1,10 +1,17 @@
 import { getSession } from '@/lib/actions/auth';
 import AnalyticsClient from '@/components/analytics/AnalyticsClient';
+import { redirect } from 'next/navigation';
 
 export default async function AnalyticsPage() {
   const session = await getSession();
 
-  if (!session) return null;
+  if (!session) {
+    redirect('/login');
+  }
+
+  if (session.role !== 'owner') {
+    redirect('/dashboard');
+  }
 
   return (
     <div className="p-6 mb-20 max-w-7xl mx-auto">

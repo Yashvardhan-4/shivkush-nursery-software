@@ -49,14 +49,16 @@ export function OfflineSyncProvider({ children }: { children: React.ReactNode })
       return;
     }
     try {
-      const res = await fetch('/api/sync/pull');
+      const lastPulledAt = localStorage.getItem('snms_last_pulled_at') || '';
+      const res = await fetch(`/api/sync/pull?last_pulled_at=${encodeURIComponent(lastPulledAt)}`);
       if (res.status === 401) {
         localStorage.removeItem('snms_user');
+        localStorage.removeItem('snms_last_pulled_at');
         window.location.href = '/login';
         return;
       }
       if (!res.ok) return;
-      const { success, data } = await res.json();
+      const { success, data, server_time } = await res.json();
       if (success && data) {
         const pendingQueue = await db.sync_queue.toArray();
         const pendingIds = new Set(pendingQueue.map(q => q.payload?.id).filter(Boolean));
@@ -65,14 +67,16 @@ export function OfflineSyncProvider({ children }: { children: React.ReactNode })
         await db.transaction('rw', [db.plants, db.lots, db.bookings, db.allotments, db.direct_sales, db.attendance, db.audit_logs, db.customers, db.users, db.payment_qrs], async () => {
           const syncTable = async (localTable: any, serverList: any[]) => {
             const list = serverList || [];
-            const localItems = await localTable.toArray();
-            const serverIds = new Set(list.map((item: any) => item.id).filter(Boolean));
-
-            // Identify items to delete: present locally, not on server, not pending in sync queue
-            const toDelete = localItems.filter((item: any) => !serverIds.has(item.id) && !pendingIds.has(item.id));
-            if (toDelete.length > 0) {
-              const deleteIds = toDelete.map((item: any) => item.id);
-              await localTable.bulkDelete(deleteIds);
+            
+            // Only perform local deletions if this was a full snapshot sync (not incremental)
+            if (!lastPulledAt) {
+              const localItems = await localTable.toArray();
+              const serverIds = new Set(list.map((item: any) => item.id).filter(Boolean));
+              const toDelete = localItems.filter((item: any) => !serverIds.has(item.id) && !pendingIds.has(item.id));
+              if (toDelete.length > 0) {
+                const deleteIds = toDelete.map((item: any) => item.id);
+                await localTable.bulkDelete(deleteIds);
+              }
             }
 
             // Put/update server items (excluding ones that are pending sync)
@@ -98,6 +102,10 @@ export function OfflineSyncProvider({ children }: { children: React.ReactNode })
             await db.audit_logs.bulkPut(filterSynced(data.audit_logs));
           }
         });
+
+        if (server_time) {
+          localStorage.setItem('snms_last_pulled_at', server_time);
+        }
         console.log('Successfully pulled and updated local offline database from Supabase.');
       }
     } catch (err) {

@@ -20,6 +20,7 @@ export default function EditLotPage({ params }: Props) {
   const [readyDate, setReadyDate] = useState('');
   const [status, setStatus] = useState<'Growing' | 'Ready' | 'Completed'>('Growing');
   const [notes, setNotes] = useState('');
+  const [adjustmentReason, setAdjustmentReason] = useState('');
   const [loading, setLoading] = useState(false);
   const [notFound, setNotFound] = useState(false);
   
@@ -85,9 +86,10 @@ export default function EditLotPage({ params }: Props) {
       const user = JSON.parse(localStorage.getItem('snms_user') || '{}');
       
       await db.transaction('rw', [db.lots, db.sync_queue, db.audit_logs], async () => {
-        // 1. Update Target Lot
+        // 1. Update Target Lot (increase both total_quantity and available_stock)
         const targetUpdates = {
           ...targetLot,
+          total_quantity: targetLot.total_quantity + freeQty,
           available_stock: (targetLot.available_stock ?? targetLot.total_quantity) + freeQty,
           notes: `${targetLot.notes || ''}\n[Merge] Received ${freeQty} saplings from lot ${lotNumber}`.trim()
         };
@@ -99,9 +101,10 @@ export default function EditLotPage({ params }: Props) {
           created_at: Date.now()
         });
 
-        // 2. Update Source Lot (available stock reduced to committed usedQty)
+        // 2. Update Source Lot (decrease both total_quantity and available_stock)
         const sourceUpdates = {
           ...lot!,
+          total_quantity: lot!.total_quantity - freeQty,
           available_stock: usedQty,
           status: usedQty === 0 ? 'Completed' as const : status,
           notes: `${notes || ''}\n[Merge] Transferred ${freeQty} free saplings to lot ${targetLot.lot_name || targetLot.lot_number}`.trim()
@@ -138,11 +141,20 @@ export default function EditLotPage({ params }: Props) {
       alert(`Cannot reduce available stock below ${usedQty} — ${allottedQty} allotted, ${soldQty} sold directly, ${deliveredQty} delivered.`);
       return;
     }
+    if (status === 'Completed' && allottedQty > 0) {
+      alert(`Cannot mark this lot as Completed because it has ${allottedQty} active allotments. Please fulfill or release these allotments first.`);
+      return;
+    }
     setLoading(true);
     try {
       const user = JSON.parse(localStorage.getItem('snms_user') || '{}');
       const lot = await db.lots.get(id);
       if (!lot) return;
+
+      const isStockAdjusted = lot.available_stock !== newQty;
+      const finalNotes = isStockAdjusted && adjustmentReason
+        ? `${notes || ''}\n[Adjustment] Stock changed from ${lot.available_stock} to ${newQty} because: ${adjustmentReason}`.trim()
+        : notes;
 
       const updates = {
         ...lot,
@@ -151,7 +163,7 @@ export default function EditLotPage({ params }: Props) {
         available_stock: newQty,
         ready_date: readyDate,
         status,
-        notes,
+        notes: finalNotes,
       };
       await db.lots.put(updates);
       await db.sync_queue.add({
@@ -166,7 +178,8 @@ export default function EditLotPage({ params }: Props) {
         available_stock: newQty,
         ready_date: readyDate,
         status,
-        notes,
+        notes: finalNotes,
+        adjustment_reason: isStockAdjusted ? adjustmentReason : undefined
       });
       window.dispatchEvent(new Event('online'));
       router.push('/lots');
@@ -350,6 +363,23 @@ export default function EditLotPage({ params }: Props) {
             Initial: {lot.initial_quantity ?? lot.total_quantity} • Used: {usedQty}
           </p>
         </div>
+
+        {/* Adjustment Reason */}
+        {lot && newQty !== (lot.available_stock ?? lot.total_quantity) && (
+          <div className="space-y-2 animate-in slide-in-from-top-4 duration-200">
+            <label className="text-xs font-black text-red-700 uppercase tracking-wider flex items-center gap-1">
+              ⚠️ Reason for stock adjustment *
+            </label>
+            <input
+              required
+              type="text"
+              value={adjustmentReason}
+              onChange={e => setAdjustmentReason(e.target.value)}
+              className="w-full p-4 bg-red-50/50 border border-red-200 rounded-xl outline-none focus:ring-2 focus:ring-red-500 font-bold text-red-900"
+              placeholder="e.g. sapling deaths due to rain, recounting adjustment"
+            />
+          </div>
+        )}
 
         {/* Notes */}
         <div className="space-y-2">

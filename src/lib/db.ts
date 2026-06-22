@@ -83,6 +83,10 @@ export interface Booking {
   assigned_to?: string | null;
   sync_status: 'synced' | 'pending';
   created_at?: string;
+  refund_amount?: number;
+  refund_payment_mode?: 'Cash' | 'UPI' | null;
+  refund_status?: 'Not Refunded' | 'Refunded' | 'Forfeited';
+  refund_date?: string | null;
 }
 
 // Allotment: Owner assigns a specific lot's plants to a booking
@@ -265,6 +269,21 @@ db.version(10).stores({
   customers: 'id, mobile, name',
   users: 'id, name, role',
   bookings: 'id, booking_number, customer_name, customer_phone, plant_id, lot_id, status, sync_status, created_at, assigned_to',
+  allotments: 'id, booking_id, lot_id, sync_status',
+  direct_sales: 'id, sale_number, plant_id, lot_id, sync_status, created_at, assigned_to',
+  attendance: 'id, worker_id, date, status',
+  audit_logs: '++id, user_id, action, table_name, record_id, created_at',
+  sync_queue: '++id, table, action, created_at',
+  payment_qrs: 'id, active, sync_status'
+});
+
+// Version 11: Added refund columns to bookings table
+db.version(11).stores({
+  plants: 'id, plant_name, variety, category, active',
+  lots: 'id, lot_number, lot_name, plant_id, status',
+  customers: 'id, mobile, name',
+  users: 'id, name, role',
+  bookings: 'id, booking_number, customer_name, customer_phone, plant_id, lot_id, status, sync_status, created_at, assigned_to, refund_status',
   allotments: 'id, booking_id, lot_id, sync_status',
   direct_sales: 'id, sale_number, plant_id, lot_id, sync_status, created_at, assigned_to',
   attendance: 'id, worker_id, date, status',
@@ -456,6 +475,7 @@ export async function splitAndDeliverBooking(
         advance_upi_amount: deliveredUpi,
         status: 'Delivered' as const,
         delivery_date: new Date().toISOString().split('T')[0],
+        worker_id: userId, // attribution fix
         sync_status: 'pending' as const
       };
       await db.bookings.update(bookingId, deliveredUpdates);
@@ -470,6 +490,7 @@ export async function splitAndDeliverBooking(
       const deliveredUpdates = {
         status: 'Delivered' as const,
         delivery_date: new Date().toISOString().split('T')[0],
+        worker_id: userId, // attribution fix
         sync_status: 'pending' as const
       };
       await db.bookings.update(bookingId, deliveredUpdates);
@@ -479,6 +500,37 @@ export async function splitAndDeliverBooking(
         payload: { ...booking, ...deliveredUpdates, sync_status: undefined },
         created_at: Date.now()
       });
+    }
+
+    // Decrement lot available_stock based on allotments remaining for the delivered booking (bookingId)
+    const deliveredAllotments = await db.allotments.where('booking_id').equals(bookingId).toArray();
+    for (const allot of deliveredAllotments) {
+      const lot = await db.lots.get(allot.lot_id);
+      if (lot) {
+        const newStock = Math.max(0, (lot.available_stock ?? lot.total_quantity) - allot.quantity);
+        await db.lots.update(lot.id, { available_stock: newStock });
+        await db.sync_queue.add({
+          table: 'lots',
+          action: 'UPDATE',
+          payload: { ...lot, available_stock: newStock, sync_status: undefined },
+          created_at: Date.now()
+        });
+      }
+    }
+
+    // Fallback: If no allotments record is found but booking.lot_id is set, decrement from booking.lot_id directly
+    if (deliveredAllotments.length === 0 && booking.lot_id) {
+      const lot = await db.lots.get(booking.lot_id);
+      if (lot) {
+        const newStock = Math.max(0, (lot.available_stock ?? lot.total_quantity) - deliverQty);
+        await db.lots.update(lot.id, { available_stock: newStock });
+        await db.sync_queue.add({
+          table: 'lots',
+          action: 'UPDATE',
+          payload: { ...lot, available_stock: newStock, sync_status: undefined },
+          created_at: Date.now()
+        });
+      }
     }
 
     await logAudit(userId, userName, 'DELIVER_BOOKING', 'bookings', bookingId, {

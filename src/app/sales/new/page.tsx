@@ -20,14 +20,19 @@ interface CartItem {
 
 export default function NewDirectSalePage() {
   const { t } = useLanguage();
-  const [saleNumber, setSaleNumber] = useState('SALE-...');
+  const [saleNumber, setSaleNumber] = useState('SL-...');
   const [currentUser, setCurrentUser] = useState<any>(null);
   
   useEffect(() => {
     const d = new Date();
-    const dateStr = `${d.getFullYear().toString().slice(-2)}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
-    const random = Math.floor(1000 + Math.random() * 9000).toString();
-    setSaleNumber(`SALE-${dateStr}-${random}`);
+    const yy = d.getFullYear().toString().slice(-2);
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const hh = String(d.getHours()).padStart(2, '0');
+    const min = String(d.getMinutes()).padStart(2, '0');
+    const ss = String(d.getSeconds()).padStart(2, '0');
+    const random = Math.floor(100 + Math.random() * 900).toString();
+    setSaleNumber(`SL-${yy}${mm}${dd}-${hh}${min}${ss}-${random}`);
     const userStr = localStorage.getItem('snms_user');
     if (userStr) setCurrentUser(JSON.parse(userStr));
   }, []);
@@ -67,14 +72,14 @@ export default function NewDirectSalePage() {
   const users = useLiveQuery(() => db.users.toArray());
   const workers = users?.filter(u => u.role === 'worker') || [];
 
-  // Auto-select first available lot (FIFO) when plant changes
+  // Auto-select first available lot (FIFO) when plant changes, sorted by ready_date
   useEffect(() => {
     if (!plantId) { setSelectedLotId(''); return; }
     if (!autoAllocate) return;
     const lotsData = lots || [];
     const first = lotsData
       .filter(l => l.plant_id === plantId && l.status !== 'Completed')
-      .sort((a, b) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime())[0];
+      .sort((a, b) => new Date(a.ready_date).getTime() - new Date(b.ready_date).getTime())[0];
     setSelectedLotId(first?.id || '');
   }, [plantId, lots, autoAllocate]);
 
@@ -137,26 +142,28 @@ export default function NewDirectSalePage() {
   const selectedFreeStock = (plantId && selectedLotId) ? computeFreeStockForLot(selectedLotId, plantId) : null;
 
   const handleAddToCart = () => {
-    if (!selectedPlant || !quantity || !selectedLotId) return;
+    if (!selectedPlant || !quantity) return;
     const qty = parseInt(quantity);
     if (isNaN(qty) || qty <= 0) return;
 
-    const freeStock = computeFreeStockForLot(selectedLotId, selectedPlant.id);
-    if (qty > freeStock) {
-      const lot = lots?.find(l => l.id === selectedLotId);
-      alert(`Only ${freeStock} plants free in lot ${lot?.lot_name || lot?.lot_number || ''}. Some are reserved for bookings.`);
-      return;
+    if (selectedLotId) {
+      const freeStock = computeFreeStockForLot(selectedLotId, selectedPlant.id);
+      if (qty > freeStock) {
+        const lot = lots?.find(l => l.id === selectedLotId);
+        alert(`Only ${freeStock} plants free in lot ${lot?.lot_name || lot?.lot_number || ''}. Some are reserved for bookings.`);
+        return;
+      }
     }
 
-    const lot = lots?.find(l => l.id === selectedLotId);
+    const lot = selectedLotId ? lots?.find(l => l.id === selectedLotId) : null;
     let price = resolvePlantPrice(selectedPlant, qty);
 
     setCart([...cart, {
       id: generateId(),
       plantId: selectedPlant.id,
       plantName: selectedPlant.variety ? `${selectedPlant.plant_name} - ${selectedPlant.variety}` : selectedPlant.plant_name,
-      lotId: selectedLotId,
-      lotNumber: lot?.lot_name || lot?.lot_number || '',
+      lotId: selectedLotId || '',
+      lotNumber: lot ? (lot.lot_name || lot.lot_number || '') : 'No Lot Assigned',
       quantity: qty,
       price,
       amount: price * qty
@@ -241,7 +248,7 @@ export default function NewDirectSalePage() {
         customer_name: customerName || undefined,
         customer_phone: customerPhone || undefined,
         plant_id: item.plantId,
-        lot_id: item.lotId,
+        lot_id: item.lotId || null,
         quantity: item.quantity,
         amount: item.amount,
         payment_mode: itemPayMode,
@@ -273,18 +280,18 @@ export default function NewDirectSalePage() {
         await db.sync_queue.add({ table: 'direct_sales', action: 'INSERT', payload: s, created_at: Date.now() });
       }
 
-      // Auto-archive sold out lots
+      // Decrement lot stock and Auto-archive completed lots
       const lotUpdates = [];
-      const currentBookings = bookings || [];
-      const currentSales = existingSales || [];
       for (const item of cart) {
-        const lot = lots?.find(l => l.id === item.lotId);
-        if (lot && lot.status !== 'Completed') {
-          const deliveredQty = currentBookings.filter(b => b.lot_id === lot.id && b.status === 'Delivered').reduce((sum, b) => sum + b.quantity, 0);
-          const salesQty = currentSales.filter(s => s.lot_id === lot.id).reduce((sum, s) => sum + s.quantity, 0);
-          const physicalStockRemaining = (lot.available_stock ?? lot.total_quantity) - deliveredQty - salesQty - item.quantity;
-          if (physicalStockRemaining <= 0) {
-            lot.status = 'Completed';
+        if (item.lotId) {
+          const lot = await db.lots.get(item.lotId);
+          if (lot && lot.status !== 'Completed') {
+            const currentStock = lot.available_stock ?? lot.total_quantity;
+            const newStock = Math.max(0, currentStock - item.quantity);
+            lot.available_stock = newStock;
+            if (newStock <= 0) {
+              lot.status = 'Completed';
+            }
             lotUpdates.push(lot);
           }
         }
@@ -421,7 +428,7 @@ export default function NewDirectSalePage() {
                     if (nextVal) {
                       const first = (lots || [])
                         .filter(l => l.plant_id === plantId && l.status !== 'Completed')
-                        .sort((a, b) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime())[0];
+                        .sort((a, b) => new Date(a.ready_date).getTime() - new Date(b.ready_date).getTime())[0];
                       setSelectedLotId(first?.id || '');
                     }
                   }}
@@ -442,9 +449,10 @@ export default function NewDirectSalePage() {
                         onChange={e => setSelectedLotId(e.target.value)}
                         className="w-full p-3 bg-white border border-green-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-bold text-green-900 text-sm"
                       >
+                        <option value="">-- No Lot Assigned --</option>
                         {lots
                           .filter(l => l.plant_id === plantId && l.status !== 'Completed')
-                          .sort((a, b) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime())
+                          .sort((a, b) => new Date(a.ready_date).getTime() - new Date(b.ready_date).getTime())
                           .map(l => {
                             const free = computeFreeStockForLot(l.id, plantId);
                             return (
@@ -480,7 +488,7 @@ export default function NewDirectSalePage() {
                 <button
                   type="button"
                   onClick={handleAddToCart}
-                  disabled={!quantity || !selectedLotId || (selectedFreeStock !== null && selectedFreeStock <= 0)}
+                  disabled={!quantity || (selectedLotId && selectedFreeStock !== null && selectedFreeStock <= 0)}
                   className="w-1/3 bg-green-600 text-white rounded-xl font-black flex items-center justify-center disabled:opacity-50 active:scale-95 transition-transform"
                 >
                   {t('add')}

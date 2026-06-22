@@ -23,7 +23,8 @@ CREATE TABLE public.users (
   mobile text UNIQUE NOT NULL,
   role text NOT NULL CHECK (role IN ('owner', 'worker')),
   password_hash text NOT NULL,
-  created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
+  created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL,
+  updated_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
 -- PLANTS TABLE
@@ -36,7 +37,8 @@ CREATE TABLE public.plants (
   description text,
   active boolean DEFAULT true,
   pricing_tiers jsonb DEFAULT '[]'::jsonb,
-  created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
+  created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL,
+  updated_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
 -- LOTS TABLE
@@ -51,7 +53,8 @@ CREATE TABLE public.lots (
   ready_date date NOT NULL,
   status text NOT NULL CHECK (status IN ('Growing', 'Ready', 'Completed')),
   notes text,
-  created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
+  created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL,
+  updated_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
 -- BOOKINGS TABLE
@@ -78,7 +81,12 @@ CREATE TABLE public.bookings (
   upi_amount decimal(10,2),
   worker_id uuid REFERENCES public.users(id) ON DELETE SET NULL,
   assigned_to uuid REFERENCES public.users(id) ON DELETE SET NULL,
-  created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
+  created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL,
+  updated_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL,
+  refund_amount decimal(10,2) DEFAULT 0,
+  refund_payment_mode text CHECK (refund_payment_mode IN ('Cash', 'UPI')),
+  refund_status text DEFAULT 'Not Refunded' CHECK (refund_status IN ('Not Refunded', 'Refunded', 'Forfeited')),
+  refund_date date
 );
 
 -- ALLOTMENTS TABLE
@@ -88,7 +96,8 @@ CREATE TABLE public.allotments (
   lot_id uuid REFERENCES public.lots(id) ON DELETE CASCADE NOT NULL,
   quantity integer NOT NULL CHECK (quantity > 0),
   allotted_by uuid REFERENCES public.users(id) ON DELETE SET NULL NOT NULL,
-  allotted_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
+  allotted_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL,
+  updated_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
 -- DIRECT SALES TABLE
@@ -107,7 +116,8 @@ CREATE TABLE public.direct_sales (
   worker_id uuid REFERENCES public.users(id) ON DELETE SET NULL NOT NULL,
   assigned_to uuid REFERENCES public.users(id) ON DELETE SET NULL,
   fulfillment_status text CHECK (fulfillment_status IN ('Pending Handover', 'Fulfilled')),
-  created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
+  created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL,
+  updated_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
 -- ATTENDANCE TABLE
@@ -116,7 +126,9 @@ CREATE TABLE public.attendance (
   worker_id uuid REFERENCES public.users(id) ON DELETE CASCADE NOT NULL,
   date date DEFAULT CURRENT_DATE NOT NULL,
   status text NOT NULL CHECK (status IN ('Present', 'Absent', 'Half Day')),
-  created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
+  created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL,
+  updated_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL,
+  CONSTRAINT unique_worker_date UNIQUE(worker_id, date)
 );
 
 -- AUDIT LOGS TABLE
@@ -128,7 +140,8 @@ CREATE TABLE public.audit_logs (
   table_name text NOT NULL,
   record_id text,
   details text,
-  created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
+  created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL,
+  updated_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
 -- CUSTOMERS TABLE
@@ -137,7 +150,8 @@ CREATE TABLE public.customers (
   name text NOT NULL,
   mobile text UNIQUE NOT NULL,
   city text,
-  created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
+  created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL,
+  updated_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
 -- PAYMENT QRS TABLE
@@ -147,7 +161,8 @@ CREATE TABLE public.payment_qrs (
   upi_id text NOT NULL,
   image_data text,
   active boolean DEFAULT true,
-  created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
+  created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL,
+  updated_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
 -- INDEXES FOR FOREIGN KEYS
@@ -178,17 +193,27 @@ ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.customers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.payment_qrs ENABLE ROW LEVEL SECURITY;
 
--- Allow broad access policy (handles RLS at Application Layer)
-CREATE POLICY "Allow broad access during dev" ON public.plants FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow broad access during dev" ON public.lots FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow broad access during dev" ON public.bookings FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow broad access during dev" ON public.allotments FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow broad access during dev" ON public.direct_sales FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow broad access during dev" ON public.users FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow broad access during dev" ON public.attendance FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow broad access during dev" ON public.audit_logs FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow broad access during dev" ON public.customers FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow broad access during dev" ON public.payment_qrs FOR ALL USING (true) WITH CHECK (true);
+-- Note: RLS is active but no public policies are added. Access is restricted to service_role (Admin) via server API routes.
+
+-- UPDATED_AT AUTO UPDATE TRIGGERS
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = now();
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON public.users FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_plants_updated_at BEFORE UPDATE ON public.plants FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_lots_updated_at BEFORE UPDATE ON public.lots FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_bookings_updated_at BEFORE UPDATE ON public.bookings FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_allotments_updated_at BEFORE UPDATE ON public.allotments FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_direct_sales_updated_at BEFORE UPDATE ON public.direct_sales FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_attendance_updated_at BEFORE UPDATE ON public.attendance FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_audit_logs_updated_at BEFORE UPDATE ON public.audit_logs FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_customers_updated_at BEFORE UPDATE ON public.customers FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_payment_qrs_updated_at BEFORE UPDATE ON public.payment_qrs FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- PROCESS SYNC BATCH RPC FUNCTION (Supports all tables and properties)
 CREATE OR REPLACE FUNCTION process_sync_batch(payload JSON)
@@ -320,7 +345,8 @@ BEGIN
                     plant_id, lot_id, quantity, advance_paid, advance_payment_mode,
                     advance_cash_amount, advance_upi_amount, total_amount,
                     booking_date, delivery_date, status, remarks,
-                    payment_mode, cash_amount, upi_amount, worker_id, assigned_to, created_at
+                    payment_mode, cash_amount, upi_amount, worker_id, assigned_to, created_at,
+                    refund_amount, refund_payment_mode, refund_status, refund_date
                 ) VALUES (
                     COALESCE(item_id, uuid_generate_v4()),
                     p->>'booking_number',
@@ -344,7 +370,11 @@ BEGIN
                     NULLIF(p->>'upi_amount', '')::decimal,
                     NULLIF(p->>'worker_id', '')::uuid,
                     NULLIF(p->>'assigned_to', '')::uuid,
-                    COALESCE(NULLIF(p->>'created_at','')::timestamp with time zone, now())
+                    COALESCE(NULLIF(p->>'created_at','')::timestamp with time zone, now()),
+                    COALESCE((p->>'refund_amount')::decimal, 0),
+                    p->>'refund_payment_mode',
+                    COALESCE(p->>'refund_status', 'Not Refunded'),
+                    NULLIF(p->>'refund_date', '')::date
                 ) ON CONFLICT (id) DO UPDATE SET
                     quantity = EXCLUDED.quantity,
                     advance_paid = EXCLUDED.advance_paid,
@@ -359,7 +389,11 @@ BEGIN
                     cash_amount = EXCLUDED.cash_amount,
                     upi_amount = EXCLUDED.upi_amount,
                     lot_id = EXCLUDED.lot_id,
-                    assigned_to = EXCLUDED.assigned_to;
+                    assigned_to = EXCLUDED.assigned_to,
+                    refund_amount = EXCLUDED.refund_amount,
+                    refund_payment_mode = EXCLUDED.refund_payment_mode,
+                    refund_status = EXCLUDED.refund_status,
+                    refund_date = EXCLUDED.refund_date;
             ELSIF act = 'UPDATE' THEN
                 UPDATE public.bookings SET
                     booking_number = COALESCE(p->>'booking_number', booking_number),
@@ -382,7 +416,11 @@ BEGIN
                     cash_amount = COALESCE(NULLIF(p->>'cash_amount', '')::decimal, cash_amount),
                     upi_amount = COALESCE(NULLIF(p->>'upi_amount', '')::decimal, upi_amount),
                     worker_id = COALESCE(NULLIF(p->>'worker_id', '')::uuid, worker_id),
-                    assigned_to = COALESCE(NULLIF(p->>'assigned_to', '')::uuid, assigned_to)
+                    assigned_to = COALESCE(NULLIF(p->>'assigned_to', '')::uuid, assigned_to),
+                    refund_amount = COALESCE((p->>'refund_amount')::decimal, refund_amount),
+                    refund_payment_mode = COALESCE(p->>'refund_payment_mode', refund_payment_mode),
+                    refund_status = COALESCE(p->>'refund_status', refund_status),
+                    refund_date = CASE WHEN p->>'refund_date' IS NOT NULL AND p->>'refund_date' != '' THEN (p->>'refund_date')::date ELSE refund_date END
                 WHERE id = item_id;
             ELSIF act = 'DELETE' THEN
                 DELETE FROM public.bookings WHERE id = item_id;
@@ -463,7 +501,7 @@ BEGIN
                     (p->>'date')::date,
                     p->>'status',
                     COALESCE(NULLIF(p->>'created_at','')::timestamp with time zone, now())
-                ) ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status;
+                ) ON CONFLICT (worker_id, date) DO UPDATE SET status = EXCLUDED.status, id = EXCLUDED.id;
             ELSIF act = 'UPDATE' THEN
                 UPDATE public.attendance SET
                     worker_id = COALESCE(NULLIF(p->>'worker_id', '')::uuid, worker_id),
@@ -528,5 +566,5 @@ VALUES (
   'Owner',
   '9999999999',
   'owner',
-  '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918' -- SHA-256 hash of 'admin'
+  '$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi' -- bcrypt hash of 'admin'
 ) ON CONFLICT (mobile) DO NOTHING;

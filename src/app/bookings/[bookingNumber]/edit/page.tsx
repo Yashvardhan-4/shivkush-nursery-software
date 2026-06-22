@@ -44,6 +44,12 @@ export default function EditBookingPage() {
   const [initialLoaded, setInitialLoaded] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
 
+  // Refund States
+  const [showRefundModal, setShowRefundModal] = useState(false);
+  const [refundOption, setRefundOption] = useState<'Refund' | 'Forfeit'>('Refund');
+  const [refundPaymentMode, setRefundPaymentMode] = useState<'Cash' | 'UPI'>('Cash');
+  const [refundAmountInput, setRefundAmountInput] = useState('');
+
   useEffect(() => {
     const userStr = localStorage.getItem('snms_user');
     if (userStr) setCurrentUser(JSON.parse(userStr));
@@ -189,13 +195,64 @@ export default function EditBookingPage() {
   const splitRemaining = advanceNum - splitTotal;
   const splitValid = advanceNum === 0 || paymentMode !== 'Split' || Math.abs(splitRemaining) < 0.01;
 
-  const handleCancelBooking = async () => {
-    if (!confirm("Are you sure you want to CANCEL this booking? The allotted stock will be released, but the advance payment will NOT be refunded (it remains as nursery deposit). This cannot be undone.")) return;
+  const handleCancelBooking = () => {
+    if (advanceNum > 0) {
+      setRefundAmountInput(String(advanceNum));
+      setRefundOption('Refund');
+      setRefundPaymentMode('Cash');
+      setShowRefundModal(true);
+    } else {
+      if (!confirm("Are you sure you want to CANCEL this booking? The allotted stock will be released. This cannot be undone.")) return;
+      executeCancel(0, null, 'Not Refunded');
+    }
+  };
+
+  const executeCancel = async (refundAmount: number, paymentMode: 'Cash' | 'UPI' | null, refundStatus: 'Refunded' | 'Forfeited' | 'Not Refunded') => {
     setLoading(true);
     try {
-      await db.transaction('rw', [db.bookings, db.sync_queue, db.audit_logs], async () => {
-        for (const row of originalBookingRows || []) {
-          const updates = { status: 'Cancelled' as const, sync_status: 'pending' as const };
+      await db.transaction('rw', [db.bookings, db.allotments, db.sync_queue, db.audit_logs], async () => {
+        const rows = originalBookingRows || [];
+        const rowIds = rows.map(r => r.id);
+
+        // 1. Release allotments
+        const relatedAllotments = await db.allotments.where('booking_id').anyOf(rowIds).toArray();
+        for (const allot of relatedAllotments) {
+          await db.allotments.delete(allot.id);
+          await db.sync_queue.add({
+            table: 'allotments',
+            action: 'DELETE',
+            payload: { id: allot.id },
+            created_at: Date.now()
+          });
+        }
+
+        // 2. Cancel and update bookings with refund columns
+        let refundRemaining = refundAmount;
+        for (let i = 0; i < rows.length; i++) {
+          const row = rows[i];
+          let itemRefund = 0;
+          if (refundRemaining > 0) {
+            if (refundRemaining >= row.advance_paid) {
+              itemRefund = row.advance_paid;
+              refundRemaining -= row.advance_paid;
+            } else {
+              itemRefund = refundRemaining;
+              refundRemaining = 0;
+            }
+          }
+          if (i === rows.length - 1 && refundRemaining > 0) {
+            itemRefund += refundRemaining;
+          }
+
+          const updates = {
+            status: 'Cancelled' as const,
+            refund_amount: itemRefund,
+            refund_payment_mode: paymentMode,
+            refund_status: refundStatus,
+            refund_date: refundStatus === 'Refunded' ? toLocalDateStr(new Date().toISOString()) : null,
+            sync_status: 'pending' as const
+          };
+
           await db.bookings.update(row.id, updates);
           await db.sync_queue.add({
             table: 'bookings',
@@ -204,8 +261,14 @@ export default function EditBookingPage() {
             created_at: Date.now()
           });
         }
+
         const user = currentUser || { id: 'unknown', name: 'Unknown' };
-        await logAudit(user.id, user.name, 'CANCEL_BOOKING', 'bookings', bookingNumber, { note: 'Forfeited advance' });
+        await logAudit(user.id, user.name, 'CANCEL_BOOKING', 'bookings', bookingNumber, {
+          refundAmount,
+          paymentMode,
+          refundStatus,
+          note: refundStatus === 'Refunded' ? `Refunded ₹${refundAmount}` : refundStatus === 'Forfeited' ? 'Forfeited advance' : 'Cancelled'
+        });
       });
       window.dispatchEvent(new Event('online'));
       router.push('/bookings');
@@ -214,6 +277,7 @@ export default function EditBookingPage() {
       alert('Failed to cancel booking');
     } finally {
       setLoading(false);
+      setShowRefundModal(false);
     }
   };
 
@@ -333,6 +397,7 @@ export default function EditBookingPage() {
 
       // Find if this item already existed originally
       const original = originalBookingRows?.find(r => r.id === item.id);
+      const isModified = original ? (original.plant_id !== item.plantId || original.quantity !== item.quantity) : false;
 
       return {
         id: item.id,
@@ -341,7 +406,7 @@ export default function EditBookingPage() {
         customer_phone: customerPhone,
         city: city,
         plant_id: item.plantId,
-        lot_id: item.lotId || null,
+        lot_id: isModified ? null : (item.lotId || null),
         quantity: item.quantity,
         advance_paid: itemAdvance,
         advance_payment_mode: finalItemPayMode,
@@ -350,7 +415,7 @@ export default function EditBookingPage() {
         total_amount: item.amount,
         booking_date: toLocalDateStr(createdAt),
         delivery_date: deliveryDate || null,
-        status: original ? original.status : 'Pending',
+        status: isModified ? 'Pending' : (original ? original.status : 'Pending'),
         worker_id: original ? original.worker_id : user.id,
         sync_status: 'pending' as const,
         created_at: createdAt,
@@ -359,63 +424,94 @@ export default function EditBookingPage() {
     });
 
     try {
-      const originalIds = new Set(originalBookingRows?.map(r => r.id));
-      const modifiedIds = new Set(modifiedBookings.map(b => b.id));
+      await db.transaction('rw', [db.bookings, db.allotments, db.customers, db.sync_queue, db.audit_logs], async () => {
+        const originalIds = new Set(originalBookingRows?.map(r => r.id));
+        const modifiedIds = new Set(modifiedBookings.map(b => b.id));
 
-      // 1. Identify deleted items
-      const deletedIds = Array.from(originalIds).filter(id => !modifiedIds.has(id));
-      for (const id of deletedIds) {
-        await db.bookings.delete(id);
-        await db.sync_queue.add({
-          table: 'bookings',
-          action: 'DELETE',
-          payload: { id },
-          created_at: Date.now()
+        // 1. Identify deleted items
+        const deletedIds = Array.from(originalIds).filter(id => !modifiedIds.has(id));
+        for (const id of deletedIds) {
+          await db.bookings.delete(id);
+          await db.sync_queue.add({
+            table: 'bookings',
+            action: 'DELETE',
+            payload: { id },
+            created_at: Date.now()
+          });
+
+          // Delete allotments for deleted row
+          const rowAllotments = await db.allotments.where('booking_id').equals(id).toArray();
+          for (const allot of rowAllotments) {
+            await db.allotments.delete(allot.id);
+            await db.sync_queue.add({
+              table: 'allotments',
+              action: 'DELETE',
+              payload: { id: allot.id },
+              created_at: Date.now()
+            });
+          }
+        }
+
+        // 2. Identify inserted & updated items
+        for (const b of modifiedBookings) {
+          if (originalIds.has(b.id)) {
+            const original = originalBookingRows?.find(r => r.id === b.id);
+            const isModified = original ? (original.plant_id !== b.plant_id || original.quantity !== b.quantity) : false;
+
+            if (isModified) {
+              // Delete allotments for modified row
+              const rowAllotments = await db.allotments.where('booking_id').equals(b.id).toArray();
+              for (const allot of rowAllotments) {
+                await db.allotments.delete(allot.id);
+                await db.sync_queue.add({
+                  table: 'allotments',
+                  action: 'DELETE',
+                  payload: { id: allot.id },
+                  created_at: Date.now()
+                });
+              }
+            }
+
+            // Update
+            await db.bookings.put(b);
+            await db.sync_queue.add({
+              table: 'bookings',
+              action: 'UPDATE',
+              payload: { ...b, sync_status: undefined },
+              created_at: Date.now()
+            });
+          } else {
+            // Insert
+            await db.bookings.add(b);
+            await db.sync_queue.add({
+              table: 'bookings',
+              action: 'INSERT',
+              payload: b,
+              created_at: Date.now()
+            });
+          }
+        }
+
+        // 3. Customer logic
+        if (customerPhone && customerName) {
+          let cust = await db.customers.where('mobile').equals(customerPhone).first();
+          if (!cust) {
+            cust = { id: generateId(), name: customerName, mobile: customerPhone, city: city || null };
+            await db.customers.add(cust);
+          } else {
+            cust.name = customerName;
+            if (city) cust.city = city;
+            await db.customers.put(cust);
+          }
+          await db.sync_queue.add({ table: 'customers', action: 'INSERT', payload: cust, created_at: Date.now() });
+        }
+
+        // 4. Audit Log
+        await logAudit(user.id, user.name, 'EDIT_BOOKING', 'bookings', bookingNumber, {
+          totalAmount,
+          itemCount: modifiedBookings.length,
+          deletedCount: deletedIds.length
         });
-      }
-
-      // 2. Identify inserted & updated items
-      for (const b of modifiedBookings) {
-        if (originalIds.has(b.id)) {
-          // Update
-          await db.bookings.put(b);
-          await db.sync_queue.add({
-            table: 'bookings',
-            action: 'UPDATE',
-            payload: { ...b, sync_status: undefined },
-            created_at: Date.now()
-          });
-        } else {
-          // Insert
-          await db.bookings.add(b);
-          await db.sync_queue.add({
-            table: 'bookings',
-            action: 'INSERT',
-            payload: b,
-            created_at: Date.now()
-          });
-        }
-      }
-
-      // 3. Customer logic
-      if (customerPhone && customerName) {
-        let cust = await db.customers.where('mobile').equals(customerPhone).first();
-        if (!cust) {
-          cust = { id: generateId(), name: customerName, mobile: customerPhone, city: city || null };
-          await db.customers.add(cust);
-        } else {
-          cust.name = customerName;
-          if (city) cust.city = city;
-          await db.customers.put(cust);
-        }
-        await db.sync_queue.add({ table: 'customers', action: 'INSERT', payload: cust, created_at: Date.now() });
-      }
-
-      // 4. Audit Log
-      await logAudit(user.id, user.name, 'EDIT_BOOKING', 'bookings', bookingNumber, {
-        totalAmount,
-        itemCount: modifiedBookings.length,
-        deletedCount: deletedIds.length
       });
 
       window.dispatchEvent(new Event('online'));
@@ -484,7 +580,7 @@ export default function EditBookingPage() {
           <div className="space-y-2">
             <select value={plantId} onChange={e => { setPlantId(e.target.value); setLotId(''); }} className="w-full p-4 bg-white border border-blue-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold text-lg text-blue-900">
               <option value="">{t('choosePlantPlaceholder')}</option>
-              {plants?.map(p => (
+              {plants?.filter(p => p.active !== false).map(p => (
                 <option key={p.id} value={p.id}>{p.variety ? `${p.plant_name} - ${p.variety}` : p.plant_name} (₹{p.selling_price})</option>
               ))}
             </select>
@@ -648,6 +744,123 @@ export default function EditBookingPage() {
             >
               Delete Booking
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Refund Modal */}
+      {showRefundModal && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-gray-100 space-y-6 animate-in zoom-in-95 duration-200">
+            <div className="space-y-2">
+              <h3 className="text-2xl font-black text-gray-900">Cancel & Refund Options</h3>
+              <p className="text-sm text-gray-500 font-medium">
+                This booking has an advance payment of <span className="font-bold text-gray-800">₹{advanceNum}</span>. Choose how to handle it.
+              </p>
+            </div>
+
+            <div className="space-y-4">
+              {/* Option Selector */}
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setRefundOption('Refund')}
+                  className={`py-3 rounded-xl font-bold text-sm transition-all border ${
+                    refundOption === 'Refund'
+                      ? 'bg-blue-50 border-blue-200 text-blue-700 shadow-sm'
+                      : 'bg-gray-50 border-gray-200 text-gray-500'
+                  }`}
+                >
+                  Refund Payment
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRefundOption('Forfeit')}
+                  className={`py-3 rounded-xl font-bold text-sm transition-all border ${
+                    refundOption === 'Forfeit'
+                      ? 'bg-orange-50 border-orange-200 text-orange-700 shadow-sm'
+                      : 'bg-gray-50 border-gray-200 text-gray-500'
+                  }`}
+                >
+                  Forfeit Advance
+                </button>
+              </div>
+
+              {refundOption === 'Refund' && (
+                <div className="space-y-4 animate-in slide-in-from-top-4 duration-200">
+                  {/* Amount Input */}
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-gray-500 uppercase">Refund Amount (₹)</label>
+                    <input
+                      type="number"
+                      min="0.01"
+                      max={advanceNum}
+                      step="0.01"
+                      value={refundAmountInput}
+                      onChange={e => setRefundAmountInput(e.target.value)}
+                      className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold text-lg"
+                    />
+                  </div>
+
+                  {/* Payment Mode */}
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-gray-500 uppercase">Refund Mode</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setRefundPaymentMode('Cash')}
+                        className={`py-3 rounded-xl font-bold text-sm transition-all border ${
+                          refundPaymentMode === 'Cash'
+                            ? 'bg-green-50 border-green-200 text-green-700 shadow-sm'
+                            : 'bg-gray-50 border-gray-200 text-gray-500'
+                        }`}
+                      >
+                        Cash
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRefundPaymentMode('UPI')}
+                        className={`py-3 rounded-xl font-bold text-sm transition-all border ${
+                          refundPaymentMode === 'UPI'
+                            ? 'bg-blue-50 border-blue-200 text-blue-700 shadow-sm'
+                            : 'bg-gray-50 border-gray-200 text-gray-500'
+                        }`}
+                      >
+                        UPI
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowRefundModal(false)}
+                className="w-1/2 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl active:scale-95 transition-transform"
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const amt = refundOption === 'Refund' ? parseFloat(refundAmountInput) || 0 : 0;
+                  if (refundOption === 'Refund' && (amt <= 0 || amt > advanceNum)) {
+                    alert(`Refund amount must be between 0.01 and ₹${advanceNum}`);
+                    return;
+                  }
+                  executeCancel(
+                    amt,
+                    refundOption === 'Refund' ? refundPaymentMode : null,
+                    refundOption === 'Refund' ? 'Refunded' : 'Forfeited'
+                  );
+                }}
+                className="w-1/2 py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl active:scale-95 transition-transform shadow-md shadow-red-200"
+              >
+                Confirm Cancel
+              </button>
+            </div>
           </div>
         </div>
       )}

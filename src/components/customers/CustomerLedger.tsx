@@ -105,7 +105,23 @@ export default function CustomerLedger() {
       acc[curr.booking_number].advance_paid += curr.advance_paid;
       return acc;
     }, {} as Record<string, any>);
-    return Object.values(grouped).sort((a, b) => new Date(b.booking_date).getTime() - new Date(a.booking_date).getTime());
+
+    return Object.values(grouped).map((g: any) => {
+      const hasAllocated = g.items.some((i: any) => i.status === 'Allocated');
+      const hasReady = g.items.some((i: any) => i.status === 'Ready');
+      const allDelivered = g.items.every((i: any) => i.status === 'Delivered');
+      const allCancelled = g.items.every((i: any) => i.status === 'Cancelled');
+      const allFinalized = g.items.every((i: any) => i.status === 'Delivered' || i.status === 'Cancelled');
+
+      if (allDelivered) g.status = 'Delivered';
+      else if (allCancelled) g.status = 'Cancelled';
+      else if (allFinalized) g.status = 'Delivered';
+      else if (hasAllocated) g.status = 'Allocated';
+      else if (hasReady) g.status = 'Ready';
+      else g.status = 'Pending';
+
+      return g;
+    }).sort((a, b) => new Date(b.booking_date).getTime() - new Date(a.booking_date).getTime());
   };
 
   const statusColors: Record<string, string> = {

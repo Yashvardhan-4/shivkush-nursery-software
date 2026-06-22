@@ -20,14 +20,19 @@ interface CartItem {
 
 export default function NewBookingPage() {
   const { t } = useLanguage();
-  const [bookingNumber, setBookingNumber] = useState('BKG-...');
+  const [bookingNumber, setBookingNumber] = useState('BK-...');
   const [currentUser, setCurrentUser] = useState<any>(null);
   
   useEffect(() => {
     const d = new Date();
-    const dateStr = `${d.getFullYear().toString().slice(-2)}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
-    const random = Math.floor(1000 + Math.random() * 9000).toString();
-    setBookingNumber(`BKG-${dateStr}-${random}`);
+    const yy = d.getFullYear().toString().slice(-2);
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const hh = String(d.getHours()).padStart(2, '0');
+    const min = String(d.getMinutes()).padStart(2, '0');
+    const ss = String(d.getSeconds()).padStart(2, '0');
+    const random = Math.floor(100 + Math.random() * 900).toString();
+    setBookingNumber(`BK-${yy}${mm}${dd}-${hh}${min}${ss}-${random}`);
     const userStr = localStorage.getItem('snms_user');
     if (userStr) setCurrentUser(JSON.parse(userStr));
   }, []);
@@ -412,7 +417,7 @@ export default function NewBookingPage() {
           <div className="space-y-2">
             <select value={plantId} onChange={e => { setPlantId(e.target.value); setLotId(''); }} className="w-full p-4 bg-white border border-blue-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold text-lg text-blue-900">
               <option value="">{t('choosePlantPlaceholder')}</option>
-              {plants?.map(p => (
+              {plants?.filter(p => p.active !== false).map(p => (
                 <option key={p.id} value={p.id}>{p.variety ? `${p.plant_name} - ${p.variety}` : p.plant_name} (₹{p.selling_price})</option>
               ))}
             </select>

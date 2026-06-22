@@ -296,11 +296,21 @@ export default function BookingList({ role, userId, userName }: BookingListProps
           : (row.remarks || null);
 
         if (deliverQty === totalQty) {
-           const updated = { ...row, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, sync_status: 'pending' };
+           const updated = { ...row, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, worker_id: userId, sync_status: 'pending' };
            newlyProcessedRows.push(updated);
            ops.push(async () => {
-             await db.bookings.update(row.id, { status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, sync_status: 'pending' });
-             await db.sync_queue.add({ table: 'bookings', action: 'UPDATE', payload: { ...row, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, sync_status: undefined }, created_at: Date.now() });
+             await db.bookings.update(row.id, { status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, worker_id: userId, sync_status: 'pending' });
+             await db.sync_queue.add({ table: 'bookings', action: 'UPDATE', payload: { ...row, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, worker_id: userId, sync_status: undefined }, created_at: Date.now() });
+             
+             // Decrement lot available_stock
+             if (row.lot_id) {
+               const lot = await db.lots.get(row.lot_id);
+               if (lot) {
+                 const newStock = Math.max(0, (lot.available_stock ?? lot.total_quantity) - totalQty);
+                 await db.lots.update(lot.id, { available_stock: newStock });
+                 await db.sync_queue.add({ table: 'lots', action: 'UPDATE', payload: { ...lot, available_stock: newStock, sync_status: undefined }, created_at: Date.now() });
+               }
+             }
              await logAudit(userId, userName, 'DELIVER_BOOKING', 'bookings', row.id, { booking_number: row.booking_number, quantity: totalQty });
            });
         } else {
@@ -308,7 +318,7 @@ export default function BookingList({ role, userId, userName }: BookingListProps
            const remainingQty = totalQty - deliverQty;
            const remainingAmount = row.total_amount - deliveredAmount;
 
-           const updatedDelivered = { ...row, quantity: deliverQty, total_amount: deliveredAmount, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, sync_status: 'pending' };
+           const updatedDelivered = { ...row, quantity: deliverQty, total_amount: deliveredAmount, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, worker_id: userId, sync_status: 'pending' };
            newlyProcessedRows.push(updatedDelivered);
            
            const newPendingId = generateId();
@@ -316,8 +326,18 @@ export default function BookingList({ role, userId, userName }: BookingListProps
            newlyProcessedRows.push(newPending);
 
            ops.push(async () => {
-             await db.bookings.update(row.id, { quantity: deliverQty, total_amount: deliveredAmount, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, sync_status: 'pending' });
-             await db.sync_queue.add({ table: 'bookings', action: 'UPDATE', payload: { ...row, quantity: deliverQty, total_amount: deliveredAmount, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, sync_status: undefined }, created_at: Date.now() });
+             await db.bookings.update(row.id, { quantity: deliverQty, total_amount: deliveredAmount, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, worker_id: userId, sync_status: 'pending' });
+             await db.sync_queue.add({ table: 'bookings', action: 'UPDATE', payload: { ...row, quantity: deliverQty, total_amount: deliveredAmount, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, worker_id: userId, sync_status: undefined }, created_at: Date.now() });
+             
+             // Decrement lot available_stock
+             if (row.lot_id) {
+               const lot = await db.lots.get(row.lot_id);
+               if (lot) {
+                 const newStock = Math.max(0, (lot.available_stock ?? lot.total_quantity) - deliverQty);
+                 await db.lots.update(lot.id, { available_stock: newStock });
+                 await db.sync_queue.add({ table: 'lots', action: 'UPDATE', payload: { ...lot, available_stock: newStock, sync_status: undefined }, created_at: Date.now() });
+               }
+             }
              await logAudit(userId, userName, 'DELIVER_BOOKING', 'bookings', row.id, { booking_number: row.booking_number, quantity: deliverQty });
              
              await db.bookings.add(newPending);

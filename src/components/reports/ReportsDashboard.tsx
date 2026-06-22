@@ -159,6 +159,9 @@ function ReconciliationTab() {
   // ── 3. Bookings Created Today (Advance) ──
   const newBookings = bookingsRaw.filter(b => b.created_at && toLocalDateStr(b.created_at) === todayStr);
 
+  // ── 4. Bookings Refunded Today ──
+  const refundedBookings = bookingsRaw.filter(b => b.status === 'Cancelled' && b.refund_status === 'Refunded' && b.refund_date === todayStr);
+
   // Group by sale_number FIRST so that Split-payment multi-item sales only contribute
   // cash_amount / upi_amount once.  Each row for the same sale stores the *whole-sale*
   // split amounts (not per-item), so summing row-by-row would multiply them by item count.
@@ -195,19 +198,31 @@ function ReconciliationTab() {
   }, 0);
 
   const advCash = newBookings.reduce((sum, b) => {
+    if ((b.advance_paid || 0) <= 0) return sum;
     if (b.advance_payment_mode === 'Cash' || !b.advance_payment_mode) return sum + (b.advance_paid || 0);
     if (b.advance_payment_mode === 'Split') return sum + (b.advance_cash_amount || 0);
     return sum;
   }, 0);
 
   const advUpi = newBookings.reduce((sum, b) => {
+    if ((b.advance_paid || 0) <= 0) return sum;
     if (b.advance_payment_mode === 'UPI') return sum + (b.advance_paid || 0);
     if (b.advance_payment_mode === 'Split') return sum + (b.advance_upi_amount || 0);
     return sum;
   }, 0);
 
-  const cashTotal = dsCash + delCash + advCash;
-  const upiTotal = dsUpi + delUpi + advUpi;
+  const refCash = refundedBookings.reduce((sum, b) => {
+    if (b.refund_payment_mode === 'Cash') return sum + (b.refund_amount || 0);
+    return sum;
+  }, 0);
+
+  const refUpi = refundedBookings.reduce((sum, b) => {
+    if (b.refund_payment_mode === 'UPI') return sum + (b.refund_amount || 0);
+    return sum;
+  }, 0);
+
+  const cashTotal = dsCash + delCash + advCash - refCash;
+  const upiTotal = dsUpi + delUpi + advUpi - refUpi;
   const grandTotal = cashTotal + upiTotal;
 
   const plantMap = new Map(plantsRaw.map((p) => [p.id, p]));
@@ -227,7 +242,7 @@ function ReconciliationTab() {
   // Combine events for the list
   type CollectionEvent = {
     id: string;
-    type: 'Direct Sale' | 'Booking Delivery' | 'Booking Advance';
+    type: 'Direct Sale' | 'Booking Delivery' | 'Booking Advance' | 'Booking Refund';
     plant_name: string;
     customer_name: string;
     quantity: number;
@@ -340,6 +355,34 @@ function ReconciliationTab() {
         cash_amount: totalCash,
         upi_amount: totalUpi,
         timestamp: new Date(first.created_at || Date.now()).getTime(),
+        order_number: bookingNo,
+        worker_name: userMap.get(first.worker_id || '') || 'Unknown Worker',
+      });
+    }
+  });
+
+  // Group Booking Refunds by booking_number
+  const refundedBookingsByNumber: Record<string, typeof refundedBookings> = {};
+  refundedBookings.forEach(b => {
+    if (!refundedBookingsByNumber[b.booking_number]) refundedBookingsByNumber[b.booking_number] = [];
+    refundedBookingsByNumber[b.booking_number].push(b);
+  });
+
+  Object.entries(refundedBookingsByNumber).forEach(([bookingNo, items]) => {
+    const first = items[0];
+    const totalQty = items.reduce((sum, item) => sum + item.quantity, 0);
+    const totalRefund = items.reduce((sum, item) => sum + (item.refund_amount || 0), 0);
+    if (totalRefund > 0) {
+      const plantNames = items.map(item => `${getPlantName(item.plant_id)} ×${item.quantity}`).join(', ');
+      collectionEvents.push({
+        id: `ref_${bookingNo}`,
+        type: 'Booking Refund',
+        plant_name: plantNames,
+        customer_name: first.customer_name || 'Customer',
+        quantity: totalQty,
+        amount: -totalRefund,
+        payment_mode: first.refund_payment_mode || 'Cash',
+        timestamp: first.refund_date ? new Date(first.refund_date + 'T23:59:59').getTime() : Date.now(),
         order_number: bookingNo,
         worker_name: userMap.get(first.worker_id || '') || 'Unknown Worker',
       });
@@ -517,11 +560,11 @@ function ProductionDemandTab() {
 
     const totalStock = lots
       .filter((l) => l.plant_id === plant.id && l.status !== 'Completed')
-      .reduce((sum, l) => sum + l.total_quantity, 0);
+      .reduce((sum, l) => sum + (l.available_stock ?? l.total_quantity), 0);
 
     const totalGrowing = Math.max(0, totalStock - allottedToBookings);
 
-    const deficit = Math.max(0, totalBooked - totalGrowing);
+    const deficit = Math.max(0, rawTotalBooked - totalStock);
 
     return {
       id: plant.id,

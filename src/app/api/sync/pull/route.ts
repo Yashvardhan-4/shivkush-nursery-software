@@ -11,7 +11,35 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Fetch full snapshot of all relevant tables concurrently
+    const { searchParams } = new URL(request.url);
+    const lastPulledAt = searchParams.get('last_pulled_at');
+    const serverTime = new Date().toISOString();
+
+    let plantsQuery = supabaseAdmin.from('plants').select('*');
+    let lotsQuery = supabaseAdmin.from('lots').select('*');
+    let bookingsQuery = supabaseAdmin.from('bookings').select('*');
+    let allotmentsQuery = supabaseAdmin.from('allotments').select('*');
+    let directSalesQuery = supabaseAdmin.from('direct_sales').select('*');
+    let attendanceQuery = supabaseAdmin.from('attendance').select('*');
+    let auditLogsQuery = supabaseAdmin.from('audit_logs').select('*');
+    let customersQuery = supabaseAdmin.from('customers').select('*');
+    let usersQuery = supabaseAdmin.from('users').select('id, name, role, updated_at');
+    let paymentQrsQuery = supabaseAdmin.from('payment_qrs').select('*');
+
+    if (lastPulledAt) {
+      plantsQuery = plantsQuery.gt('updated_at', lastPulledAt);
+      lotsQuery = lotsQuery.gt('updated_at', lastPulledAt);
+      bookingsQuery = bookingsQuery.gt('updated_at', lastPulledAt);
+      allotmentsQuery = allotmentsQuery.gt('updated_at', lastPulledAt);
+      directSalesQuery = directSalesQuery.gt('updated_at', lastPulledAt);
+      attendanceQuery = attendanceQuery.gt('updated_at', lastPulledAt);
+      auditLogsQuery = auditLogsQuery.gt('updated_at', lastPulledAt);
+      customersQuery = customersQuery.gt('updated_at', lastPulledAt);
+      usersQuery = usersQuery.gt('updated_at', lastPulledAt);
+      paymentQrsQuery = paymentQrsQuery.gt('updated_at', lastPulledAt);
+    }
+
+    // Fetch snapshot of tables concurrently
     const [
       { data: plants },
       { data: lots },
@@ -24,20 +52,21 @@ export async function GET(request: Request) {
       { data: users },
       { data: payment_qrs }
     ] = await Promise.all([
-      supabaseAdmin.from('plants').select('*').limit(5000),
-      supabaseAdmin.from('lots').select('*').limit(5000),
-      supabaseAdmin.from('bookings').select('*').limit(5000),
-      supabaseAdmin.from('allotments').select('*').limit(5000),
-      supabaseAdmin.from('direct_sales').select('*').limit(5000),
-      supabaseAdmin.from('attendance').select('*').limit(5000),
-      supabaseAdmin.from('audit_logs').select('*').order('created_at', { ascending: false }).limit(5000),
-      supabaseAdmin.from('customers').select('*').limit(5000),
-      supabaseAdmin.from('users').select('id, name, role').limit(100),
-      supabaseAdmin.from('payment_qrs').select('*').limit(50)
+      plantsQuery.limit(5000),
+      lotsQuery.limit(5000),
+      bookingsQuery.limit(5000),
+      allotmentsQuery.limit(5000),
+      directSalesQuery.limit(5000),
+      attendanceQuery.limit(5000),
+      auditLogsQuery.order('created_at', { ascending: false }).limit(5000),
+      customersQuery.limit(5000),
+      usersQuery.limit(100),
+      paymentQrsQuery.limit(50)
     ]);
 
     return NextResponse.json({
       success: true,
+      server_time: serverTime,
       data: {
         plants: plants || [],
         lots: lots || [],
