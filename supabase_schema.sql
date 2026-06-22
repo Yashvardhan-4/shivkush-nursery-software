@@ -42,6 +42,7 @@ CREATE TABLE public.plants (
 CREATE TABLE public.lots (
   id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
   lot_number text UNIQUE NOT NULL,
+  lot_name text,
   plant_id uuid REFERENCES public.plants(id) ON DELETE CASCADE NOT NULL,
   total_quantity integer NOT NULL,
   initial_quantity integer NOT NULL DEFAULT 0,
@@ -269,10 +270,11 @@ BEGIN
 
         ELSIF tbl = 'lots' THEN
             IF act = 'INSERT' THEN
-                INSERT INTO public.lots (id, lot_number, plant_id, total_quantity, initial_quantity, available_stock, ready_date, status, notes, created_at)
+                INSERT INTO public.lots (id, lot_number, lot_name, plant_id, total_quantity, initial_quantity, available_stock, ready_date, status, notes, created_at)
                 VALUES (
                     COALESCE(item_id, uuid_generate_v4()),
                     p->>'lot_number',
+                    p->>'lot_name',
                     (p->>'plant_id')::uuid,
                     (p->>'total_quantity')::integer,
                     COALESCE((p->>'initial_quantity')::integer, (p->>'total_quantity')::integer),
@@ -283,6 +285,7 @@ BEGIN
                     COALESCE(NULLIF(p->>'created_at','')::timestamp with time zone, now())
                 ) ON CONFLICT (id) DO UPDATE SET
                     lot_number = EXCLUDED.lot_number,
+                    lot_name = EXCLUDED.lot_name,
                     plant_id = EXCLUDED.plant_id,
                     total_quantity = EXCLUDED.total_quantity,
                     initial_quantity = EXCLUDED.initial_quantity,
@@ -293,6 +296,7 @@ BEGIN
             ELSIF act = 'UPDATE' THEN
                 UPDATE public.lots SET
                     lot_number = COALESCE(p->>'lot_number', lot_number),
+                    lot_name = COALESCE(p->>'lot_name', lot_name),
                     plant_id = COALESCE((p->>'plant_id')::uuid, plant_id),
                     total_quantity = COALESCE((p->>'total_quantity')::integer, total_quantity),
                     initial_quantity = COALESCE((p->>'initial_quantity')::integer, initial_quantity),

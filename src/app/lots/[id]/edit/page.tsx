@@ -15,6 +15,7 @@ export default function EditLotPage({ params }: Props) {
   const router = useRouter();
 
   const [lotNumber, setLotNumber] = useState('');
+  const [lotName, setLotName] = useState('');
   const [availableStock, setAvailableStock] = useState('');
   const [readyDate, setReadyDate] = useState('');
   const [status, setStatus] = useState<'Growing' | 'Ready' | 'Completed'>('Growing');
@@ -36,12 +37,14 @@ export default function EditLotPage({ params }: Props) {
   }, [id]);
 
   const sales = useLiveQuery(() => db.direct_sales.where('lot_id').equals(id).toArray(), [id]);
+  const deliveredBookings = useLiveQuery(() => db.bookings.where('lot_id').equals(id).filter(b => b.status === 'Delivered').toArray(), [id]);
 
   // Populate form when lot loads
   useEffect(() => {
     if (lot === null) { setNotFound(true); return; }
     if (!lot) return;
     setLotNumber(lot.lot_number);
+    setLotName(lot.lot_name || '');
     setAvailableStock(String(lot.available_stock ?? lot.total_quantity));
     setReadyDate(lot.ready_date);
     setStatus(lot.status);
@@ -50,16 +53,14 @@ export default function EditLotPage({ params }: Props) {
 
   const allottedQty = allotments?.reduce((sum, a) => sum + a.quantity, 0) || 0;
   const soldQty = sales?.reduce((sum, s) => sum + s.quantity, 0) || 0;
+  const deliveredQty = deliveredBookings?.reduce((sum, b) => sum + b.quantity, 0) || 0;
+  const usedQty = allottedQty + soldQty + deliveredQty;
   const newQty = parseInt(availableStock) || 0;
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (newQty < allottedQty + soldQty) {
-      alert(`Cannot reduce available stock below ${allottedQty + soldQty} — ${allottedQty} are allotted to bookings and ${soldQty} are already sold/delivered.`);
-      return;
-    }
-    if (newQty > (lot?.initial_quantity ?? lot?.total_quantity ?? 0)) {
-      alert(`Cannot increase available stock above initial quantity (${lot?.initial_quantity ?? lot?.total_quantity ?? 0}).`);
+    if (newQty < usedQty) {
+      alert(`Cannot reduce available stock below ${usedQty} — ${allottedQty} allotted, ${soldQty} sold directly, ${deliveredQty} delivered.`);
       return;
     }
     setLoading(true);
@@ -71,6 +72,7 @@ export default function EditLotPage({ params }: Props) {
       const updates = {
         ...lot,
         lot_number: lotNumber,
+        lot_name: lotName || undefined,
         available_stock: newQty,
         ready_date: readyDate,
         status,
@@ -85,6 +87,7 @@ export default function EditLotPage({ params }: Props) {
       });
       await logAudit(user.id || 'owner', user.name || 'Owner', 'UPDATE_LOT', 'lots', id, {
         lot_number: lotNumber,
+        lot_name: lotName,
         available_stock: newQty,
         ready_date: readyDate,
         status,
@@ -98,8 +101,8 @@ export default function EditLotPage({ params }: Props) {
   };
 
   const handleDelete = async () => {
-    if (allottedQty > 0 || soldQty > 0) {
-      alert(`Cannot delete this lot. It has ${allottedQty} allotted plants and ${soldQty} sold plants.`);
+    if (usedQty > 0) {
+      alert(`Cannot delete this lot. It has ${usedQty} plants already committed or sold.`);
       return;
     }
     
@@ -188,15 +191,24 @@ export default function EditLotPage({ params }: Props) {
       )}
 
       <form onSubmit={handleSave} className="space-y-5">
-        {/* Lot Number */}
         <div className="space-y-2">
-          <label className="text-xs font-black text-gray-500 uppercase tracking-wider">Lot Number</label>
+          <label className="text-xs font-black text-gray-500 uppercase tracking-wider">System Lot ID</label>
           <input
-            required
+            readOnly
             type="text"
             value={lotNumber}
-            onChange={e => setLotNumber(e.target.value)}
+            className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl outline-none font-bold text-gray-500"
+          />
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-xs font-black text-gray-500 uppercase tracking-wider">Lot Name (Optional)</label>
+          <input
+            type="text"
+            value={lotName}
+            onChange={e => setLotName(e.target.value)}
             className="w-full p-4 bg-white border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-bold"
+            placeholder="e.g. Summer Batch"
           />
         </div>
 
@@ -248,20 +260,19 @@ export default function EditLotPage({ params }: Props) {
         {/* Available Stock */}
         <div className="space-y-2">
           <label className="text-xs font-black text-gray-500 uppercase tracking-wider">
-            Available Stock / Surviving Saplings
-            {allottedQty > 0 && <span className="ml-2 text-blue-600 font-semibold normal-case">(min {allottedQty} — already allotted)</span>}
+            Total Surviving Saplings
+            {usedQty > 0 && <span className="ml-2 text-blue-600 font-semibold normal-case">(min {usedQty} — already committed)</span>}
           </label>
           <input
             required
             type="number"
-            min={allottedQty || 0}
-            max={lot.initial_quantity ?? lot.total_quantity}
+            min={usedQty}
             value={availableStock}
             onChange={e => setAvailableStock(e.target.value)}
             className="w-full p-4 bg-white border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-bold text-xl"
           />
           <p className="text-xs font-semibold text-gray-500">
-            Initial: {lot.initial_quantity ?? lot.total_quantity} • Wasted: {(lot.initial_quantity ?? lot.total_quantity) - newQty}
+            Initial: {lot.initial_quantity ?? lot.total_quantity} • Used: {usedQty}
           </p>
         </div>
 
@@ -276,7 +287,7 @@ export default function EditLotPage({ params }: Props) {
             className="w-full p-4 bg-white border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-medium resize-none"
           />
           <div className="pt-6 border-t border-gray-100 flex items-center justify-between">
-          {allottedQty === 0 && soldQty === 0 ? (
+          {usedQty === 0 ? (
             <button
               type="button"
               onClick={handleDelete}

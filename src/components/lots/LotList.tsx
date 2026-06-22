@@ -156,10 +156,11 @@ export default function LotList() {
               <div className="pl-2">
                 <div className="flex justify-between items-start mb-4">
                   <div>
-                    <h3 className="font-black text-gray-900 text-lg">{lot.lot_number}</h3>
-                    <p className="text-sm font-bold text-gray-500">{plantName} · {plant?.variety}</p>
+                    <h3 className="font-black text-gray-900 text-lg">{lot.lot_name || lot.lot_number}</h3>
+                    <p className="text-sm font-bold text-gray-500 mt-0.5">{plant?.plant_name} · {plant?.variety}</p>
                   </div>
                   <div className="flex items-center gap-2">
+                    {lot.lot_name && <span className="text-xs font-semibold text-gray-400 bg-gray-100 px-2 py-1 rounded-md">{lot.lot_number}</span>}
                     <span className={`px-3 py-1 rounded-full text-xs font-black ${statusColors[lot.status] || 'bg-gray-100 text-gray-600'}`}>
                       {isReady && lot.status === 'Growing'
                         ? t('overdueBadge')

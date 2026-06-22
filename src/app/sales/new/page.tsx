@@ -24,9 +24,10 @@ export default function NewDirectSalePage() {
   const [currentUser, setCurrentUser] = useState<any>(null);
   
   useEffect(() => {
-    const timestamp = Date.now().toString(36).toUpperCase();
-    const random = Math.random().toString(36).slice(2, 6).toUpperCase();
-    setSaleNumber(`SALE-${timestamp}-${random}`);
+    const d = new Date();
+    const dateStr = `${d.getFullYear().toString().slice(-2)}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+    const random = Math.floor(1000 + Math.random() * 9000).toString();
+    setSaleNumber(`SALE-${dateStr}-${random}`);
     const userStr = localStorage.getItem('snms_user');
     if (userStr) setCurrentUser(JSON.parse(userStr));
   }, []);
@@ -141,7 +142,7 @@ export default function NewDirectSalePage() {
     const freeStock = computeFreeStockForLot(selectedLotId, selectedPlant.id);
     if (qty > freeStock) {
       const lot = lots?.find(l => l.id === selectedLotId);
-      alert(`Only ${freeStock} plants free in lot ${lot?.lot_number || ''}. Some are reserved for bookings.`);
+      alert(`Only ${freeStock} plants free in lot ${lot?.lot_name || lot?.lot_number || ''}. Some are reserved for bookings.`);
       return;
     }
 
@@ -157,7 +158,7 @@ export default function NewDirectSalePage() {
       plantId: selectedPlant.id,
       plantName: selectedPlant.variety ? `${selectedPlant.plant_name} - ${selectedPlant.variety}` : selectedPlant.plant_name,
       lotId: selectedLotId,
-      lotNumber: lot?.lot_number || '',
+      lotNumber: lot?.lot_name || lot?.lot_number || '',
       quantity: qty,
       price,
       amount: price * qty
@@ -256,49 +257,50 @@ export default function NewDirectSalePage() {
       };
     });
 
-    if (customerPhone && customerName) {
-      let cust = await db.customers.where('mobile').equals(customerPhone).first();
-      if (!cust) {
-        cust = { id: generateId(), name: customerName, mobile: customerPhone, city: null };
-        await db.customers.add(cust);
-      } else {
-        cust.name = customerName;
-        await db.customers.put(cust);
+    await db.transaction('rw', [db.customers, db.direct_sales, db.lots, db.sync_queue, db.audit_logs], async () => {
+      if (customerPhone && customerName) {
+        let cust = await db.customers.where('mobile').equals(customerPhone).first();
+        if (!cust) {
+          cust = { id: generateId(), name: customerName, mobile: customerPhone, city: null };
+          await db.customers.add(cust);
+        } else {
+          cust.name = customerName;
+          await db.customers.put(cust);
+        }
+        await db.sync_queue.add({ table: 'customers', action: 'INSERT', payload: cust, created_at: Date.now() });
       }
-      await db.sync_queue.add({ table: 'customers', action: 'INSERT', payload: cust, created_at: Date.now() });
-    }
 
-    await db.direct_sales.bulkAdd(newSales);
-    for (const s of newSales) {
-      await db.sync_queue.add({ table: 'direct_sales', action: 'INSERT', payload: s, created_at: Date.now() });
-    }
+      await db.direct_sales.bulkAdd(newSales);
+      for (const s of newSales) {
+        await db.sync_queue.add({ table: 'direct_sales', action: 'INSERT', payload: s, created_at: Date.now() });
+      }
 
-    // Auto-archive sold out lots
-    const lotUpdates = [];
-    for (const item of cart) {
-      const lot = lots?.find(l => l.id === item.lotId);
-      if (lot && lot.status !== 'Completed') {
-        const freeStock = computeFreeStockForLot(item.lotId, item.plantId);
-        if (freeStock <= 0) {
-          lot.status = 'Completed';
-          lotUpdates.push(lot);
+      // Auto-archive sold out lots
+      const lotUpdates = [];
+      for (const item of cart) {
+        const lot = lots?.find(l => l.id === item.lotId);
+        if (lot && lot.status !== 'Completed') {
+          const freeStock = computeFreeStockForLot(item.lotId, item.plantId);
+          if (freeStock <= 0) {
+            lot.status = 'Completed';
+            lotUpdates.push(lot);
+          }
         }
       }
-    }
 
-    if (lotUpdates.length > 0) {
-      const uniqueLotUpdates = Array.from(new Map(lotUpdates.map(l => [l.id, l])).values());
-      await db.lots.bulkPut(uniqueLotUpdates);
-      for (const l of uniqueLotUpdates) {
-        await db.sync_queue.add({ table: 'lots', action: 'UPDATE', payload: l, created_at: Date.now() });
+      if (lotUpdates.length > 0) {
+        const uniqueLotUpdates = Array.from(new Map(lotUpdates.map(l => [l.id, l])).values());
+        await db.lots.bulkPut(uniqueLotUpdates);
+        for (const l of uniqueLotUpdates) {
+          await db.sync_queue.add({ table: 'lots', action: 'UPDATE', payload: l, created_at: Date.now() });
+        }
       }
-    }
 
-
-    // Audit log for the entire sale
-    await logAudit(user.id, user.name, 'CREATE_SALE', 'direct_sales', saleNumber, {
-      totalAmount,
-      plantCount: cart.length
+      // Audit log for the entire sale
+      await logAudit(user.id, user.name, 'CREATE_SALE', 'direct_sales', saleNumber, {
+        totalAmount,
+        plantCount: cart.length
+      });
     });
 
     window.dispatchEvent(new Event('online'));
@@ -419,7 +421,7 @@ export default function NewDirectSalePage() {
                         const free = computeFreeStockForLot(l.id, plantId);
                         return (
                           <option key={l.id} value={l.id}>
-                            {l.lot_number} — {free} free{free <= 0 ? ' (fully reserved)' : ''}
+                            {l.lot_name || l.lot_number} — {free} free{free <= 0 ? ' (fully reserved)' : ''}
                           </option>
                         );
                       })}

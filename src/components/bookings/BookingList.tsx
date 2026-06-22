@@ -115,7 +115,7 @@ export default function BookingList({ role, userId, userName }: BookingListProps
   const getLotNumber = (lotId: string | null) => {
     if (!lotId) return t('noLotAssigned');
     const lot = lots?.find(l => l.id === lotId);
-    return lot ? lot.lot_number : t('noLotAssigned');
+    return lot ? (lot.lot_name || lot.lot_number) : t('noLotAssigned');
   };
 
   // Group bookings by booking_number
@@ -191,24 +191,26 @@ export default function BookingList({ role, userId, userName }: BookingListProps
     try {
       const row = await db.bookings.get(id);
       if (!row) return;
-      await db.bookings.update(row.id, { status: 'Cancelled', sync_status: 'pending' });
+      await db.transaction('rw', [db.bookings, db.allotments, db.sync_queue, db.audit_logs], async () => {
+        await db.bookings.update(row.id, { status: 'Cancelled', sync_status: 'pending' });
 
-      // Release allotments so lot inventory is freed (Fix #006)
-      const rowAllotments = await db.allotments.where('booking_id').equals(id).toArray();
-      for (const a of rowAllotments) {
-        await db.allotments.delete(a.id);
-        await db.sync_queue.add({ table: 'allotments', action: 'DELETE', payload: { id: a.id }, created_at: Date.now() });
-      }
+        // Release allotments so lot inventory is freed (Fix #006)
+        const rowAllotments = await db.allotments.where('booking_id').equals(id).toArray();
+        for (const a of rowAllotments) {
+          await db.allotments.delete(a.id);
+          await db.sync_queue.add({ table: 'allotments', action: 'DELETE', payload: { id: a.id }, created_at: Date.now() });
+        }
 
-      await logAudit(userId, userName, 'CANCEL_BOOKING', 'bookings', row.id, {
-        booking_number: row.booking_number,
-        customer_name: row.customer_name,
-      });
-      await db.sync_queue.add({
-        table: 'bookings',
-        action: 'UPDATE',
-        payload: { ...row, status: 'Cancelled', sync_status: undefined },
-        created_at: Date.now(),
+        await logAudit(userId, userName, 'CANCEL_BOOKING', 'bookings', row.id, {
+          booking_number: row.booking_number,
+          customer_name: row.customer_name,
+        });
+        await db.sync_queue.add({
+          table: 'bookings',
+          action: 'UPDATE',
+          payload: { ...row, status: 'Cancelled', sync_status: undefined },
+          created_at: Date.now(),
+        });
       });
     } finally {
       setActionLoading(null);
@@ -408,39 +410,41 @@ export default function BookingList({ role, userId, userName }: BookingListProps
          }
       }
 
-      for (const op of ops) {
-         await op();
-      }
+      await db.transaction('rw', [db.bookings, db.allotments, db.lots, db.sync_queue, db.audit_logs], async () => {
+        for (const op of ops) {
+           await op();
+        }
 
-      // Check for sold-out lots to auto-archive
-      if (direct_sales && allotments && lots && bookings) {
-         const deliveredLots = new Set(newlyProcessedRows.filter(r => r.status === 'Delivered' && r.lot_id).map(r => r.lot_id));
-         for (const lId of deliveredLots) {
-             const lot = lots.find(l => l.id === lId);
-             if (lot && lot.status !== 'Completed') {
-                const currentBookings = await db.bookings.toArray();
-                const currentAllotments = await db.allotments.toArray();
-                const activeBookingIds = new Set(
-                  currentBookings.filter(b => b.plant_id === lot.plant_id && b.status !== 'Delivered' && b.status !== 'Cancelled').map(b => b.id)
-                );
-                const allottedQty = currentAllotments.filter(a => a.lot_id === lId && activeBookingIds.has(a.booking_id)).reduce((s,a) => s + a.quantity, 0);
-                const deliveredQty = currentBookings.filter(b => b.lot_id === lId && b.status === 'Delivered').reduce((s,b) => s + b.quantity, 0);
-                const salesQty = direct_sales.filter(s => s.lot_id === lId).reduce((s, sale) => s + sale.quantity, 0);
-                const freeStock = (lot.available_stock ?? lot.total_quantity) - allottedQty - deliveredQty - salesQty;
-                
-                if (freeStock <= 0) {
-                   const updatedLot = { ...lot, status: 'Completed' as const };
-                   await db.lots.put(updatedLot);
-                   await db.sync_queue.add({ table: 'lots', action: 'UPDATE', payload: { ...updatedLot, sync_status: undefined }, created_at: Date.now() });
-                }
-             }
-         }
-      }
+        // Check for sold-out lots to auto-archive
+        if (direct_sales && allotments && lots && bookings) {
+           const deliveredLots = new Set(newlyProcessedRows.filter(r => r.status === 'Delivered' && r.lot_id).map(r => r.lot_id));
+           for (const lId of deliveredLots) {
+               const lot = lots.find(l => l.id === lId);
+               if (lot && lot.status !== 'Completed') {
+                  const currentBookings = await db.bookings.toArray();
+                  const currentAllotments = await db.allotments.toArray();
+                  const activeBookingIds = new Set(
+                    currentBookings.filter(b => b.plant_id === lot.plant_id && b.status !== 'Delivered' && b.status !== 'Cancelled').map(b => b.id)
+                  );
+                  const allottedQty = currentAllotments.filter(a => a.lot_id === lId && activeBookingIds.has(a.booking_id)).reduce((s,a) => s + a.quantity, 0);
+                  const deliveredQty = currentBookings.filter(b => b.lot_id === lId && b.status === 'Delivered').reduce((s,b) => s + b.quantity, 0);
+                  const salesQty = direct_sales.filter(s => s.lot_id === lId).reduce((s, sale) => s + sale.quantity, 0);
+                  const freeStock = (lot.available_stock ?? lot.total_quantity) - allottedQty - deliveredQty - salesQty;
+                  
+                  if (freeStock <= 0) {
+                     const updatedLot = { ...lot, status: 'Completed' as const };
+                     await db.lots.put(updatedLot);
+                     await db.sync_queue.add({ table: 'lots', action: 'UPDATE', payload: { ...updatedLot, sync_status: undefined }, created_at: Date.now() });
+                  }
+               }
+           }
+        }
 
-      await logAudit(userId, userName, 'DELIVER_BOOKING', 'bookings', bookingNumber, {
-         customer_name: deliveryModal.customerName,
-         payment_mode: finalPaymentMode,
-         amount_collected: amountCollectedNow
+        await logAudit(userId, userName, 'DELIVER_BOOKING', 'bookings', bookingNumber, {
+           customer_name: deliveryModal.customerName,
+           payment_mode: finalPaymentMode,
+           amount_collected: amountCollectedNow
+        });
       });
 
     } finally {

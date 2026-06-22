@@ -26,6 +26,7 @@ export interface PaymentQR {
 export interface Lot {
   id: string;
   lot_number: string;
+  lot_name?: string;
   plant_id: string;
   total_quantity: number;
   initial_quantity?: number;
@@ -225,6 +226,21 @@ db.version(7).stores({
 db.version(8).stores({
   plants: 'id, plant_name, variety, category, active',
   lots: 'id, lot_number, plant_id, status',
+  customers: 'id, mobile, name',
+  users: 'id, name, role',
+  bookings: 'id, booking_number, customer_name, customer_phone, plant_id, lot_id, status, sync_status, created_at, assigned_to',
+  allotments: 'id, booking_id, lot_id, sync_status',
+  direct_sales: 'id, sale_number, plant_id, lot_id, sync_status, created_at, assigned_to',
+  attendance: 'id, worker_id, date, status',
+  audit_logs: '++id, user_id, action, table_name, record_id, created_at',
+  sync_queue: '++id, table, action, created_at',
+  payment_qrs: 'id, active, sync_status'
+});
+
+// Version 9: Added lot_name to lots table
+db.version(9).stores({
+  plants: 'id, plant_name, variety, category, active',
+  lots: 'id, lot_number, lot_name, plant_id, status',
   customers: 'id, mobile, name',
   users: 'id, name, role',
   bookings: 'id, booking_number, customer_name, customer_phone, plant_id, lot_id, status, sync_status, created_at, assigned_to',

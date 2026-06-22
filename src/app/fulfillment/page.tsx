@@ -52,18 +52,20 @@ export default function FulfillmentPage() {
       const sale = await db.direct_sales.get(id);
       if (!sale) return;
 
-      const updates = { fulfillment_status: 'Fulfilled' as const, sync_status: 'pending' as const };
-      await db.direct_sales.update(id, updates);
-      await db.sync_queue.add({
-        table: 'direct_sales',
-        action: 'UPDATE',
-        payload: { ...sale, ...updates, sync_status: undefined },
-        created_at: Date.now()
-      });
+      await db.transaction('rw', [db.direct_sales, db.bookings, db.allotments, db.lots, db.sync_queue, db.audit_logs], async () => {
+        const updates = { fulfillment_status: 'Fulfilled' as const, sync_status: 'pending' as const };
+        await db.direct_sales.update(id, updates);
+        await db.sync_queue.add({
+          table: 'direct_sales',
+          action: 'UPDATE',
+          payload: { ...sale, ...updates, sync_status: undefined },
+          created_at: Date.now()
+        });
 
-      const user = JSON.parse(localStorage.getItem('snms_user') || '{}');
-      await logAudit(user.id, user.name, 'FULFILL_SALE', 'direct_sales', id, { note: 'Handed over to customer' });
-      await checkSoldOutLot(sale.lot_id, sale.plant_id);
+        const user = JSON.parse(localStorage.getItem('snms_user') || '{}');
+        await logAudit(user.id, user.name, 'FULFILL_SALE', 'direct_sales', id, { note: 'Handed over to customer' });
+        await checkSoldOutLot(sale.lot_id, sale.plant_id);
+      });
       window.dispatchEvent(new Event('online'));
     } catch (e) {
       console.error(e);
@@ -76,18 +78,20 @@ export default function FulfillmentPage() {
       const booking = await db.bookings.get(id);
       if (!booking) return;
 
-      const updates = { status: 'Delivered' as const, sync_status: 'pending' as const };
-      await db.bookings.update(id, updates);
-      await db.sync_queue.add({
-        table: 'bookings',
-        action: 'UPDATE',
-        payload: { ...booking, ...updates, sync_status: undefined },
-        created_at: Date.now()
-      });
+      await db.transaction('rw', [db.bookings, db.direct_sales, db.allotments, db.lots, db.sync_queue, db.audit_logs], async () => {
+        const updates = { status: 'Delivered' as const, sync_status: 'pending' as const };
+        await db.bookings.update(id, updates);
+        await db.sync_queue.add({
+          table: 'bookings',
+          action: 'UPDATE',
+          payload: { ...booking, ...updates, sync_status: undefined },
+          created_at: Date.now()
+        });
 
-      const user = JSON.parse(localStorage.getItem('snms_user') || '{}');
-      await logAudit(user.id, user.name, 'DELIVER_BOOKING', 'bookings', id, { note: 'Handed over to customer' });
-      await checkSoldOutLot(booking.lot_id, booking.plant_id);
+        const user = JSON.parse(localStorage.getItem('snms_user') || '{}');
+        await logAudit(user.id, user.name, 'DELIVER_BOOKING', 'bookings', id, { note: 'Handed over to customer' });
+        await checkSoldOutLot(booking.lot_id, booking.plant_id);
+      });
       window.dispatchEvent(new Event('online'));
     } catch (e) {
       console.error(e);

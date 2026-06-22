@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, logAudit, generateId } from '@/lib/db';
@@ -113,7 +113,14 @@ function AllotmentRow({
 }) {
   const { t } = useLanguage();
   const [selectedLotId, setSelectedLotId] = useState('');
-  const [qty, setQty] = useState(booking.quantity);
+  
+  const bookingAllots = allotments.filter((a) => a.booking_id === booking.id);
+  const totalAllotted = bookingAllots.reduce((sum, a) => sum + a.quantity, 0);
+  const remainingQty = Math.max(0, booking.quantity - totalAllotted);
+
+  const [qty, setQty] = useState(remainingQty);
+  useEffect(() => setQty(remainingQty), [remainingQty]);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -134,123 +141,45 @@ function AllotmentRow({
     setError('');
     try {
       const user = getUser();
-      const allotment = allotments.find((a) => a.booking_id === booking.id);
+      const bookingAllots = allotments.filter((a) => a.booking_id === booking.id);
 
-      // 1. Delete allotment record
-      if (allotment) {
-        await db.allotments.delete(allotment.id);
+      await db.transaction('rw', [db.allotments, db.bookings, db.sync_queue, db.audit_logs], async () => {
+        // 1. Delete all allotment records
+        for (const allotment of bookingAllots) {
+          await db.allotments.delete(allotment.id);
+          await db.sync_queue.add({
+            table: 'allotments',
+            action: 'DELETE',
+            payload: { id: allotment.id },
+            created_at: Date.now(),
+          });
+        }
+
+        // 2. Reset booking status to Pending
+        await db.bookings.update(booking.id, {
+          status: 'Pending',
+          lot_id: null,
+          sync_status: 'pending',
+        });
         await db.sync_queue.add({
-          table: 'allotments',
-          action: 'DELETE',
-          payload: { id: allotment.id },
+          table: 'bookings',
+          action: 'UPDATE',
+          payload: { ...booking, status: 'Pending', lot_id: null, sync_status: undefined },
           created_at: Date.now(),
         });
-      }
 
-      // 2. Reset booking status to Pending
-      await db.bookings.update(booking.id, {
-        status: 'Pending',
-        lot_id: null,
-        sync_status: 'pending',
+        // 3. Audit log
+        await logAudit(
+          user.id || '00000000-0000-0000-0000-000000000000',
+          user.name || 'Owner',
+          'RELEASE_ALLOTMENT',
+          'allotments',
+          booking.id,
+          { booking_id: booking.id, cleared_count: bookingAllots.length }
+        );
       });
-      await db.sync_queue.add({
-        table: 'bookings',
-        action: 'UPDATE',
-        payload: { ...booking, status: 'Pending', lot_id: null, sync_status: undefined },
-        created_at: Date.now(),
-      });
-
-      // 3. Audit log
-      await logAudit(
-        user.id || '00000000-0000-0000-0000-000000000000',
-        user.name || 'Owner',
-        'RELEASE_ALLOTMENT',
-        'allotments',
-        allotment?.id || booking.id,
-        { booking_id: booking.id, lot_id: booking.lot_id }
-      );
     } catch (e: any) {
       setError(e.message || t('releaseAllotmentError'));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleAutoAllotItem() {
-    setError('');
-    const sortedEligibleLots = [...eligibleLots].sort(
-      (a, b) => new Date(a.ready_date).getTime() - new Date(b.ready_date).getTime()
-    );
-
-    const bestLot = sortedEligibleLots.find(lot => {
-      const avail = getAvailableInLot(lot.id, lots, allotments, bookings, directSales);
-      return avail >= booking.quantity;
-    }) || sortedEligibleLots.find(lot => {
-      const avail = getAvailableInLot(lot.id, lots, allotments, bookings, directSales);
-      return avail > 0;
-    });
-
-    if (!bestLot) {
-      setError(t('noStockAvailableError'));
-      return;
-    }
-
-    const avail = getAvailableInLot(bestLot.id, lots, allotments, bookings, directSales);
-    const allotQty = Math.min(booking.quantity, avail);
-
-    setLoading(true);
-    try {
-      const user = getUser();
-      const newId = generateId();
-      const now = new Date().toISOString();
-
-      await db.allotments.add({
-        id: newId,
-        booking_id: booking.id,
-        lot_id: bestLot.id,
-        quantity: allotQty,
-        allotted_by: user.id || '00000000-0000-0000-0000-000000000000',
-        allotted_at: now,
-        sync_status: 'pending',
-      });
-
-      await db.bookings.update(booking.id, {
-        status: 'Allocated',
-        lot_id: bestLot.id,
-        sync_status: 'pending',
-      });
-
-      await db.sync_queue.add({
-        table: 'allotments',
-        action: 'INSERT',
-        payload: {
-          id: newId,
-          booking_id: booking.id,
-          lot_id: bestLot.id,
-          quantity: allotQty,
-          allotted_by: user.id || '00000000-0000-0000-0000-000000000000',
-          allotted_at: now,
-        },
-        created_at: Date.now(),
-      });
-
-      await db.sync_queue.add({
-        table: 'bookings',
-        action: 'UPDATE',
-        payload: { ...booking, status: 'Allocated', lot_id: bestLot.id, sync_status: undefined },
-        created_at: Date.now(),
-      });
-
-      await logAudit(
-        user.id || '00000000-0000-0000-0000-000000000000',
-        user.name || 'Owner',
-        'ALLOT_BOOKING',
-        'allotments',
-        newId,
-        { booking_id: booking.id, lot_id: bestLot.id, quantity: allotQty }
-      );
-    } catch (e: any) {
-      setError(e.message || t('autoAllotFailedError'));
     } finally {
       setLoading(false);
     }
@@ -270,56 +199,44 @@ function AllotmentRow({
       const newId = generateId();
       const now = new Date().toISOString();
 
-      // 1. Add allotment record
-      await db.allotments.add({
-        id: newId,
-        booking_id: booking.id,
-        lot_id: selectedLotId,
-        quantity: qty,
-        allotted_by: user.id || '00000000-0000-0000-0000-000000000000',
-        allotted_at: now,
-        sync_status: 'pending',
-      });
-
-      // 2. Update booking status
-      await db.bookings.update(booking.id, {
-        status: 'Allocated',
-        lot_id: selectedLotId,
-        sync_status: 'pending',
-      });
-
-      // 3. Push allotment to sync queue
-      await db.sync_queue.add({
-        table: 'allotments',
-        action: 'INSERT',
-        payload: {
+      await db.transaction('rw', [db.allotments, db.bookings, db.sync_queue, db.audit_logs], async () => {
+        // 1. Add allotment record
+        await db.allotments.add({
           id: newId,
           booking_id: booking.id,
           lot_id: selectedLotId,
           quantity: qty,
           allotted_by: user.id || '00000000-0000-0000-0000-000000000000',
           allotted_at: now,
-        },
-        created_at: Date.now(),
-      });
+          sync_status: 'pending',
+        });
 
-      // 4. Push booking update to sync queue
-      await db.sync_queue.add({
-        table: 'bookings',
-        action: 'UPDATE',
-        payload: { ...booking, status: 'Allocated', lot_id: selectedLotId, sync_status: undefined },
-        created_at: Date.now(),
-      });
+        // 2. Update booking status if fully allotted
+        if (totalAllotted + qty >= booking.quantity) {
+            await db.bookings.update(booking.id, {
+              status: 'Allocated',
+              lot_id: selectedLotId,
+              sync_status: 'pending',
+            });
+            await db.sync_queue.add({
+              table: 'bookings',
+              action: 'UPDATE',
+              payload: { ...booking, status: 'Allocated', lot_id: selectedLotId, sync_status: undefined },
+              created_at: Date.now(),
+            });
+        }
 
-      // 5. Audit log
-      await logAudit(
-        user.id || '00000000-0000-0000-0000-000000000000',
-        user.name || 'Owner',
-        'ALLOT_BOOKING',
-        'allotments',
-        newId,
-        { booking_id: booking.id, lot_id: selectedLotId, quantity: qty }
-      );
+        // 5. Audit log
+        await logAudit(
+          user.id || '00000000-0000-0000-0000-000000000000',
+          user.name || 'Owner',
+          'ALLOT_BOOKING',
+          'allotments',
+          newId,
+          { booking_id: booking.id, lot_id: selectedLotId, quantity: qty }
+        );
+      });
+      setSelectedLotId('');
     } catch (e: any) {
       setError(e.message || 'Failed to allot.');
     } finally {
@@ -327,11 +244,14 @@ function AllotmentRow({
     }
   }
 
-  // If already allocated/delivered, show info instead
-  if (booking.status !== 'Pending') {
-    const allotment = allotments.find((a) => a.booking_id === booking.id);
-    const allottedLot = lots.find((l) => l.id === (allotment?.lot_id ?? booking.lot_id));
-    const showRelease = booking.status === 'Allocated' || booking.status === 'Ready';
+  const allottedList = bookingAllots.map(a => {
+      const l = lots.find(lot => lot.id === a.lot_id);
+      return l ? `${l.lot_number} (${a.quantity})` : `Unknown (${a.quantity})`;
+  });
+
+  // If fully allocated/delivered or not pending, show info instead
+  if (booking.status !== 'Pending' || remainingQty <= 0) {
+    const showRelease = booking.status === 'Allocated' || booking.status === 'Ready' || booking.status === 'Pending';
 
     return (
       <div className="rounded-xl bg-gray-50/40 border border-gray-200/50 p-3 flex items-center justify-between gap-3">
@@ -340,15 +260,14 @@ function AllotmentRow({
             {plant?.plant_name ?? 'Unknown Plant'}
             <span className="ml-2 text-gray-500 font-medium">× {booking.quantity}</span>
           </p>
-          {allottedLot && (
+          {bookingAllots.length > 0 && (
             <p className="text-xs text-gray-500 mt-0.5 flex items-center gap-1">
-              <Layers className="w-3 h-3" /> {t('lot')} {allottedLot.lot_number}
-              {allotment && <span className="ml-1">· {allotment.quantity} {t('allotted')}</span>}
+              <Layers className="w-3 h-3" /> {t('lot')} {allottedList.join(', ')}
             </p>
           )}
         </div>
         <div className="flex items-center gap-2">
-          <StatusBadge status={booking.status} />
+          <StatusBadge status={remainingQty <= 0 ? 'Allocated' : booking.status} />
           {showRelease && (
             <button
               onClick={handleRelease}
@@ -367,12 +286,28 @@ function AllotmentRow({
   return (
     <div className="rounded-xl bg-white border border-gray-200 p-3 space-y-3">
       {/* Plant name + qty */}
-      <div className="flex items-center gap-2">
-        <Package className="w-4 h-4 text-amber-600 shrink-0" />
-        <span className="text-sm font-bold text-gray-900">
-          {plant?.plant_name ?? 'Unknown Plant'}
-          <span className="ml-2 text-amber-600">× {booking.quantity}</span>
-        </span>
+      <div className="flex items-start gap-2">
+        <Package className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+        <div className="flex-1">
+          <span className="text-sm font-bold text-gray-900">
+            {plant?.plant_name ?? 'Unknown Plant'}
+            <span className="ml-2 text-amber-600">× {booking.quantity}</span>
+          </span>
+          {totalAllotted > 0 && (
+            <p className="text-[10px] text-gray-500 font-bold mt-0.5">
+                Allotted: {allottedList.join(', ')} ({remainingQty} pending)
+            </p>
+          )}
+        </div>
+        {totalAllotted > 0 && (
+            <button
+              onClick={handleRelease}
+              disabled={loading}
+              className="px-2 py-1 bg-red-50 hover:bg-red-100 border border-red-200 text-red-600 rounded-lg text-[10px] font-black transition-all active:scale-95 shrink-0"
+            >
+              {t('release')}
+            </button>
+        )}
       </div>
 
       {!hasStock ? (
@@ -396,15 +331,6 @@ function AllotmentRow({
               <label className="text-[10px] font-black uppercase tracking-widest text-gray-500">
                 {t('selectLot')}
               </label>
-              {eligibleLots.length > 0 && (
-                <button
-                  onClick={handleAutoAllotItem}
-                  disabled={loading}
-                  className="text-[10px] font-black uppercase tracking-wider text-amber-600 hover:text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-lg flex items-center gap-1 active:scale-95 transition-all"
-                >
-                  {t('autoAllotItem')}
-                </button>
-              )}
             </div>
             <div className="relative">
               <select
@@ -417,7 +343,7 @@ function AllotmentRow({
                   const avail = availableInLot(lot.id);
                   return (
                     <option key={lot.id} value={lot.id} disabled={avail === 0}>
-                      {lot.lot_number} · {t(lot.status.toLowerCase() as any)} · {avail} {t('free')}
+                      {lot.lot_name || lot.lot_number} · {t(lot.status.toLowerCase() as any)} · {avail} {t('free')}
                     </option>
                   );
                 })}
@@ -441,14 +367,14 @@ function AllotmentRow({
             <label className="text-[10px] font-black uppercase tracking-widest text-gray-500">
               {t('allotQty')}
             </label>
-            <input
-              type="number"
-              min={1}
-              max={available ?? booking.quantity}
-              value={qty}
-              onChange={(e) => { setQty(Number(e.target.value)); setError(''); }}
-              className="w-full bg-white border border-gray-200 text-gray-900 text-sm font-semibold rounded-xl px-3 py-2.5 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/40 transition-all"
-            />
+              <input
+                type="number"
+                min={1}
+                max={Math.min(available ?? remainingQty, remainingQty)}
+                value={qty}
+                onChange={(e) => { setQty(Number(e.target.value)); setError(''); }}
+                className="w-full bg-white border border-gray-200 text-gray-900 text-sm font-semibold rounded-xl px-3 py-2.5 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/40 transition-all"
+              />
           </div>
 
           {/* Error */}
@@ -489,6 +415,7 @@ function BookingCard({
   lots: Lot[];
   allotments: Allotment[];
   plants: Plant[];
+  directSales: DirectSale[];
 }) {
   const { t } = useLanguage();
   const [autoLoading, setAutoLoading] = useState(false);
@@ -496,89 +423,6 @@ function BookingCard({
 
   const balanceDue = group.total_amount - group.total_advance;
   const hasPending = group.items.some((i) => i.status === 'Pending');
-
-  async function handleAutoAllotOrder() {
-    setAutoError('');
-    const pendingItems = group.items.filter(item => item.status === 'Pending');
-    if (pendingItems.length === 0) return;
-
-    setAutoLoading(true);
-    try {
-      const user = getUser();
-      const now = new Date().toISOString();
-
-      for (const booking of pendingItems) {
-        const eligibleLots = lots.filter((l) => l.plant_id === booking.plant_id && l.status !== 'Completed');
-        const sortedEligibleLots = [...eligibleLots].sort(
-          (a, b) => new Date(a.ready_date).getTime() - new Date(b.ready_date).getTime()
-        );
-
-        const bestLot = sortedEligibleLots.find(lot => {
-          const avail = getAvailableInLot(lot.id, lots, allotments, bookings, directSales);
-          return avail >= booking.quantity;
-        }) || sortedEligibleLots.find(lot => {
-          const avail = getAvailableInLot(lot.id, lots, allotments, bookings, directSales);
-          return avail > 0;
-        });
-
-        if (!bestLot) continue;
-
-        const avail = getAvailableInLot(bestLot.id, lots, allotments, bookings, directSales);
-        const allotQty = Math.min(booking.quantity, avail);
-        const newId = generateId();
-
-        await db.allotments.add({
-          id: newId,
-          booking_id: booking.id,
-          lot_id: bestLot.id,
-          quantity: allotQty,
-          allotted_by: user.id || '00000000-0000-0000-0000-000000000000',
-          allotted_at: now,
-          sync_status: 'pending',
-        });
-
-        await db.bookings.update(booking.id, {
-          status: 'Allocated',
-          lot_id: bestLot.id,
-          sync_status: 'pending',
-        });
-
-        await db.sync_queue.add({
-          table: 'allotments',
-          action: 'INSERT',
-          payload: {
-            id: newId,
-            booking_id: booking.id,
-            lot_id: bestLot.id,
-            quantity: allotQty,
-            allotted_by: user.id || '00000000-0000-0000-0000-000000000000',
-            allotted_at: now,
-          },
-          created_at: Date.now(),
-        });
-
-        await db.sync_queue.add({
-          table: 'bookings',
-          action: 'UPDATE',
-          payload: { ...booking, status: 'Allocated', lot_id: bestLot.id, sync_status: undefined },
-          created_at: Date.now(),
-        });
-
-        await logAudit(
-          user.id || '00000000-0000-0000-0000-000000000000',
-          user.name || 'Owner',
-          'ALLOT_BOOKING',
-          'allotments',
-          newId,
-          { booking_id: booking.id, lot_id: bestLot.id, quantity: allotQty }
-        );
-      }
-    } catch (e: any) {
-      setAutoError(e.message || t('autoAllotFailedError'));
-    } finally {
-      setAutoLoading(false);
-    }
-  }
 
   // Card accent based on status
   const accentMap: Record<string, string> = {
@@ -620,23 +464,7 @@ function BookingCard({
           </div>
         </div>
       </div>
-
-      {/* ── Auto Allot Button ── */}
-      {hasPending && (
-        <div className="px-4 pt-3">
-          <button
-            onClick={handleAutoAllotOrder}
-            disabled={autoLoading}
-            className="w-full bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 disabled:opacity-50 text-gray-950 font-black text-xs py-2 rounded-xl transition-all active:scale-95 shadow-md flex items-center justify-center gap-1.5"
-          >
-            ⚡ {autoLoading ? t('autoAllotting') : t('autoAllotAllPending')}
-          </button>
-          {autoError && (
-            <p className="text-[10px] text-red-500 font-bold mt-1 text-center">{autoError}</p>
-          )}
-        </div>
-      )}
-
+      {/* ── Auto Allot Button removed ── */}
       {/* ── Items ── */}
       <div className="px-4 pt-3 pb-2 space-y-3">
         {group.items.map((item) => (

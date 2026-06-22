@@ -6,10 +6,13 @@ import { useLiveQuery } from 'dexie-react-hooks';
 
 export default function NewLotPage() {
   const [lotNumber, setLotNumber] = useState('LOT-...');
+  const [lotName, setLotName] = useState('');
   
   useEffect(() => {
     async function initLotNumber() {
-      setLotNumber(`LOT-${Date.now().toString().slice(-6)}`);
+      const datePrefix = new Date().toISOString().slice(2, 10).replace(/-/g, ''); // YYMMDD
+      const randomSuffix = Math.floor(1000 + Math.random() * 9000).toString();
+      setLotNumber(`LOT-${datePrefix}-${randomSuffix}`);
     }
     initLotNumber();
   }, []);
@@ -30,6 +33,7 @@ export default function NewLotPage() {
     const newLot = {
       id: generateId(),
       lot_number: lotNumber,
+      lot_name: lotName || undefined,
       plant_id: plantId,
       total_quantity: parseInt(quantity),
       initial_quantity: parseInt(quantity),
@@ -60,8 +64,13 @@ export default function NewLotPage() {
 
       <form onSubmit={handleSave} className="space-y-5">
         <div className="space-y-2">
-          <label className="text-sm font-bold text-gray-700">Lot Number</label>
+          <label className="text-sm font-bold text-gray-700">System Lot ID</label>
           <input readOnly type="text" value={lotNumber} className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl outline-none font-bold text-gray-500" />
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-sm font-bold text-gray-700">Lot Name (Optional)</label>
+          <input type="text" value={lotName} onChange={e => setLotName(e.target.value)} className="w-full p-4 bg-white border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-medium transition-shadow" placeholder="e.g. Summer Batch, Front Yard" />
         </div>
         
         <div className="space-y-2">

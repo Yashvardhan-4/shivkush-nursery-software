@@ -342,6 +342,9 @@ export default function TransactionsPage() {
                                 (C: {item.cashAmount} / U: {item.upiAmount})
                               </span>
                             )}
+                            <span className="text-[10px] font-bold text-gray-500 bg-gray-100 px-2 py-1 rounded-md flex items-center gap-1">
+                              👤 {item.worker}
+                            </span>
                           </div>
                           <span className="text-[10px] font-bold text-gray-400">
                             {new Date(item.date).toLocaleString('en-IN', { hour: 'numeric', minute: 'numeric', hour12: true })}

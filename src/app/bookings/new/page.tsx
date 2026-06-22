@@ -24,9 +24,10 @@ export default function NewBookingPage() {
   const [currentUser, setCurrentUser] = useState<any>(null);
   
   useEffect(() => {
-    const timestamp = Date.now().toString(36).toUpperCase();
-    const random = Math.random().toString(36).slice(2, 6).toUpperCase();
-    setBookingNumber(`BKG-${timestamp}-${random}`);
+    const d = new Date();
+    const dateStr = `${d.getFullYear().toString().slice(-2)}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+    const random = Math.floor(1000 + Math.random() * 9000).toString();
+    setBookingNumber(`BKG-${dateStr}-${random}`);
     const userStr = localStorage.getItem('snms_user');
     if (userStr) setCurrentUser(JSON.parse(userStr));
   }, []);
@@ -144,7 +145,7 @@ export default function NewBookingPage() {
       plantId: selectedPlant.id,
       plantName: selectedPlant.variety ? `${selectedPlant.plant_name} - ${selectedPlant.variety}` : selectedPlant.plant_name,
       lotId: selectedLot ? selectedLot.id : '',
-      lotName: selectedLot ? selectedLot.lot_number : t('noLotAssigned'),
+      lotName: selectedLot ? (selectedLot.lot_name || selectedLot.lot_number) : t('noLotAssigned'),
       quantity: qty,
       price: price,
       amount: price * qty
@@ -282,29 +283,31 @@ export default function NewBookingPage() {
       };
     });
 
-    if (customerPhone && customerName) {
-      let cust = await db.customers.where('mobile').equals(customerPhone).first();
-      if (!cust) {
-        cust = { id: generateId(), name: customerName, mobile: customerPhone, city: city || null };
-        await db.customers.add(cust);
-      } else {
-        cust.name = customerName;
-        if (city) cust.city = city;
-        await db.customers.put(cust);
+    await db.transaction('rw', [db.customers, db.bookings, db.sync_queue], async () => {
+      if (customerPhone && customerName) {
+        let cust = await db.customers.where('mobile').equals(customerPhone).first();
+        if (!cust) {
+          cust = { id: generateId(), name: customerName, mobile: customerPhone, city: city || null };
+          await db.customers.add(cust);
+        } else {
+          cust.name = customerName;
+          if (city) cust.city = city;
+          await db.customers.put(cust);
+        }
+        await db.sync_queue.add({ table: 'customers', action: 'INSERT', payload: cust, created_at: Date.now() });
       }
-      await db.sync_queue.add({ table: 'customers', action: 'INSERT', payload: cust, created_at: Date.now() });
-    }
 
-    await db.bookings.bulkAdd(newBookings);
-    
-    for (const b of newBookings) {
-      await db.sync_queue.add({
-        table: 'bookings',
-        action: 'INSERT',
-        payload: b,
-        created_at: Date.now()
-      });
-    }
+      await db.bookings.bulkAdd(newBookings);
+      
+      for (const b of newBookings) {
+        await db.sync_queue.add({
+          table: 'bookings',
+          action: 'INSERT',
+          payload: b,
+          created_at: Date.now()
+        });
+      }
+    });
 
     window.dispatchEvent(new Event('online'));
     router.push('/bookings');
@@ -425,7 +428,7 @@ export default function NewBookingPage() {
                 {lots?.map(l => {
                   const free = computeFreeStockForLot(l.id, plantId);
                   return (
-                    <option key={l.id} value={l.id}>{l.lot_number} ({t('availableLabel')} {free})</option>
+                    <option key={l.id} value={l.id}>{l.lot_name || l.lot_number} ({t('availableLabel')} {free})</option>
                   );
                 })}
               </select>

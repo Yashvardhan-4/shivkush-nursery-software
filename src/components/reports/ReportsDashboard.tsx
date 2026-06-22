@@ -144,8 +144,9 @@ function ReconciliationTab() {
   const plantsRaw = useLiveQuery(() => db.plants.toArray());
   const bookingsRaw = useLiveQuery(() => db.bookings.toArray());
   const auditLogsRaw = useLiveQuery(() => db.audit_logs.toArray());
+  const usersRaw = useLiveQuery(() => db.users.toArray());
 
-  if (!salesRaw || !plantsRaw || !bookingsRaw || !auditLogsRaw) {
+  if (!salesRaw || !plantsRaw || !bookingsRaw || !auditLogsRaw || !usersRaw) {
     return <LoadingCard />;
   }
 
@@ -210,6 +211,7 @@ function ReconciliationTab() {
   const grandTotal = cashTotal + upiTotal;
 
   const plantMap = new Map(plantsRaw.map((p) => [p.id, p]));
+  const userMap = new Map(usersRaw.map((u) => [u.id, u.name]));
   const deliveryLogs = new Map(
     auditLogsRaw
       .filter(l => l.action === 'DELIVER_BOOKING')
@@ -235,6 +237,7 @@ function ReconciliationTab() {
     upi_amount?: number;
     timestamp: number;
     order_number: string;
+    worker_name: string;
   };
 
   const collectionEvents: CollectionEvent[] = [];
@@ -263,6 +266,7 @@ function ReconciliationTab() {
       upi_amount: first.upi_amount ?? undefined,
       timestamp: new Date(first.created_at).getTime(),
       order_number: saleNo,
+      worker_name: userMap.get(first.worker_id || '') || 'Unknown Worker',
     });
   });
 
@@ -299,6 +303,7 @@ function ReconciliationTab() {
         upi_amount: totalUpi,
         timestamp: deliveryLogs.get(bookingNo) || new Date(first.delivery_date + 'T23:59:59').getTime(),
         order_number: bookingNo,
+        worker_name: userMap.get(first.worker_id || '') || 'Unknown Worker',
       });
     }
   });
@@ -336,6 +341,7 @@ function ReconciliationTab() {
         upi_amount: totalUpi,
         timestamp: new Date(first.created_at || Date.now()).getTime(),
         order_number: bookingNo,
+        worker_name: userMap.get(first.worker_id || '') || 'Unknown Worker',
       });
     }
   });
@@ -447,6 +453,10 @@ function ReconciliationTab() {
                         cashAmt={ev.cash_amount}
                         upiAmt={ev.upi_amount}
                       />
+                      <span className="text-gray-300">·</span>
+                      <span className="text-[10px] font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-md flex items-center gap-1">
+                        👤 {ev.worker_name}
+                      </span>
                     </div>
                   </div>
 
@@ -705,7 +715,7 @@ function LotReportTab() {
                           ) : null}
                         </p>
                         <p className="text-xs text-gray-400 font-medium">
-                          Lot #{lot.lot_number}
+                          Lot #{lot.lot_name || lot.lot_number}
                         </p>
                       </div>
                       <span

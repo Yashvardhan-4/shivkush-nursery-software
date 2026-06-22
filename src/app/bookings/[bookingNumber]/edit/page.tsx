@@ -79,7 +79,7 @@ export default function EditBookingPage() {
           plantId: r.plant_id,
           plantName: p ? (p.variety ? `${p.plant_name} - ${p.variety}` : p.plant_name) : 'Unknown Plant',
           lotId: r.lot_id || '',
-          lotName: l ? l.lot_number : t('noLotAssigned'),
+          lotName: l ? (l.lot_name || l.lot_number) : t('noLotAssigned'),
           quantity: r.quantity,
           price: price,
           amount: r.total_amount
@@ -165,7 +165,7 @@ export default function EditBookingPage() {
       plantId: selectedPlant.id,
       plantName: selectedPlant.variety ? `${selectedPlant.plant_name} - ${selectedPlant.variety}` : selectedPlant.plant_name,
       lotId: selectedLot ? selectedLot.id : '',
-      lotName: selectedLot ? selectedLot.lot_number : t('noLotAssigned'),
+      lotName: selectedLot ? (selectedLot.lot_name || selectedLot.lot_number) : t('noLotAssigned'),
       quantity: qty,
       price: price,
       amount: price * qty
@@ -444,7 +444,7 @@ export default function EditBookingPage() {
                 {lots?.map(l => {
                   const free = computeFreeStockForLot(l.id, plantId);
                   return (
-                    <option key={l.id} value={l.id}>{l.lot_number} ({t('availableLabel')} {free})</option>
+                    <option key={l.id} value={l.id}>{l.lot_name || l.lot_number} ({t('availableLabel')} {free})</option>
                   );
                 })}
               </select>
