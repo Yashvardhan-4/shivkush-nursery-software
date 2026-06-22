@@ -100,6 +100,18 @@ export default function OwnerDashboard() {
       }).length
     : null;
 
+  const conflictingLots = (allLots && allBookings && allSales)
+    ? allLots.filter((lot) => {
+        const deliveredQty = allBookings
+          .filter((b) => b.lot_id === lot.id && b.status === 'Delivered')
+          .reduce((sum, b) => sum + b.quantity, 0);
+        const salesQty = allSales
+          .filter((s) => s.lot_id === lot.id)
+          .reduce((sum, s) => sum + s.quantity, 0);
+        return (deliveredQty + salesQty) > (lot.available_stock ?? lot.total_quantity);
+      })
+    : [];
+
   const stats = [
     { label: "Today's Total Income", value: todaySalesTotal !== null ? fmt(todaySalesTotal) : '…', icon: Banknote, color: 'text-green-700 bg-green-100' },
     { label: "My Sales (Owner)", value: ownerSalesTotal !== null ? fmt(ownerSalesTotal) : (ownerId ? '…' : 'N/A'), icon: Banknote, color: 'text-emerald-700 bg-emerald-100' },
@@ -175,6 +187,36 @@ export default function OwnerDashboard() {
         <div className="bg-green-50 border border-green-200 rounded-2xl px-5 py-4 flex items-center gap-3 shadow-sm">
           <Leaf className="w-5 h-5 text-green-600 shrink-0" />
           <p className="text-sm font-bold text-green-700">{t('allStockSufficient')}</p>
+        </div>
+      )}
+
+      {/* ── Conflict Alerts Block ────────────────────────────────────── */}
+      {conflictingLots.length > 0 && (
+        <div className="bg-orange-50 border border-orange-200 rounded-2xl p-5 space-y-3">
+          <div className="flex items-center gap-3">
+            <div className="bg-orange-100 text-orange-600 p-3 rounded-2xl">
+              <AlertTriangle className="w-6 h-6 animate-bounce" />
+            </div>
+            <div>
+              <h2 className="font-bold text-orange-850 text-lg">Inventory Stock Conflicts!</h2>
+              <p className="text-sm font-semibold text-orange-700 mt-0.5">
+                {conflictingLots.length} lot(s) have negative stock due to offline sync overlaps.
+              </p>
+            </div>
+          </div>
+          <div className="divide-y divide-orange-100 bg-white rounded-xl p-3 border border-orange-100">
+            {conflictingLots.map((lot) => (
+              <div key={lot.id} className="py-2 first:pt-0 last:pb-0 flex justify-between items-center text-xs">
+                <div>
+                  <p className="font-bold text-gray-800">{lot.lot_name || lot.lot_number}</p>
+                  <p className="text-gray-400 font-semibold mt-0.5">Physical sales exceed surviving saplings.</p>
+                </div>
+                <Link href={`/lots/${lot.id}/edit`} className="bg-orange-600 hover:bg-orange-700 text-white px-3 py-1.5 rounded-lg font-black transition-colors">
+                  Fix
+                </Link>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

@@ -181,7 +181,7 @@ export default function FulfillmentPage() {
                     <p className="text-xs text-gray-400 mt-0.5">{booking.customer_name} • {booking.customer_phone}</p>
                   </div>
                   <button
-                    onClick={() => handleDeliverBooking(booking.id)}
+                    onClick={() => initiateDelivery(booking.id, booking.quantity, plant?.plant_name || 'Saplings')}
                     disabled={!isReady}
                     className={`font-bold py-3 px-4 rounded-xl text-sm whitespace-nowrap active:scale-95 transition-all ${
                       isReady ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-gray-100 text-gray-400 cursor-not-allowed'
@@ -192,6 +192,57 @@ export default function FulfillmentPage() {
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {/* Delivery Confirmation Modal */}
+      {selectedBookingForDelivery && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-3xl p-6 w-full max-w-sm border border-gray-100 shadow-2xl space-y-4">
+            <div className="flex justify-between items-start">
+              <div>
+                <h3 className="text-lg font-black text-gray-900">Deliver saplings</h3>
+                <p className="text-xs font-semibold text-gray-500 mt-0.5">
+                  {selectedBookingForDelivery.plantName}
+                </p>
+              </div>
+              <button onClick={() => setSelectedBookingForDelivery(null)} className="p-1 bg-gray-100 rounded-full text-gray-400">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            
+            <div className="space-y-2">
+              <label className="text-xs font-black text-gray-400 uppercase tracking-wider">Quantity to hand over</label>
+              <input
+                type="number"
+                min="1"
+                max={selectedBookingForDelivery.maxQty}
+                value={deliveryQtyInput}
+                onChange={e => setDeliveryQtyInput(e.target.value)}
+                className="w-full p-4 bg-gray-50 border border-gray-200 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 font-black text-3xl text-center text-blue-600 animate-pulse"
+              />
+              <p className="text-xs font-semibold text-gray-400 text-center">
+                Total remaining ordered: {selectedBookingForDelivery.maxQty}
+              </p>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setSelectedBookingForDelivery(null)}
+                className="py-3 bg-gray-100 hover:bg-gray-200 text-gray-500 font-bold rounded-xl active:scale-95 transition-transform"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={executeDelivery}
+                className="py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl active:scale-95 transition-transform shadow-lg shadow-blue-200"
+              >
+                Confirm
+              </button>
+            </div>
           </div>
         </div>
       )}

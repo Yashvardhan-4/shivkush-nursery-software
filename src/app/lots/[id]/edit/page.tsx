@@ -4,7 +4,7 @@ import { useState, useEffect, use } from 'react';
 import { useRouter } from 'next/navigation';
 import { db, logAudit } from '@/lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { ArrowLeft, Save, AlertTriangle, CheckCircle, Clock, Archive, Trash2 } from 'lucide-react';
+import { ArrowLeft, Save, AlertTriangle, CheckCircle, Clock, Archive, Trash2, Layers } from 'lucide-react';
 
 interface Props {
   params: Promise<{ id: string }>;
@@ -22,9 +22,19 @@ export default function EditLotPage({ params }: Props) {
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
   const [notFound, setNotFound] = useState(false);
+  
+  const [showMergeModal, setShowMergeModal] = useState(false);
+  const [targetLotId, setTargetLotId] = useState('');
 
   const lot = useLiveQuery(() => db.lots.get(id), [id]);
   const plant = useLiveQuery(() => lot ? db.plants.get(lot.plant_id) : undefined, [lot]);
+  
+  const otherLots = useLiveQuery(async () => {
+    if (!lot) return [];
+    const all = await db.lots.where('plant_id').equals(lot.plant_id).toArray();
+    return all.filter(l => l.id !== id && l.status !== 'Completed');
+  }, [lot, id]);
+
   const allotments = useLiveQuery(async () => {
     const all = await db.allotments.where('lot_id').equals(id).toArray();
     const bIds = all.map(a => a.booking_id);
@@ -56,6 +66,71 @@ export default function EditLotPage({ params }: Props) {
   const deliveredQty = deliveredBookings?.reduce((sum, b) => sum + b.quantity, 0) || 0;
   const usedQty = allottedQty + soldQty + deliveredQty;
   const newQty = parseInt(availableStock) || 0;
+
+  const handleMergeLot = async () => {
+    if (!targetLotId) return alert('Select a target lot');
+    const targetLot = otherLots?.find(l => l.id === targetLotId);
+    if (!targetLot) return;
+
+    const freeQty = newQty - usedQty;
+    if (freeQty <= 0) {
+      alert('This lot has no free stock to merge.');
+      return;
+    }
+
+    if (!confirm(`Are you sure you want to transfer ${freeQty} free saplings from this lot into "${targetLot.lot_name || targetLot.lot_number}"? This cannot be undone.`)) return;
+
+    setLoading(true);
+    try {
+      const user = JSON.parse(localStorage.getItem('snms_user') || '{}');
+      
+      await db.transaction('rw', [db.lots, db.sync_queue, db.audit_logs], async () => {
+        // 1. Update Target Lot
+        const targetUpdates = {
+          ...targetLot,
+          available_stock: (targetLot.available_stock ?? targetLot.total_quantity) + freeQty,
+          notes: `${targetLot.notes || ''}\n[Merge] Received ${freeQty} saplings from lot ${lotNumber}`.trim()
+        };
+        await db.lots.put(targetUpdates);
+        await db.sync_queue.add({
+          table: 'lots',
+          action: 'UPDATE',
+          payload: { ...targetUpdates, sync_status: undefined },
+          created_at: Date.now()
+        });
+
+        // 2. Update Source Lot (available stock reduced to committed usedQty)
+        const sourceUpdates = {
+          ...lot!,
+          available_stock: usedQty,
+          status: usedQty === 0 ? 'Completed' as const : status,
+          notes: `${notes || ''}\n[Merge] Transferred ${freeQty} free saplings to lot ${targetLot.lot_name || targetLot.lot_number}`.trim()
+        };
+        await db.lots.put(sourceUpdates);
+        await db.sync_queue.add({
+          table: 'lots',
+          action: 'UPDATE',
+          payload: { ...sourceUpdates, sync_status: undefined },
+          created_at: Date.now()
+        });
+
+        await logAudit(user.id || '00000000-0000-0000-0000-000000000000', user.name || 'Owner', 'MERGE_LOT', 'lots', id, {
+          source_lot: lotNumber,
+          target_lot: targetLot.lot_number,
+          quantity: freeQty
+        });
+      });
+
+      window.dispatchEvent(new Event('online'));
+      alert('Lots merged successfully!');
+      router.push('/lots');
+    } catch (e) {
+      console.error(e);
+      alert('Failed to merge lots');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -286,34 +361,100 @@ export default function EditLotPage({ params }: Props) {
             placeholder="e.g. Plants are growing well, some pest issues detected..."
             className="w-full p-4 bg-white border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-medium resize-none"
           />
-          <div className="pt-6 border-t border-gray-100 flex items-center justify-between">
-          {usedQty === 0 ? (
-            <button
-              type="button"
-              onClick={handleDelete}
-              disabled={loading}
-              className="px-4 py-4 rounded-xl text-red-600 bg-red-50 hover:bg-red-100 font-black flex items-center gap-2 transition-colors"
-            >
-              <Trash2 className="w-5 h-5" />
-              Delete Lot
-            </button>
-          ) : (
-            <div className="text-xs text-gray-400 font-medium max-w-[200px]">
-              Lot cannot be deleted because it has active orders or sales.
-            </div>
-          )}
+          <div className="pt-6 border-t border-gray-100 flex flex-col gap-4">
+            <div className="flex items-center justify-between gap-4">
+              {usedQty === 0 ? (
+                <button
+                  type="button"
+                  onClick={handleDelete}
+                  disabled={loading}
+                  className="px-4 py-4 rounded-xl text-red-600 bg-red-50 hover:bg-red-100 font-black flex items-center gap-2 transition-colors text-sm"
+                >
+                  <Trash2 className="w-5 h-5" />
+                  Delete Lot
+                </button>
+              ) : (
+                <div className="text-xs text-gray-400 font-medium max-w-[200px]">
+                  Lot cannot be deleted because it has active commitments.
+                </div>
+              )}
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="flex-1 ml-4 bg-green-600 hover:bg-green-700 text-white font-black py-4 px-6 rounded-xl flex items-center justify-center gap-2 transition-colors disabled:opacity-50 shadow-sm shadow-green-200"
-          >
-            <Save className="w-5 h-5" />
-            {loading ? 'Saving...' : 'Save Changes'}
-          </button>
-        </div>
+              {newQty - usedQty > 0 && otherLots && otherLots.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowMergeModal(true);
+                    setTargetLotId(otherLots[0]?.id || '');
+                  }}
+                  disabled={loading}
+                  className="px-4 py-4 rounded-xl text-amber-700 bg-amber-50 hover:bg-amber-100 font-black flex items-center gap-2 transition-colors text-sm"
+                >
+                  <Layers className="w-5 h-5" />
+                  Merge Stock
+                </button>
+              )}
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full bg-green-600 hover:bg-green-700 text-white font-black py-4 px-6 rounded-xl flex items-center justify-center gap-2 transition-colors disabled:opacity-50 shadow-sm shadow-green-200"
+            >
+              <Save className="w-5 h-5" />
+              {loading ? 'Saving...' : 'Save Changes'}
+            </button>
+          </div>
         </div>
       </form>
+
+      {/* Merge Stock Modal */}
+      {showMergeModal && otherLots && otherLots.length > 0 && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-3xl p-6 w-full max-w-sm border border-gray-100 shadow-2xl space-y-4">
+            <div>
+              <h3 className="text-lg font-black text-gray-900 flex items-center gap-2">
+                <Layers className="w-5 h-5 text-amber-600" /> Merge Stock
+              </h3>
+              <p className="text-xs text-gray-500 mt-1">
+                Transfer all free stock ({newQty - usedQty} plants) of {plant?.plant_name} from this lot into another lot.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-black text-gray-400 uppercase tracking-wider">Select Target Lot</label>
+              <select
+                value={targetLotId}
+                onChange={e => setTargetLotId(e.target.value)}
+                className="w-full p-4 bg-gray-50 border border-gray-200 rounded-2xl outline-none focus:ring-2 focus:ring-amber-500 font-bold text-gray-800 text-sm"
+              >
+                {otherLots.map(l => (
+                  <option key={l.id} value={l.id}>
+                    {l.lot_name || l.lot_number} ({l.available_stock ?? l.total_quantity} stock)
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowMergeModal(false)}
+                className="py-3 bg-gray-100 hover:bg-gray-200 text-gray-500 font-bold rounded-xl active:scale-95 transition-transform"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleMergeLot}
+                disabled={loading}
+                className="py-3 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl active:scale-95 transition-transform shadow-lg shadow-amber-250"
+              >
+                Confirm Merge
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

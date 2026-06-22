@@ -49,6 +49,7 @@ export default function NewDirectSalePage() {
   const [quantity, setQuantity] = useState('');
   
   const [assignedTo, setAssignedTo] = useState('');
+  const [autoAllocate, setAutoAllocate] = useState(true);
   
   const [paymentMode, setPaymentMode] = useState<'Cash' | 'UPI' | 'Split'>('Cash');
   const [cashAmount, setCashAmount] = useState('');
@@ -69,12 +70,13 @@ export default function NewDirectSalePage() {
   // Auto-select first available lot (FIFO) when plant changes
   useEffect(() => {
     if (!plantId) { setSelectedLotId(''); return; }
+    if (!autoAllocate) return;
     const lotsData = lots || [];
     const first = lotsData
       .filter(l => l.plant_id === plantId && l.status !== 'Completed')
       .sort((a, b) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime())[0];
     setSelectedLotId(first?.id || '');
-  }, [plantId, lots]);
+  }, [plantId, lots, autoAllocate]);
 
   const selectedPlant = plants?.find(p => p.id === plantId);
 
@@ -409,28 +411,56 @@ export default function NewDirectSalePage() {
 
           {plantId && (
             <div className="space-y-2">
+              {/* Auto-allocate FIFO Toggle */}
+              <div className="flex items-center justify-between p-3.5 bg-white border border-green-150 rounded-xl">
+                <div>
+                  <span className="text-xs font-black text-green-800 block">Auto-Allocate Lots (FIFO)</span>
+                  <span className="text-[10px] text-gray-400 font-semibold mt-0.5">Picks the oldest ready batch automatically</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextVal = !autoAllocate;
+                    setAutoAllocate(nextVal);
+                    if (nextVal) {
+                      const first = (lots || [])
+                        .filter(l => l.plant_id === plantId && l.status !== 'Completed')
+                        .sort((a, b) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime())[0];
+                      setSelectedLotId(first?.id || '');
+                    }
+                  }}
+                  className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${autoAllocate ? 'bg-green-600' : 'bg-gray-200'}`}
+                >
+                  <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${autoAllocate ? 'translate-x-5' : 'translate-x-0'}`} />
+                </button>
+              </div>
+
               {/* Lot selector */}
               {lots && lots.filter(l => l.plant_id === plantId && l.status !== 'Completed').length > 0 ? (
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-green-700 uppercase">Source Lot</label>
-                  <select
-                    value={selectedLotId}
-                    onChange={e => setSelectedLotId(e.target.value)}
-                    className="w-full p-3 bg-white border border-green-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-bold text-green-900 text-sm"
-                  >
-                    {lots
-                      .filter(l => l.plant_id === plantId && l.status !== 'Completed')
-                      .sort((a, b) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime())
-                      .map(l => {
-                        const free = computeFreeStockForLot(l.id, plantId);
-                        return (
-                          <option key={l.id} value={l.id}>
-                            {l.lot_name || l.lot_number} — {free} free{free <= 0 ? ' (fully reserved)' : ''}
-                          </option>
-                        );
-                      })}
-                  </select>
-                </div>
+                <>
+                  {!autoAllocate && (
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-green-700 uppercase">Source Lot</label>
+                      <select
+                        value={selectedLotId}
+                        onChange={e => setSelectedLotId(e.target.value)}
+                        className="w-full p-3 bg-white border border-green-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-bold text-green-900 text-sm"
+                      >
+                        {lots
+                          .filter(l => l.plant_id === plantId && l.status !== 'Completed')
+                          .sort((a, b) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime())
+                          .map(l => {
+                            const free = computeFreeStockForLot(l.id, plantId);
+                            return (
+                              <option key={l.id} value={l.id}>
+                                {l.lot_name || l.lot_number} — {free} free{free <= 0 ? ' (fully reserved)' : ''}
+                              </option>
+                            );
+                          })}
+                      </select>
+                    </div>
+                  )}
+                </>
               ) : (
                 <p className="text-sm font-bold text-red-600 text-center py-2">No active lots for this plant</p>
               )}
