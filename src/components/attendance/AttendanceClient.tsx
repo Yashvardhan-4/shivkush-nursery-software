@@ -14,6 +14,8 @@ interface AttendanceClientProps {
 export default function AttendanceClient({ session }: AttendanceClientProps) {
   const { t } = useLanguage();
 
+  if (!session) return null;
+
   if (session.role !== 'owner') {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-50 p-6">

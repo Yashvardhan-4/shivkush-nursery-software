@@ -42,6 +42,12 @@ export default function EditBookingPage() {
   const [upiAmount, setUpiAmount] = useState('');
   const [loading, setLoading] = useState(false);
   const [initialLoaded, setInitialLoaded] = useState(false);
+  const [currentUser, setCurrentUser] = useState<any>(null);
+
+  useEffect(() => {
+    const userStr = localStorage.getItem('snms_user');
+    if (userStr) setCurrentUser(JSON.parse(userStr));
+  }, []);
 
   const plants = useLiveQuery(() => db.plants.toArray());
   const lots = useLiveQuery(() => db.lots.where('plant_id').equals(plantId).toArray(), [plantId]);
@@ -431,7 +437,7 @@ export default function EditBookingPage() {
             </select>
           </div>
 
-          {plantId && (
+          {plantId && currentUser?.role === 'owner' && (
             <div className="space-y-2">
               <select value={lotId} onChange={e => setLotId(e.target.value)} className="w-full p-4 bg-white border border-blue-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold text-blue-900">
                 <option value="">{t('noLotAllotLater')}</option>

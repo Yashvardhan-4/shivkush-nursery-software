@@ -244,5 +244,12 @@
   "bookingDeliveryType": "बुकिंग वितरण",
   "bookingAdvanceType": "बुकिंग अॅडव्हान्स",
   "qty": "प्रमाण",
-  "noLotsFoundReport": "अहवाल पाहण्यासाठी लॉट्स तयार करा."
+  "noLotsFoundReport": "अहवाल पाहण्यासाठी लॉट्स तयार करा.",
+  "markTodaysAttendance": "आजची उपस्थिती नोंदवा",
+  "present": "हजर",
+  "absent": "गैरहजर",
+  "halfDay": "अर्धा दिवस",
+  "attendanceHistory": "उपस्थितीचा इतिहास",
+  "daysRecorded": "दिवसांची नोंद",
+  "noAttendanceRecords": "कोणतीही उपस्थिती नोंद आढळली नाही."
 }

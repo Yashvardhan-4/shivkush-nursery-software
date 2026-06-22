@@ -34,8 +34,10 @@ export default function LotList() {
         created_at: Date.now(),
       });
 
-      // Also mark all 'Allocated' bookings for this lot as 'Ready'
-      const allocatedBookings = await db.bookings.where('lot_id').equals(lotId).toArray();
+      // Also mark all 'Allocated' bookings tied to this lot via allotments as 'Ready'
+      const lotAllotments = await db.allotments.where('lot_id').equals(lotId).toArray();
+      const bookingIds = new Set(lotAllotments.map(a => a.booking_id));
+      const allocatedBookings = (await Promise.all(Array.from(bookingIds).map(id => db.bookings.get(id)))).filter(Boolean) as any[];
       for (const b of allocatedBookings) {
         if (b.status === 'Allocated') {
           await db.bookings.update(b.id, { status: 'Ready', sync_status: 'pending' });

@@ -17,6 +17,7 @@ export default function StaffManagementPage() {
   const router = useRouter();
   const [staffList, setStaffList] = useState<Staff[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   // New Staff form state
   const [showForm, setShowForm] = useState(false);
@@ -44,8 +45,9 @@ export default function StaffManagementPage() {
       if (Array.isArray(data)) {
         setStaffList(data);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      setError(err.message || 'Failed to fetch staff list.');
     } finally {
       setLoading(false);
     }
@@ -150,6 +152,12 @@ export default function StaffManagementPage() {
 
       {loading ? (
         <p className="text-center py-10 font-bold text-gray-400">Loading staff accounts...</p>
+      ) : error ? (
+        <div className="text-center py-10">
+          <p className="font-bold text-red-500 mb-2">Error</p>
+          <p className="text-gray-500 text-sm">{error}</p>
+          <button onClick={fetchStaff} className="mt-4 px-4 py-2 bg-blue-100 text-blue-700 rounded-lg font-bold text-sm">Retry</button>
+        </div>
       ) : (
         <div className="space-y-3">
           {staffList.map(staff => (

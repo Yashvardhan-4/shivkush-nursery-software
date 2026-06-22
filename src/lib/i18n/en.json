@@ -245,5 +245,12 @@
   "bookingDeliveryType": "Booking Delivery",
   "bookingAdvanceType": "Booking Advance",
   "qty": "Qty",
-  "noLotsFoundReport": "No lots found. Create your first lot in the Lots section."
+  "noLotsFoundReport": "No lots found. Create your first lot in the Lots section.",
+  "markTodaysAttendance": "Mark Today's Attendance",
+  "present": "Present",
+  "absent": "Absent",
+  "halfDay": "Half Day",
+  "attendanceHistory": "Attendance History",
+  "daysRecorded": "Days Recorded",
+  "noAttendanceRecords": "No attendance records found."
 }

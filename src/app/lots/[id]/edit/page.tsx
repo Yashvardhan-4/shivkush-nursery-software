@@ -54,8 +54,8 @@ export default function EditLotPage({ params }: Props) {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (newQty < allottedQty) {
-      alert(`Cannot reduce available stock below ${allottedQty} — that many plants are already allotted to bookings.`);
+    if (newQty < allottedQty + soldQty) {
+      alert(`Cannot reduce available stock below ${allottedQty + soldQty} — ${allottedQty} are allotted to bookings and ${soldQty} are already sold/delivered.`);
       return;
     }
     if (newQty > (lot?.initial_quantity ?? lot?.total_quantity ?? 0)) {

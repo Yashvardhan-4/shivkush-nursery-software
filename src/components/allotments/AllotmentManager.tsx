@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, logAudit, generateId } from '@/lib/db';
-import type { Booking, Lot, Plant, Allotment } from '@/lib/db';
+import type { Booking, Lot, Plant, Allotment, DirectSale } from '@/lib/db';
 import {
   Package,
   Phone,
@@ -70,17 +70,28 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-function getAvailableInLot(lotId: string, lots: Lot[], allotments: Allotment[], bookings: Booking[]): number {
+function getAvailableInLot(lotId: string, lots: Lot[], allotments: Allotment[], bookings: Booking[], directSales: DirectSale[]): number {
   const lot = lots.find((l) => l.id === lotId);
   if (!lot) return 0;
-  const used = allotments
-    .filter((a) => {
-      if (a.lot_id !== lotId) return false;
-      const b = bookings.find(b => b.id === a.booking_id);
-      return b && b.status !== 'Delivered' && b.status !== 'Cancelled';
-    })
+
+  const activeBookingIds = new Set(
+    bookings.filter(b => b.status !== 'Delivered' && b.status !== 'Cancelled').map(b => b.id)
+  );
+
+  const allottedQty = allotments
+    .filter(a => a.lot_id === lotId && activeBookingIds.has(a.booking_id))
     .reduce((sum, a) => sum + a.quantity, 0);
-  return Math.max(0, (lot.available_stock ?? lot.total_quantity) - used);
+
+  const deliveredQty = bookings
+    .filter(b => b.lot_id === lotId && b.status === 'Delivered')
+    .reduce((sum, b) => sum + b.quantity, 0);
+
+  const salesQty = directSales
+    .filter(s => s.lot_id === lotId)
+    .reduce((sum, s) => sum + s.quantity, 0);
+
+  const availableStock = lot.available_stock ?? lot.total_quantity;
+  return Math.max(0, availableStock - allottedQty - deliveredQty - salesQty);
 }
 
 // ──────────────────────────────────────────────
@@ -98,6 +109,7 @@ function AllotmentRow({
   lots: Lot[];
   allotments: Allotment[];
   plants: Plant[];
+  directSales: DirectSale[];
 }) {
   const { t } = useLanguage();
   const [selectedLotId, setSelectedLotId] = useState('');
@@ -107,10 +119,10 @@ function AllotmentRow({
 
   const plant = plants.find((p) => p.id === booking.plant_id);
   const eligibleLots = lots.filter((l) => l.plant_id === booking.plant_id && l.status !== 'Completed');
-  const hasStock = eligibleLots.some(lot => getAvailableInLot(lot.id, lots, allotments, bookings) > 0);
+  const hasStock = eligibleLots.some(lot => getAvailableInLot(lot.id, lots, allotments, bookings, directSales) > 0);
 
   function availableInLot(lotId: string): number {
-    return getAvailableInLot(lotId, lots, allotments, bookings);
+    return getAvailableInLot(lotId, lots, allotments, bookings, directSales);
   }
 
   const selectedLot = lots.find((l) => l.id === selectedLotId);
@@ -150,7 +162,7 @@ function AllotmentRow({
 
       // 3. Audit log
       await logAudit(
-        user.id || 'owner',
+        user.id || '00000000-0000-0000-0000-000000000000',
         user.name || 'Owner',
         'RELEASE_ALLOTMENT',
         'allotments',
@@ -171,10 +183,10 @@ function AllotmentRow({
     );
 
     const bestLot = sortedEligibleLots.find(lot => {
-      const avail = getAvailableInLot(lot.id, lots, allotments, bookings);
+      const avail = getAvailableInLot(lot.id, lots, allotments, bookings, directSales);
       return avail >= booking.quantity;
     }) || sortedEligibleLots.find(lot => {
-      const avail = getAvailableInLot(lot.id, lots, allotments, bookings);
+      const avail = getAvailableInLot(lot.id, lots, allotments, bookings, directSales);
       return avail > 0;
     });
 
@@ -183,7 +195,7 @@ function AllotmentRow({
       return;
     }
 
-    const avail = getAvailableInLot(bestLot.id, lots, allotments, bookings);
+    const avail = getAvailableInLot(bestLot.id, lots, allotments, bookings, directSales);
     const allotQty = Math.min(booking.quantity, avail);
 
     setLoading(true);
@@ -197,7 +209,7 @@ function AllotmentRow({
         booking_id: booking.id,
         lot_id: bestLot.id,
         quantity: allotQty,
-        allotted_by: user.id || 'owner',
+        allotted_by: user.id || '00000000-0000-0000-0000-000000000000',
         allotted_at: now,
         sync_status: 'pending',
       });
@@ -216,7 +228,7 @@ function AllotmentRow({
           booking_id: booking.id,
           lot_id: bestLot.id,
           quantity: allotQty,
-          allotted_by: user.id || 'owner',
+          allotted_by: user.id || '00000000-0000-0000-0000-000000000000',
           allotted_at: now,
         },
         created_at: Date.now(),
@@ -230,7 +242,7 @@ function AllotmentRow({
       });
 
       await logAudit(
-        user.id || 'owner',
+        user.id || '00000000-0000-0000-0000-000000000000',
         user.name || 'Owner',
         'ALLOT_BOOKING',
         'allotments',
@@ -264,7 +276,7 @@ function AllotmentRow({
         booking_id: booking.id,
         lot_id: selectedLotId,
         quantity: qty,
-        allotted_by: user.id || 'owner',
+        allotted_by: user.id || '00000000-0000-0000-0000-000000000000',
         allotted_at: now,
         sync_status: 'pending',
       });
@@ -285,7 +297,7 @@ function AllotmentRow({
           booking_id: booking.id,
           lot_id: selectedLotId,
           quantity: qty,
-          allotted_by: user.id || 'owner',
+          allotted_by: user.id || '00000000-0000-0000-0000-000000000000',
           allotted_at: now,
         },
         created_at: Date.now(),
@@ -301,7 +313,7 @@ function AllotmentRow({
 
       // 5. Audit log
       await logAudit(
-        user.id || 'owner',
+        user.id || '00000000-0000-0000-0000-000000000000',
         user.name || 'Owner',
         'ALLOT_BOOKING',
         'allotments',
@@ -502,16 +514,16 @@ function BookingCard({
         );
 
         const bestLot = sortedEligibleLots.find(lot => {
-          const avail = getAvailableInLot(lot.id, lots, allotments, bookings);
+          const avail = getAvailableInLot(lot.id, lots, allotments, bookings, directSales);
           return avail >= booking.quantity;
         }) || sortedEligibleLots.find(lot => {
-          const avail = getAvailableInLot(lot.id, lots, allotments, bookings);
+          const avail = getAvailableInLot(lot.id, lots, allotments, bookings, directSales);
           return avail > 0;
         });
 
         if (!bestLot) continue;
 
-        const avail = getAvailableInLot(bestLot.id, lots, allotments, bookings);
+        const avail = getAvailableInLot(bestLot.id, lots, allotments, bookings, directSales);
         const allotQty = Math.min(booking.quantity, avail);
         const newId = generateId();
 
@@ -520,7 +532,7 @@ function BookingCard({
           booking_id: booking.id,
           lot_id: bestLot.id,
           quantity: allotQty,
-          allotted_by: user.id || 'owner',
+          allotted_by: user.id || '00000000-0000-0000-0000-000000000000',
           allotted_at: now,
           sync_status: 'pending',
         });
@@ -539,7 +551,7 @@ function BookingCard({
             booking_id: booking.id,
             lot_id: bestLot.id,
             quantity: allotQty,
-            allotted_by: user.id || 'owner',
+            allotted_by: user.id || '00000000-0000-0000-0000-000000000000',
             allotted_at: now,
           },
           created_at: Date.now(),
@@ -553,7 +565,7 @@ function BookingCard({
         });
 
         await logAudit(
-          user.id || 'owner',
+          user.id || '00000000-0000-0000-0000-000000000000',
           user.name || 'Owner',
           'ALLOT_BOOKING',
           'allotments',
@@ -635,6 +647,7 @@ function BookingCard({
             lots={lots}
             allotments={allotments}
             plants={plants}
+            directSales={directSales}
           />
         ))}
       </div>
@@ -671,8 +684,9 @@ export default function AllotmentManager() {
   const lots = useLiveQuery(() => db.lots.toArray());
   const plants = useLiveQuery(() => db.plants.toArray());
   const allotments = useLiveQuery(() => db.allotments.toArray());
+  const directSales = useLiveQuery(() => db.direct_sales.toArray());
 
-  if (!bookings || !lots || !plants || !allotments) {
+  if (!bookings || !lots || !plants || !allotments || !directSales) {
     return (
       <div className="flex flex-col items-center justify-center py-24 text-gray-600">
         <div className="w-8 h-8 border-2 border-gray-200 border-t-amber-500 rounded-full animate-spin mb-4" />
@@ -775,6 +789,7 @@ export default function AllotmentManager() {
               lots={lots}
               allotments={allotments}
               plants={plants}
+              directSales={directSales}
             />
           ))}
         </div>

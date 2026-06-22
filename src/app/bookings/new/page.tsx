@@ -418,7 +418,7 @@ export default function NewBookingPage() {
             </select>
           </div>
 
-          {plantId && (
+          {plantId && currentUser?.role === 'owner' && (
             <div className="space-y-2">
               <select value={lotId} onChange={e => setLotId(e.target.value)} className="w-full p-4 bg-white border border-blue-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold text-blue-900">
                 <option value="">{t('noLotAllotLater')}</option>

@@ -299,6 +299,7 @@ export default function BookingList({ role, userId, userName }: BookingListProps
            ops.push(async () => {
              await db.bookings.update(row.id, { status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, sync_status: 'pending' });
              await db.sync_queue.add({ table: 'bookings', action: 'UPDATE', payload: { ...row, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, sync_status: undefined }, created_at: Date.now() });
+             await logAudit(userId, userName, 'DELIVER_BOOKING', 'bookings', row.id, { booking_number: row.booking_number, quantity: totalQty });
            });
         } else {
            const deliveredAmount = deliverQty * unitPrice;
@@ -309,15 +310,38 @@ export default function BookingList({ role, userId, userName }: BookingListProps
            newlyProcessedRows.push(updatedDelivered);
            
            const newPendingId = generateId();
-           const newPending = { ...row, id: newPendingId, quantity: remainingQty, total_amount: remainingAmount, status: 'Pending' as const, sync_status: 'pending' as const };
+           const newPending = { ...row, id: newPendingId, quantity: remainingQty, total_amount: remainingAmount, status: (row.status === 'Ready' || row.status === 'Allocated') ? row.status : 'Pending', sync_status: 'pending' as const };
            newlyProcessedRows.push(newPending);
 
            ops.push(async () => {
              await db.bookings.update(row.id, { quantity: deliverQty, total_amount: deliveredAmount, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, sync_status: 'pending' });
              await db.sync_queue.add({ table: 'bookings', action: 'UPDATE', payload: { ...row, quantity: deliverQty, total_amount: deliveredAmount, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, sync_status: undefined }, created_at: Date.now() });
+             await logAudit(userId, userName, 'DELIVER_BOOKING', 'bookings', row.id, { booking_number: row.booking_number, quantity: deliverQty });
              
              await db.bookings.add(newPending);
              await db.sync_queue.add({ table: 'bookings', action: 'INSERT', payload: newPending, created_at: Date.now() });
+
+             const rowAllotments = await db.allotments.where('booking_id').equals(row.id).toArray();
+             let qtyToMove = remainingQty;
+             
+             for (const a of rowAllotments) {
+               if (qtyToMove <= 0) break;
+               if (a.quantity <= qtyToMove) {
+                 qtyToMove -= a.quantity;
+                 await db.allotments.update(a.id, { booking_id: newPendingId, sync_status: 'pending' });
+                 await db.sync_queue.add({ table: 'allotments', action: 'UPDATE', payload: { ...a, booking_id: newPendingId, sync_status: undefined }, created_at: Date.now() });
+               } else {
+                 const leftoverDeliveredQty = a.quantity - qtyToMove;
+                 const movedQty = qtyToMove;
+                 qtyToMove = 0;
+                 await db.allotments.update(a.id, { quantity: leftoverDeliveredQty, sync_status: 'pending' });
+                 await db.sync_queue.add({ table: 'allotments', action: 'UPDATE', payload: { ...a, quantity: leftoverDeliveredQty, sync_status: undefined }, created_at: Date.now() });
+                 const newAId = generateId();
+                 const newA = { ...a, id: newAId, booking_id: newPendingId, quantity: movedQty, sync_status: 'pending' as const };
+                 await db.allotments.add(newA);
+                 await db.sync_queue.add({ table: 'allotments', action: 'INSERT', payload: { ...newA, sync_status: undefined }, created_at: Date.now() });
+               }
+             }
            });
         }
       }

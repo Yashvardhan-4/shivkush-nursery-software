@@ -37,7 +37,7 @@ export default function CustomerLedger() {
     const phone = booking.customer_phone;
     if (!customerMap[phone]) {
       customerMap[phone] = {
-        name: booking.customer_name,
+        name: booking.customer_name || 'Unknown',
         phone,
         city: booking.city || '—',
         bookingCount: 0,
@@ -82,7 +82,7 @@ export default function CustomerLedger() {
   );
 
   const filtered = allCustomers.filter(c =>
-    c.name.toLowerCase().includes(search.toLowerCase()) ||
+    (c.name || 'Unknown').toLowerCase().includes(search.toLowerCase()) ||
     c.phone.includes(search)
   );
 

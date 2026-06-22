@@ -118,7 +118,12 @@ export default function TransactionsPage() {
       if (deliveredItems.length > 0) {
         const totalBalance = deliveredItems.reduce((sum, item) => sum + Math.max(0, item.total_amount - (item.advance_paid || 0)), 0);
         if (totalBalance > 0) {
-          const exactTime = deliveryLogs.get(bookingNo) || new Date(first.delivery_date || first.booking_date).setHours(12, 0, 0, 0);
+          let latestDeliveryTime = 0;
+          deliveredItems.forEach(item => {
+            const t = deliveryLogs.get(item.id);
+            if (t && t > latestDeliveryTime) latestDeliveryTime = t;
+          });
+          const exactTime = latestDeliveryTime || new Date(first.delivery_date || first.booking_date).setHours(12, 0, 0, 0);
           let totalCash = 0, totalUpi = 0;
           deliveredItems.forEach(item => {
             totalCash += item.cash_amount || 0;

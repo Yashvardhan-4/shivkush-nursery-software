@@ -44,6 +44,14 @@ export default function AttendanceManager({ ownerId, ownerName }: AttendanceMana
         .toArray();
       if (existing.length > 0) {
         await db.attendance.bulkDelete(existing.map(r => r.id));
+        for (const r of existing) {
+          await db.sync_queue.add({
+            table: 'attendance',
+            action: 'DELETE',
+            payload: { id: r.id },
+            created_at: Date.now(),
+          });
+        }
       }
 
       const id = generateId();
@@ -64,6 +72,9 @@ export default function AttendanceManager({ ownerId, ownerName }: AttendanceMana
         payload: record,
         created_at: Date.now(),
       });
+    } catch (err: any) {
+      console.error('Failed to mark attendance:', err);
+      alert('Failed to mark attendance. Please try again.');
     } finally {
       setLoading(prev => ({ ...prev, [key]: false }));
     }

@@ -42,8 +42,10 @@ CREATE TABLE public.plants (
 CREATE TABLE public.lots (
   id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
   lot_number text UNIQUE NOT NULL,
-  plant_id uuid REFERENCES public.plants(id) NOT NULL,
+  plant_id uuid REFERENCES public.plants(id) ON DELETE CASCADE NOT NULL,
   total_quantity integer NOT NULL,
+  initial_quantity integer NOT NULL DEFAULT 0,
+  available_stock integer NOT NULL DEFAULT 0,
   ready_date date NOT NULL,
   status text NOT NULL CHECK (status IN ('Growing', 'Ready', 'Completed')),
   notes text,
@@ -57,8 +59,8 @@ CREATE TABLE public.bookings (
   customer_name text NOT NULL,
   customer_phone text NOT NULL,
   city text,
-  plant_id uuid REFERENCES public.plants(id) NOT NULL,
-  lot_id uuid REFERENCES public.lots(id),
+  plant_id uuid REFERENCES public.plants(id) ON DELETE CASCADE NOT NULL,
+  lot_id uuid REFERENCES public.lots(id) ON DELETE SET NULL,
   quantity integer NOT NULL CHECK (quantity > 0),
   advance_paid decimal(10,2) DEFAULT 0,
   advance_payment_mode text CHECK (advance_payment_mode IN ('Cash', 'UPI', 'Split')),
@@ -72,18 +74,18 @@ CREATE TABLE public.bookings (
   payment_mode text CHECK (payment_mode IN ('Cash', 'UPI', 'Split')),
   cash_amount decimal(10,2),
   upi_amount decimal(10,2),
-  worker_id uuid REFERENCES public.users(id),
-  assigned_to uuid REFERENCES public.users(id),
+  worker_id uuid REFERENCES public.users(id) ON DELETE SET NULL,
+  assigned_to uuid REFERENCES public.users(id) ON DELETE SET NULL,
   created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
 -- ALLOTMENTS TABLE
 CREATE TABLE public.allotments (
   id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
-  booking_id uuid REFERENCES public.bookings(id) NOT NULL,
-  lot_id uuid REFERENCES public.lots(id) NOT NULL,
+  booking_id uuid REFERENCES public.bookings(id) ON DELETE CASCADE NOT NULL,
+  lot_id uuid REFERENCES public.lots(id) ON DELETE CASCADE NOT NULL,
   quantity integer NOT NULL CHECK (quantity > 0),
-  allotted_by uuid REFERENCES public.users(id) NOT NULL,
+  allotted_by uuid REFERENCES public.users(id) ON DELETE SET NULL NOT NULL,
   allotted_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
@@ -93,15 +95,15 @@ CREATE TABLE public.direct_sales (
   sale_number text NOT NULL,
   customer_name text,
   customer_phone text,
-  plant_id uuid REFERENCES public.plants(id) NOT NULL,
-  lot_id uuid REFERENCES public.lots(id),
+  plant_id uuid REFERENCES public.plants(id) ON DELETE CASCADE NOT NULL,
+  lot_id uuid REFERENCES public.lots(id) ON DELETE SET NULL,
   quantity integer NOT NULL CHECK (quantity > 0),
   amount decimal(10,2) NOT NULL CHECK (amount > 0),
   payment_mode text NOT NULL CHECK (payment_mode IN ('Cash', 'UPI', 'Split')),
   cash_amount decimal(10,2),
   upi_amount decimal(10,2),
-  worker_id uuid REFERENCES public.users(id) NOT NULL,
-  assigned_to uuid REFERENCES public.users(id),
+  worker_id uuid REFERENCES public.users(id) ON DELETE SET NULL NOT NULL,
+  assigned_to uuid REFERENCES public.users(id) ON DELETE SET NULL,
   fulfillment_status text CHECK (fulfillment_status IN ('Pending Handover', 'Fulfilled')),
   created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
 );
@@ -109,7 +111,7 @@ CREATE TABLE public.direct_sales (
 -- ATTENDANCE TABLE
 CREATE TABLE public.attendance (
   id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
-  worker_id uuid REFERENCES public.users(id) NOT NULL,
+  worker_id uuid REFERENCES public.users(id) ON DELETE CASCADE NOT NULL,
   date date DEFAULT CURRENT_DATE NOT NULL,
   status text NOT NULL CHECK (status IN ('Present', 'Absent', 'Half Day')),
   created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
@@ -118,7 +120,7 @@ CREATE TABLE public.attendance (
 -- AUDIT LOGS TABLE
 CREATE TABLE public.audit_logs (
   id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id uuid REFERENCES public.users(id) NOT NULL,
+  user_id uuid REFERENCES public.users(id) ON DELETE CASCADE NOT NULL,
   user_name text,
   action text NOT NULL,
   table_name text NOT NULL,
@@ -145,6 +147,22 @@ CREATE TABLE public.payment_qrs (
   active boolean DEFAULT true,
   created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
 );
+
+-- INDEXES FOR FOREIGN KEYS
+CREATE INDEX idx_lots_plant_id ON public.lots(plant_id);
+CREATE INDEX idx_bookings_plant_id ON public.bookings(plant_id);
+CREATE INDEX idx_bookings_lot_id ON public.bookings(lot_id);
+CREATE INDEX idx_bookings_worker_id ON public.bookings(worker_id);
+CREATE INDEX idx_bookings_assigned_to ON public.bookings(assigned_to);
+CREATE INDEX idx_allotments_booking_id ON public.allotments(booking_id);
+CREATE INDEX idx_allotments_lot_id ON public.allotments(lot_id);
+CREATE INDEX idx_allotments_allotted_by ON public.allotments(allotted_by);
+CREATE INDEX idx_direct_sales_plant_id ON public.direct_sales(plant_id);
+CREATE INDEX idx_direct_sales_lot_id ON public.direct_sales(lot_id);
+CREATE INDEX idx_direct_sales_worker_id ON public.direct_sales(worker_id);
+CREATE INDEX idx_direct_sales_assigned_to ON public.direct_sales(assigned_to);
+CREATE INDEX idx_attendance_worker_id ON public.attendance(worker_id);
+CREATE INDEX idx_audit_logs_user_id ON public.audit_logs(user_id);
 
 -- ROW LEVEL SECURITY (RLS) SETTINGS
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
@@ -188,13 +206,18 @@ BEGIN
         act := item->>'action';
         tbl := item->>'table';
         p := item->'payload';
-        item_id := (p->>'id')::uuid;
+        
+        IF tbl = 'audit_logs' THEN
+            item_id := NULL;
+        ELSE
+            item_id := NULLIF(p->>'id', '')::uuid;
+        END IF;
 
         IF tbl = 'plants' THEN
             IF act = 'INSERT' THEN
                 INSERT INTO public.plants (id, plant_name, variety, category, selling_price, description, active, created_at)
                 VALUES (
-                    (p->>'id')::uuid,
+                    COALESCE(item_id, uuid_generate_v4()),
                     p->>'plant_name',
                     p->>'variety',
                     p->>'category',
@@ -226,7 +249,7 @@ BEGIN
             IF act = 'INSERT' THEN
                 INSERT INTO public.customers (id, name, mobile, city, created_at)
                 VALUES (
-                    (p->>'id')::uuid,
+                    COALESCE(item_id, uuid_generate_v4()),
                     p->>'name',
                     p->>'mobile',
                     p->>'city',
@@ -246,12 +269,14 @@ BEGIN
 
         ELSIF tbl = 'lots' THEN
             IF act = 'INSERT' THEN
-                INSERT INTO public.lots (id, lot_number, plant_id, total_quantity, ready_date, status, notes, created_at)
+                INSERT INTO public.lots (id, lot_number, plant_id, total_quantity, initial_quantity, available_stock, ready_date, status, notes, created_at)
                 VALUES (
-                    (p->>'id')::uuid,
+                    COALESCE(item_id, uuid_generate_v4()),
                     p->>'lot_number',
                     (p->>'plant_id')::uuid,
                     (p->>'total_quantity')::integer,
+                    COALESCE((p->>'initial_quantity')::integer, (p->>'total_quantity')::integer),
+                    COALESCE((p->>'available_stock')::integer, (p->>'total_quantity')::integer),
                     (p->>'ready_date')::date,
                     p->>'status',
                     p->>'notes',
@@ -260,6 +285,8 @@ BEGIN
                     lot_number = EXCLUDED.lot_number,
                     plant_id = EXCLUDED.plant_id,
                     total_quantity = EXCLUDED.total_quantity,
+                    initial_quantity = EXCLUDED.initial_quantity,
+                    available_stock = EXCLUDED.available_stock,
                     ready_date = EXCLUDED.ready_date,
                     status = EXCLUDED.status,
                     notes = EXCLUDED.notes;
@@ -268,6 +295,8 @@ BEGIN
                     lot_number = COALESCE(p->>'lot_number', lot_number),
                     plant_id = COALESCE((p->>'plant_id')::uuid, plant_id),
                     total_quantity = COALESCE((p->>'total_quantity')::integer, total_quantity),
+                    initial_quantity = COALESCE((p->>'initial_quantity')::integer, initial_quantity),
+                    available_stock = COALESCE((p->>'available_stock')::integer, available_stock),
                     ready_date = COALESCE((p->>'ready_date')::date, ready_date),
                     status = COALESCE(p->>'status', status),
                     notes = COALESCE(p->>'notes', notes)
@@ -285,7 +314,7 @@ BEGIN
                     booking_date, delivery_date, status, remarks,
                     payment_mode, cash_amount, upi_amount, worker_id, assigned_to, created_at
                 ) VALUES (
-                    (p->>'id')::uuid,
+                    COALESCE(item_id, uuid_generate_v4()),
                     p->>'booking_number',
                     p->>'customer_name',
                     p->>'customer_phone',
@@ -355,7 +384,7 @@ BEGIN
             IF act = 'INSERT' THEN
                 INSERT INTO public.allotments (id, booking_id, lot_id, quantity, allotted_by, allotted_at)
                 VALUES (
-                    (p->>'id')::uuid,
+                    COALESCE(item_id, uuid_generate_v4()),
                     (p->>'booking_id')::uuid,
                     (p->>'lot_id')::uuid,
                     (p->>'quantity')::integer,
@@ -381,7 +410,7 @@ BEGIN
                     plant_id, lot_id, quantity, amount, payment_mode,
                     cash_amount, upi_amount, worker_id, assigned_to, fulfillment_status, created_at
                 ) VALUES (
-                    (p->>'id')::uuid,
+                    COALESCE(item_id, uuid_generate_v4()),
                     p->>'sale_number',
                     p->>'customer_name',
                     p->>'customer_phone',
@@ -421,7 +450,7 @@ BEGIN
             IF act = 'INSERT' THEN
                 INSERT INTO public.attendance (id, worker_id, date, status, created_at)
                 VALUES (
-                    (p->>'id')::uuid,
+                    COALESCE(item_id, uuid_generate_v4()),
                     (p->>'worker_id')::uuid,
                     (p->>'date')::date,
                     p->>'status',
@@ -441,7 +470,7 @@ BEGIN
             IF act = 'INSERT' THEN
                 INSERT INTO public.payment_qrs (id, name, upi_id, image_data, active, created_at)
                 VALUES (
-                    (p->>'id')::uuid,
+                    COALESCE(item_id, uuid_generate_v4()),
                     p->>'name',
                     p->>'upi_id',
                     p->>'image_data',
@@ -467,7 +496,7 @@ BEGIN
             IF act = 'INSERT' THEN
                 INSERT INTO public.audit_logs (id, user_id, user_name, action, table_name, record_id, details, created_at)
                 VALUES (
-                    (p->>'id')::uuid,
+                    uuid_generate_v4(),
                     (p->>'user_id')::uuid,
                     p->>'user_name',
                     p->>'action',
@@ -475,7 +504,7 @@ BEGIN
                     p->>'record_id',
                     p->>'details',
                     COALESCE(NULLIF(p->>'created_at','')::timestamp with time zone, now())
-                ) ON CONFLICT (id) DO NOTHING;
+                );
             END IF;
         END IF;
     END LOOP;

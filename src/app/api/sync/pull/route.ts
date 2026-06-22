@@ -24,16 +24,16 @@ export async function GET(request: Request) {
       { data: users },
       { data: payment_qrs }
     ] = await Promise.all([
-      supabaseAdmin.from('plants').select('*'),
-      supabaseAdmin.from('lots').select('*'),
-      supabaseAdmin.from('bookings').select('*'),
-      supabaseAdmin.from('allotments').select('*'),
-      supabaseAdmin.from('direct_sales').select('*'),
-      supabaseAdmin.from('attendance').select('*'),
-      supabaseAdmin.from('audit_logs').select('*'),
-      supabaseAdmin.from('customers').select('*'),
-      supabaseAdmin.from('users').select('id, name, role'),
-      supabaseAdmin.from('payment_qrs').select('*')
+      supabaseAdmin.from('plants').select('*').limit(5000),
+      supabaseAdmin.from('lots').select('*').limit(5000),
+      supabaseAdmin.from('bookings').select('*').limit(5000),
+      supabaseAdmin.from('allotments').select('*').limit(5000),
+      supabaseAdmin.from('direct_sales').select('*').limit(5000),
+      supabaseAdmin.from('attendance').select('*').limit(5000),
+      supabaseAdmin.from('audit_logs').select('*').order('created_at', { ascending: false }).limit(5000),
+      supabaseAdmin.from('customers').select('*').limit(5000),
+      supabaseAdmin.from('users').select('id, name, role').limit(100),
+      supabaseAdmin.from('payment_qrs').select('*').limit(50)
     ]);
 
     return NextResponse.json({
