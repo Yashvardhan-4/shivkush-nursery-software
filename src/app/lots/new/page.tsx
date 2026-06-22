@@ -43,17 +43,23 @@ export default function NewLotPage() {
       notes: ''
     };
 
-    await db.lots.add(newLot);
-
-    await db.sync_queue.add({
-      table: 'lots',
-      action: 'INSERT',
-      payload: newLot,
-      created_at: Date.now()
-    });
-
-    window.dispatchEvent(new Event('online'));
-    router.push('/lots');
+    try {
+      await db.transaction('rw', [db.lots, db.sync_queue], async () => {
+        await db.lots.add(newLot);
+        await db.sync_queue.add({
+          table: 'lots',
+          action: 'INSERT',
+          payload: newLot,
+          created_at: Date.now()
+        });
+      });
+      window.dispatchEvent(new Event('online'));
+      router.push('/lots');
+    } catch (error) {
+      console.error('Failed to save lot:', error);
+      alert('Failed to save lot. Please try again.');
+      setLoading(false);
+    }
   };
 
   return (

@@ -73,6 +73,7 @@ export default function EditLotPage({ params }: Props) {
         ...lot,
         lot_number: lotNumber,
         lot_name: lotName || undefined,
+        total_quantity: newQty,
         available_stock: newQty,
         ready_date: readyDate,
         status,
@@ -85,9 +86,10 @@ export default function EditLotPage({ params }: Props) {
         payload: { ...updates, sync_status: undefined },
         created_at: Date.now(),
       });
-      await logAudit(user.id || 'owner', user.name || 'Owner', 'UPDATE_LOT', 'lots', id, {
+      await logAudit(user.id || '00000000-0000-0000-0000-000000000000', user.name || 'Owner', 'UPDATE_LOT', 'lots', id, {
         lot_number: lotNumber,
         lot_name: lotName,
+        total_quantity: newQty,
         available_stock: newQty,
         ready_date: readyDate,
         status,
@@ -117,7 +119,7 @@ export default function EditLotPage({ params }: Props) {
           payload: { id },
           created_at: Date.now(),
         });
-        await logAudit(user.id || 'owner', user.name || 'Owner', 'DELETE_LOT', 'lots', id, { lot_number: lotNumber });
+        await logAudit(user.id || '00000000-0000-0000-0000-000000000000', user.name || 'Owner', 'DELETE_LOT', 'lots', id, { lot_number: lotNumber });
         window.dispatchEvent(new Event('online'));
         router.push('/lots');
       } finally {
