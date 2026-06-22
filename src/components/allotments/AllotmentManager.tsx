@@ -61,6 +61,7 @@ function StatusBadge({ status }: { status: string }) {
   const map: Record<string, string> = {
     Pending: 'bg-amber-100 text-amber-600 border border-amber-200',
     Allocated: 'bg-blue-100 text-blue-600 border border-blue-200',
+    Ready: 'bg-indigo-100 text-indigo-700 border border-indigo-200',
     Delivered: 'bg-emerald-500/20 text-emerald-600 border border-emerald-500/30',
     Mixed: 'bg-purple-100 text-purple-600 border border-purple-200',
     Cancelled: 'bg-red-100 text-red-600 border border-red-200',
@@ -106,6 +107,7 @@ function AllotmentRow({
   lots,
   allotments,
   plants,
+  directSales,
 }: {
   booking: Booking;
   bookings: Booking[];
@@ -412,6 +414,7 @@ function BookingCard({
   lots,
   allotments,
   plants,
+  directSales,
 }: {
   group: GroupedBooking;
   bookings: Booking[];
@@ -564,13 +567,14 @@ export default function AllotmentManager() {
       ? groupedList
       : groupedList.filter((g) => {
           if (filter === 'Pending') return g.groupStatus === 'Pending' || g.groupStatus === 'Mixed';
+          if (filter === 'Allocated') return g.groupStatus === 'Allocated' || g.groupStatus === 'Ready';
           return g.groupStatus === filter;
         });
 
   // Counts for filter tabs
   const counts = {
     Pending: groupedList.filter((g) => g.groupStatus === 'Pending' || g.groupStatus === 'Mixed').length,
-    Allocated: groupedList.filter((g) => g.groupStatus === 'Allocated').length,
+    Allocated: groupedList.filter((g) => g.groupStatus === 'Allocated' || g.groupStatus === 'Ready').length,
     Delivered: groupedList.filter((g) => g.groupStatus === 'Delivered').length,
     All: groupedList.length,
   };

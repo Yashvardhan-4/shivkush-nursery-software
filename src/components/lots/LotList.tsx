@@ -210,7 +210,7 @@ export default function LotList() {
                     </p>
                   </div>
                   <div className="text-center border-l border-gray-200">
-                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest">Available</p>
+                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest">Survived</p>
                     <p className="font-black text-gray-900 text-lg">{availableStock}</p>
                   </div>
                   <div className="text-center border-l border-gray-200">

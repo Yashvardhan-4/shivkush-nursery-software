@@ -183,14 +183,69 @@ export default function EditBookingPage() {
 
   const totalAmount = cart.reduce((sum, item) => sum + item.amount, 0);
 
+  const [splitAmounts, setSplitAmounts] = useState({ cash: '', upi: '' });
+
   const advanceNum = parseFloat(advancePaid) || 0;
-  const cashNum = parseFloat(cashAmount) || 0;
-  const upiNum = parseFloat(upiAmount) || 0;
+  const cashNum = paymentMode === 'Split' ? (parseFloat(splitAmounts.cash) || 0) : (parseFloat(cashAmount) || 0);
+  const upiNum = paymentMode === 'Split' ? (parseFloat(splitAmounts.upi) || 0) : (parseFloat(upiAmount) || 0);
   const splitTotal = cashNum + upiNum;
   const splitRemaining = advanceNum - splitTotal;
   const splitValid = advanceNum === 0 || paymentMode !== 'Split' || Math.abs(splitRemaining) < 0.01;
 
-  const [splitAmounts, setSplitAmounts] = useState({ cash: '', upi: '' });
+  const handleCancelBooking = async () => {
+    if (!confirm("Are you sure you want to CANCEL this booking? The allotted stock will be released, but the advance payment will NOT be refunded (it remains as nursery deposit). This cannot be undone.")) return;
+    setLoading(true);
+    try {
+      await db.transaction('rw', [db.bookings, db.sync_queue, db.audit_logs], async () => {
+        for (const row of originalBookingRows || []) {
+          const updates = { status: 'Cancelled' as const, sync_status: 'pending' as const };
+          await db.bookings.update(row.id, updates);
+          await db.sync_queue.add({
+            table: 'bookings',
+            action: 'UPDATE',
+            payload: { ...row, ...updates, sync_status: undefined },
+            created_at: Date.now()
+          });
+        }
+        const user = currentUser || { id: 'unknown', name: 'Unknown' };
+        await logAudit(user.id, user.name, 'CANCEL_BOOKING', 'bookings', bookingNumber, { note: 'Forfeited advance' });
+      });
+      window.dispatchEvent(new Event('online'));
+      router.push('/bookings');
+    } catch (e) {
+      console.error(e);
+      alert('Failed to cancel booking');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteBooking = async () => {
+    if (!confirm("CRITICAL WARNING: Are you sure you want to completely DELETE this booking? This will erase it from the system entirely and remove all financial records/advances (use ONLY for accidental entries). This cannot be undone.")) return;
+    setLoading(true);
+    try {
+      await db.transaction('rw', [db.bookings, db.sync_queue, db.audit_logs], async () => {
+        for (const row of originalBookingRows || []) {
+          await db.bookings.delete(row.id);
+          await db.sync_queue.add({
+            table: 'bookings',
+            action: 'DELETE',
+            payload: { id: row.id },
+            created_at: Date.now()
+          });
+        }
+        const user = currentUser || { id: 'unknown', name: 'Unknown' };
+        await logAudit(user.id, user.name, 'DELETE_BOOKING', 'bookings', bookingNumber, { note: 'Accidental entry purged' });
+      });
+      window.dispatchEvent(new Event('online'));
+      router.push('/bookings');
+    } catch (e) {
+      console.error(e);
+      alert('Failed to delete booking');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleCashChange = (val: string) => {
     setSplitAmounts(prev => {
@@ -214,13 +269,14 @@ export default function EditBookingPage() {
     setPaymentMode(mode);
     if (mode === 'Cash') { setCashAmount(String(advanceNum)); setUpiAmount('0'); }
     else if (mode === 'UPI') { setUpiAmount(String(advanceNum)); setCashAmount('0'); }
-    else { setSplitAmounts({ cash: '', upi: '' }); }
+    else { setSplitAmounts({ cash: String(advanceNum), upi: '0' }); }
   };
   const handleAdvanceChange = (val: string) => {
     setAdvancePaid(val);
     const adv = parseFloat(val) || 0;
     if (paymentMode === 'Cash') { setCashAmount(String(adv)); setUpiAmount('0'); }
     else if (paymentMode === 'UPI') { setUpiAmount(String(adv)); setCashAmount('0'); }
+    else { setSplitAmounts({ cash: String(adv), upi: '0' }); }
   };
 
   const handleSaveBooking = async (e: React.FormEvent) => {
@@ -568,6 +624,36 @@ export default function EditBookingPage() {
           {loading ? t('processing') : t('saveChanges')}
         </button>
       </form>
+
+      {/* Danger Zone */}
+      {originalBookingRows && originalBookingRows.length > 0 && (
+        <div className="bg-red-50 border border-red-200 p-5 rounded-3xl space-y-4 mt-6">
+          <h3 className="font-black text-red-950 text-lg flex items-center gap-2">
+            ⚠️ Danger Zone
+          </h3>
+          <p className="text-xs text-red-700 font-medium">
+            Perform administrative tasks for this booking. Actions here are immediate.
+          </p>
+          <div className="grid grid-cols-2 gap-4">
+            <button
+              type="button"
+              onClick={handleCancelBooking}
+              disabled={loading}
+              className="py-4 bg-orange-600 hover:bg-orange-700 text-white font-black rounded-2xl active:scale-95 transition-transform text-sm disabled:opacity-50 shadow-md shadow-orange-200"
+            >
+              Cancel Booking
+            </button>
+            <button
+              type="button"
+              onClick={handleDeleteBooking}
+              disabled={loading}
+              className="py-4 bg-red-600 hover:bg-red-700 text-white font-black rounded-2xl active:scale-95 transition-transform text-sm disabled:opacity-50 shadow-md shadow-red-200"
+            >
+              Delete Booking
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

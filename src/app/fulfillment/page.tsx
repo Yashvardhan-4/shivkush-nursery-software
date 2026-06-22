@@ -2,11 +2,13 @@
 
 import { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, logAudit } from '@/lib/db';
-import { PackageOpen, CheckCircle, Clock } from 'lucide-react';
+import { db, logAudit, splitAndDeliverBooking } from '@/lib/db';
+import { PackageOpen, CheckCircle, Clock, X } from 'lucide-react';
 
 export default function FulfillmentPage() {
   const [userId, setUserId] = useState('');
+  const [selectedBookingForDelivery, setSelectedBookingForDelivery] = useState<{ id: string; maxQty: number; plantName: string } | null>(null);
+  const [deliveryQtyInput, setDeliveryQtyInput] = useState('');
 
   useEffect(() => {
     const user = JSON.parse(localStorage.getItem('snms_user') || '{}');
@@ -28,19 +30,14 @@ export default function FulfillmentPage() {
     if (!lot || lot.status === 'Completed') return;
 
     const currentBookings = await db.bookings.toArray();
-    const currentAllotments = await db.allotments.toArray();
     const currentSales = await db.direct_sales.toArray();
 
-    const activeBookingIds = new Set(
-      currentBookings.filter(b => b.plant_id === plantId && b.status !== 'Delivered' && b.status !== 'Cancelled').map(b => b.id)
-    );
-    const allottedQty = currentAllotments.filter(a => a.lot_id === lotId && activeBookingIds.has(a.booking_id)).reduce((s,a) => s + a.quantity, 0);
     const deliveredQty = currentBookings.filter(b => b.lot_id === lotId && b.status === 'Delivered').reduce((s,b) => s + b.quantity, 0);
     const salesQty = currentSales.filter(s => s.lot_id === lotId).reduce((s, sale) => s + sale.quantity, 0);
 
-    const freeStock = (lot.available_stock ?? lot.total_quantity) - allottedQty - deliveredQty - salesQty;
+    const physicalStockRemaining = (lot.available_stock ?? lot.total_quantity) - deliveredQty - salesQty;
     
-    if (freeStock <= 0) {
+    if (physicalStockRemaining <= 0) {
        const updatedLot = { ...lot, status: 'Completed' as const };
        await db.lots.put(updatedLot);
        await db.sync_queue.add({ table: 'lots', action: 'UPDATE', payload: { ...updatedLot, sync_status: undefined }, created_at: Date.now() });
@@ -73,25 +70,29 @@ export default function FulfillmentPage() {
     }
   };
 
-  const handleDeliverBooking = async (id: string) => {
+  const initiateDelivery = (id: string, maxQty: number, plantName: string) => {
+    setSelectedBookingForDelivery({ id, maxQty, plantName });
+    setDeliveryQtyInput(String(maxQty));
+  };
+
+  const executeDelivery = async () => {
+    if (!selectedBookingForDelivery) return;
+    const qty = parseInt(deliveryQtyInput);
+    if (isNaN(qty) || qty <= 0 || qty > selectedBookingForDelivery.maxQty) {
+      alert(`Invalid quantity. Must be between 1 and ${selectedBookingForDelivery.maxQty}`);
+      return;
+    }
+
     try {
-      const booking = await db.bookings.get(id);
-      if (!booking) return;
-
-      await db.transaction('rw', [db.bookings, db.direct_sales, db.allotments, db.lots, db.sync_queue, db.audit_logs], async () => {
-        const updates = { status: 'Delivered' as const, sync_status: 'pending' as const };
-        await db.bookings.update(id, updates);
-        await db.sync_queue.add({
-          table: 'bookings',
-          action: 'UPDATE',
-          payload: { ...booking, ...updates, sync_status: undefined },
-          created_at: Date.now()
-        });
-
-        const user = JSON.parse(localStorage.getItem('snms_user') || '{}');
-        await logAudit(user.id, user.name, 'DELIVER_BOOKING', 'bookings', id, { note: 'Handed over to customer' });
+      const user = JSON.parse(localStorage.getItem('snms_user') || '{}');
+      await splitAndDeliverBooking(selectedBookingForDelivery.id, qty, user.id, user.name);
+      
+      const booking = await db.bookings.get(selectedBookingForDelivery.id);
+      if (booking) {
         await checkSoldOutLot(booking.lot_id, booking.plant_id);
-      });
+      }
+      
+      setSelectedBookingForDelivery(null);
       window.dispatchEvent(new Event('online'));
     } catch (e) {
       console.error(e);

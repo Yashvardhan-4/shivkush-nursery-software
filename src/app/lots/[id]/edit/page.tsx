@@ -73,7 +73,6 @@ export default function EditLotPage({ params }: Props) {
         ...lot,
         lot_number: lotNumber,
         lot_name: lotName || undefined,
-        total_quantity: newQty,
         available_stock: newQty,
         ready_date: readyDate,
         status,
@@ -89,7 +88,6 @@ export default function EditLotPage({ params }: Props) {
       await logAudit(user.id || '00000000-0000-0000-0000-000000000000', user.name || 'Owner', 'UPDATE_LOT', 'lots', id, {
         lot_number: lotNumber,
         lot_name: lotName,
-        total_quantity: newQty,
         available_stock: newQty,
         ready_date: readyDate,
         status,

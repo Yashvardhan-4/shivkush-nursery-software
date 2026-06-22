@@ -302,6 +302,157 @@ export function generateId(): string {
   });
 }
 
+export async function splitAndDeliverBooking(
+  bookingId: string, 
+  deliverQty: number, 
+  userId: string, 
+  userName: string
+): Promise<void> {
+  await db.transaction('rw', [db.bookings, db.allotments, db.lots, db.sync_queue, db.audit_logs], async () => {
+    const booking = await db.bookings.get(bookingId);
+    if (!booking) throw new Error('Booking not found');
+    if (deliverQty <= 0 || deliverQty > booking.quantity) {
+      throw new Error('Invalid delivery quantity');
+    }
+
+    const isPartial = deliverQty < booking.quantity;
+    const remainingQty = booking.quantity - deliverQty;
+
+    // Proportional amounts
+    const unitPrice = booking.total_amount / booking.quantity;
+    const deliveredAmount = Math.round(deliverQty * unitPrice * 100) / 100;
+    const remainingAmount = Math.round((booking.total_amount - deliveredAmount) * 100) / 100;
+
+    const deliveredAdvance = Math.round((booking.advance_paid * (deliverQty / booking.quantity)) * 100) / 100;
+    const remainingAdvance = Math.round((booking.advance_paid - deliveredAdvance) * 100) / 100;
+
+    // Split split amounts if Split payment mode
+    const deliveredCash = booking.advance_cash_amount 
+      ? Math.round((booking.advance_cash_amount * (deliverQty / booking.quantity)) * 100) / 100
+      : null;
+    const remainingCash = booking.advance_cash_amount 
+      ? Math.round((booking.advance_cash_amount - (deliveredCash || 0)) * 100) / 100
+      : null;
+
+    const deliveredUpi = booking.advance_upi_amount
+      ? Math.round((booking.advance_upi_amount * (deliverQty / booking.quantity)) * 100) / 100
+      : null;
+    const remainingUpi = booking.advance_upi_amount
+      ? Math.round((booking.advance_upi_amount - (deliveredUpi || 0)) * 100) / 100
+      : null;
+
+    if (isPartial) {
+      // 1. Create a new booking row for the remaining quantity
+      const newBookingId = generateId();
+      const remainingBooking: Booking = {
+        ...booking,
+        id: newBookingId,
+        quantity: remainingQty,
+        total_amount: remainingAmount,
+        advance_paid: remainingAdvance,
+        advance_cash_amount: remainingCash,
+        advance_upi_amount: remainingUpi,
+        sync_status: 'pending',
+        status: booking.status // Ready or Allocated
+      };
+
+      await db.bookings.add(remainingBooking);
+      await db.sync_queue.add({
+        table: 'bookings',
+        action: 'INSERT',
+        payload: remainingBooking,
+        created_at: Date.now()
+      });
+
+      // 2. Adjust Allotments: split allotment associated with this booking
+      const originalAllotments = await db.allotments.where('booking_id').equals(bookingId).toArray();
+      let remainingToAllot = remainingQty;
+      for (const allot of originalAllotments) {
+        if (remainingToAllot <= 0) break;
+        const take = Math.min(allot.quantity, remainingToAllot);
+        remainingToAllot -= take;
+
+        // Create new allotment for the remaining booking row
+        const newAllotment = {
+          id: generateId(),
+          booking_id: newBookingId,
+          lot_id: allot.lot_id,
+          quantity: take,
+          allotted_by: userId,
+          allotted_at: new Date().toISOString(),
+          sync_status: 'pending' as const
+        };
+        await db.allotments.add(newAllotment);
+        await db.sync_queue.add({
+          table: 'allotments',
+          action: 'INSERT',
+          payload: newAllotment,
+          created_at: Date.now()
+        });
+
+        // Update old allotment quantity
+        if (allot.quantity === take) {
+          await db.allotments.delete(allot.id);
+          await db.sync_queue.add({
+            table: 'allotments',
+            action: 'DELETE',
+            payload: { id: allot.id },
+            created_at: Date.now()
+          });
+        } else {
+          const updatedAllot = { ...allot, quantity: allot.quantity - take, sync_status: 'pending' as const };
+          await db.allotments.put(updatedAllot);
+          await db.sync_queue.add({
+            table: 'allotments',
+            action: 'UPDATE',
+            payload: { ...updatedAllot, sync_status: undefined },
+            created_at: Date.now()
+          });
+        }
+      }
+
+      // 3. Update the original booking to represent the delivered quantity
+      const deliveredUpdates = {
+        quantity: deliverQty,
+        total_amount: deliveredAmount,
+        advance_paid: deliveredAdvance,
+        advance_cash_amount: deliveredCash,
+        advance_upi_amount: deliveredUpi,
+        status: 'Delivered' as const,
+        delivery_date: new Date().toISOString().split('T')[0],
+        sync_status: 'pending' as const
+      };
+      await db.bookings.update(bookingId, deliveredUpdates);
+      await db.sync_queue.add({
+        table: 'bookings',
+        action: 'UPDATE',
+        payload: { ...booking, ...deliveredUpdates, sync_status: undefined },
+        created_at: Date.now()
+      });
+    } else {
+      // Full delivery
+      const deliveredUpdates = {
+        status: 'Delivered' as const,
+        delivery_date: new Date().toISOString().split('T')[0],
+        sync_status: 'pending' as const
+      };
+      await db.bookings.update(bookingId, deliveredUpdates);
+      await db.sync_queue.add({
+        table: 'bookings',
+        action: 'UPDATE',
+        payload: { ...booking, ...deliveredUpdates, sync_status: undefined },
+        created_at: Date.now()
+      });
+    }
+
+    await logAudit(userId, userName, 'DELIVER_BOOKING', 'bookings', bookingId, {
+      qty_delivered: deliverQty,
+      is_partial: isPartial,
+      booking_number: booking.booking_number
+    });
+  });
+}
+
 export function toLocalDateStr(dateInput?: string | Date | number): string {
   const d = dateInput ? new Date(dateInput) : new Date();
   if (isNaN(d.getTime())) return '';

@@ -277,11 +277,15 @@ export default function NewDirectSalePage() {
 
       // Auto-archive sold out lots
       const lotUpdates = [];
+      const currentBookings = bookings || [];
+      const currentSales = existingSales || [];
       for (const item of cart) {
         const lot = lots?.find(l => l.id === item.lotId);
         if (lot && lot.status !== 'Completed') {
-          const freeStock = computeFreeStockForLot(item.lotId, item.plantId);
-          if (freeStock <= 0) {
+          const deliveredQty = currentBookings.filter(b => b.lot_id === lot.id && b.status === 'Delivered').reduce((sum, b) => sum + b.quantity, 0);
+          const salesQty = currentSales.filter(s => s.lot_id === lot.id).reduce((sum, s) => sum + s.quantity, 0);
+          const physicalStockRemaining = (lot.available_stock ?? lot.total_quantity) - deliveredQty - salesQty - item.quantity;
+          if (physicalStockRemaining <= 0) {
             lot.status = 'Completed';
             lotUpdates.push(lot);
           }
