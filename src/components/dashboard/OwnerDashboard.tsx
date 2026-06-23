@@ -32,12 +32,12 @@ export default function OwnerDashboard() {
   const { t } = useLanguage();
   const todayStr = today();
 
-  const allSales = useLiveQuery(() => db.direct_sales.toArray());
-  const allBookings = useLiveQuery(() => db.bookings.toArray());
-  const allLots = useLiveQuery(() => db.lots.toArray());
+  const allSales = useLiveQuery(async () => (await db.direct_sales.toArray()).filter(s => !s.deleted_at));
+  const allBookings = useLiveQuery(async () => (await db.bookings.toArray()).filter(b => !b.deleted_at));
+  const allLots = useLiveQuery(async () => (await db.lots.toArray()).filter(l => !l.deleted_at));
   const allPlants = useLiveQuery(async () => {
     const all = await db.plants.toArray();
-    return all.filter(p => p.active);
+    return all.filter(p => p.active && !p.deleted_at);
   });
 
   const [ownerId, setOwnerId] = useState<string | null>(null);

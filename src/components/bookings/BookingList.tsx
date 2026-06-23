@@ -52,11 +52,11 @@ export default function BookingList({ role, userId, userName }: BookingListProps
   const [splitAmounts, setSplitAmounts] = useState({ cash: '', upi: '' });
   const [deliveryRemarks, setDeliveryRemarks] = useState('');
 
-  const bookings = useLiveQuery(() => db.bookings.orderBy('created_at').reverse().toArray());
-  const plants = useLiveQuery(() => db.plants.toArray());
-  const lots = useLiveQuery(() => db.lots.toArray());
-  const allotments = useLiveQuery(() => db.allotments.toArray());
-  const direct_sales = useLiveQuery(() => db.direct_sales.toArray());
+  const bookings = useLiveQuery(async () => (await db.bookings.orderBy('created_at').reverse().toArray()).filter(b => !b.deleted_at));
+  const plants = useLiveQuery(async () => (await db.plants.toArray()).filter(p => !p.deleted_at));
+  const lots = useLiveQuery(async () => (await db.lots.toArray()).filter(l => !l.deleted_at));
+  const allotments = useLiveQuery(async () => (await db.allotments.toArray()).filter(a => !a.deleted_at));
+  const direct_sales = useLiveQuery(async () => (await db.direct_sales.toArray()).filter(s => !s.deleted_at));
 
   const handleExportExcel = () => {
     if (!filtered || filtered.length === 0) return;
@@ -197,8 +197,9 @@ export default function BookingList({ role, userId, userName }: BookingListProps
         // Release allotments so lot inventory is freed (Fix #006)
         const rowAllotments = await db.allotments.where('booking_id').equals(id).toArray();
         for (const a of rowAllotments) {
-          await db.allotments.delete(a.id);
-          await db.sync_queue.add({ table: 'allotments', action: 'DELETE', payload: { id: a.id }, created_at: Date.now() });
+          const deletedAt = new Date().toISOString();
+          await db.allotments.update(a.id, { deleted_at: deletedAt, sync_status: 'pending' as const });
+          await db.sync_queue.add({ table: 'allotments', action: 'UPDATE', payload: { ...a, deleted_at: deletedAt }, created_at: Date.now() });
         }
 
         await logAudit(userId, userName, 'CANCEL_BOOKING', 'bookings', row.id, {

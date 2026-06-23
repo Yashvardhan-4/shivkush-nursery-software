@@ -23,8 +23,8 @@ export default function WorkerDashboard() {
     const workerId = user?.id;
 
     const [allSales, allBookings] = await Promise.all([
-      db.direct_sales.toArray(),
-      db.bookings.toArray()
+      db.direct_sales.filter(s => !s.deleted_at).toArray(),
+      db.bookings.filter(b => !b.deleted_at).toArray()
     ]);
     
     return allSales
@@ -44,10 +44,10 @@ export default function WorkerDashboard() {
   // Free stock computation per plant
   const freeStockData = useLiveQuery(async () => {
     const [plants, lots, allotments, bookings] = await Promise.all([
-      db.plants.toArray(),
-      db.lots.toArray(),
-      db.allotments.toArray(),
-      db.bookings.toArray()
+      db.plants.filter(p => !p.deleted_at).toArray(),
+      db.lots.filter(l => !l.deleted_at).toArray(),
+      db.allotments.filter(a => !a.deleted_at).toArray(),
+      db.bookings.filter(b => !b.deleted_at).toArray()
     ]);
 
     return plants

@@ -122,8 +122,21 @@ function AllotmentRow({
   const [error, setError] = useState('');
 
   const plant = plants.find((p) => p.id === booking.plant_id);
-  const eligibleLots = lots.filter((l) => l.plant_id === booking.plant_id && l.status !== 'Completed');
+  const eligibleLots = lots
+    .filter((l) => l.plant_id === booking.plant_id && l.status !== 'Completed')
+    .sort((a, b) => new Date(a.ready_date).getTime() - new Date(b.ready_date).getTime());
+  
   const hasStock = eligibleLots.some(lot => getAvailableInLot(lot.id, lots, allotments, bookings, directSales) > 0);
+
+  // Auto-select first available lot (FIFO)
+  useEffect(() => {
+    if (!selectedLotId && eligibleLots.length > 0) {
+      const firstWithStock = eligibleLots.find(lot => getAvailableInLot(lot.id, lots, allotments, bookings, directSales) > 0);
+      if (firstWithStock) {
+        setSelectedLotId(firstWithStock.id);
+      }
+    }
+  }, [eligibleLots, selectedLotId, lots, allotments, bookings, directSales]);
 
   function availableInLot(lotId: string): number {
     return getAvailableInLot(lotId, lots, allotments, bookings, directSales);
@@ -141,13 +154,14 @@ function AllotmentRow({
       const bookingAllots = allotments.filter((a) => a.booking_id === booking.id);
 
       await db.transaction('rw', [db.allotments, db.bookings, db.sync_queue, db.audit_logs], async () => {
-        // 1. Delete all allotment records
+        // 1. Soft delete all allotment records
         for (const allotment of bookingAllots) {
-          await db.allotments.delete(allotment.id);
+          const deletedAt = new Date().toISOString();
+          await db.allotments.update(allotment.id, { deleted_at: deletedAt, sync_status: 'pending' as const });
           await db.sync_queue.add({
             table: 'allotments',
-            action: 'DELETE',
-            payload: { id: allotment.id },
+            action: 'UPDATE',
+            payload: { ...allotment, deleted_at: deletedAt },
             created_at: Date.now(),
           });
         }

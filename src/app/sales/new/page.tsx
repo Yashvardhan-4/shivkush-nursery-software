@@ -63,13 +63,13 @@ export default function NewDirectSalePage() {
   const router = useRouter();
 
   // Load all needed data for stock calculation and customer check
-  const plants = useLiveQuery(() => db.plants.toArray());
-  const lots = useLiveQuery(() => db.lots.toArray());
-  const allotments = useLiveQuery(() => db.allotments.toArray());
-  const bookings = useLiveQuery(() => db.bookings.toArray());
-  const existingSales = useLiveQuery(() => db.direct_sales.toArray());
-  const customers = useLiveQuery(() => db.customers.toArray());
-  const users = useLiveQuery(() => db.users.toArray());
+  const plants = useLiveQuery(async () => (await db.plants.toArray()).filter(p => !p.deleted_at));
+  const lots = useLiveQuery(async () => (await db.lots.toArray()).filter(l => !l.deleted_at));
+  const allotments = useLiveQuery(async () => (await db.allotments.toArray()).filter(a => !a.deleted_at));
+  const bookings = useLiveQuery(async () => (await db.bookings.toArray()).filter(b => !b.deleted_at));
+  const existingSales = useLiveQuery(async () => (await db.direct_sales.toArray()).filter(s => !s.deleted_at));
+  const customers = useLiveQuery(async () => (await db.customers.toArray()).filter(c => !c.deleted_at));
+  const users = useLiveQuery(async () => (await db.users.toArray()).filter(u => !u.deleted_at));
   const workers = users?.filter(u => u.role === 'worker') || [];
 
   // Auto-select first available lot (FIFO) when plant changes, sorted by ready_date

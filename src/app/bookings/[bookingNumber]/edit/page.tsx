@@ -217,11 +217,12 @@ export default function EditBookingPage() {
         // 1. Release allotments
         const relatedAllotments = await db.allotments.where('booking_id').anyOf(rowIds).toArray();
         for (const allot of relatedAllotments) {
-          await db.allotments.delete(allot.id);
+          const deletedAt = new Date().toISOString();
+          await db.allotments.update(allot.id, { deleted_at: deletedAt, sync_status: 'pending' as const });
           await db.sync_queue.add({
             table: 'allotments',
-            action: 'DELETE',
-            payload: { id: allot.id },
+            action: 'UPDATE',
+            payload: { ...allot, deleted_at: deletedAt },
             created_at: Date.now()
           });
         }
@@ -287,11 +288,12 @@ export default function EditBookingPage() {
     try {
       await db.transaction('rw', [db.bookings, db.sync_queue, db.audit_logs], async () => {
         for (const row of originalBookingRows || []) {
-          await db.bookings.delete(row.id);
+          const deletedAt = new Date().toISOString();
+          await db.bookings.update(row.id, { deleted_at: deletedAt, sync_status: 'pending' as const });
           await db.sync_queue.add({
             table: 'bookings',
-            action: 'DELETE',
-            payload: { id: row.id },
+            action: 'UPDATE',
+            payload: { ...row, deleted_at: deletedAt },
             created_at: Date.now()
           });
         }
@@ -431,22 +433,27 @@ export default function EditBookingPage() {
         // 1. Identify deleted items
         const deletedIds = Array.from(originalIds).filter(id => !modifiedIds.has(id));
         for (const id of deletedIds) {
-          await db.bookings.delete(id);
-          await db.sync_queue.add({
-            table: 'bookings',
-            action: 'DELETE',
-            payload: { id },
-            created_at: Date.now()
-          });
+          const deletedAt = new Date().toISOString();
+          const oldBooking = await db.bookings.get(id);
+          if (oldBooking) {
+            await db.bookings.update(id, { deleted_at: deletedAt, sync_status: 'pending' as const });
+            await db.sync_queue.add({
+              table: 'bookings',
+              action: 'UPDATE',
+              payload: { ...oldBooking, deleted_at: deletedAt },
+              created_at: Date.now()
+            });
+          }
 
           // Delete allotments for deleted row
           const rowAllotments = await db.allotments.where('booking_id').equals(id).toArray();
           for (const allot of rowAllotments) {
-            await db.allotments.delete(allot.id);
+            const deletedAt = new Date().toISOString();
+            await db.allotments.update(allot.id, { deleted_at: deletedAt, sync_status: 'pending' as const });
             await db.sync_queue.add({
               table: 'allotments',
-              action: 'DELETE',
-              payload: { id: allot.id },
+              action: 'UPDATE',
+              payload: { ...allot, deleted_at: deletedAt },
               created_at: Date.now()
             });
           }
@@ -462,11 +469,12 @@ export default function EditBookingPage() {
               // Delete allotments for modified row
               const rowAllotments = await db.allotments.where('booking_id').equals(b.id).toArray();
               for (const allot of rowAllotments) {
-                await db.allotments.delete(allot.id);
+                const deletedAt = new Date().toISOString();
+                await db.allotments.update(allot.id, { deleted_at: deletedAt, sync_status: 'pending' as const });
                 await db.sync_queue.add({
                   table: 'allotments',
-                  action: 'DELETE',
-                  payload: { id: allot.id },
+                  action: 'UPDATE',
+                  payload: { ...allot, deleted_at: deletedAt },
                   created_at: Date.now()
                 });
               }

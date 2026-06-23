@@ -10,11 +10,11 @@ export default function LotList() {
   const { t } = useLanguage();
   const [statusFilter, setStatusFilter] = useState<'Growing' | 'Ready' | 'Completed'>('Ready');
 
-  const lots = useLiveQuery(() => db.lots.toArray());
-  const plants = useLiveQuery(() => db.plants.toArray());
-  const allotments = useLiveQuery(() => db.allotments.toArray());
-  const bookings = useLiveQuery(() => db.bookings.toArray());
-  const directSales = useLiveQuery(() => db.direct_sales.toArray());
+  const lots = useLiveQuery(async () => (await db.lots.toArray()).filter(l => !l.deleted_at));
+  const plants = useLiveQuery(async () => (await db.plants.toArray()).filter(p => !p.deleted_at));
+  const allotments = useLiveQuery(async () => (await db.allotments.toArray()).filter(a => !a.deleted_at));
+  const bookings = useLiveQuery(async () => (await db.bookings.toArray()).filter(b => !b.deleted_at));
+  const directSales = useLiveQuery(async () => (await db.direct_sales.toArray()).filter(s => !s.deleted_at));
 
   const handleMarkReady = async (lotId: string) => {
     try {
@@ -61,13 +61,17 @@ export default function LotList() {
     if (confirm('Are you sure you want to completely delete this empty lot? This action cannot be undone.')) {
       try {
         const user = JSON.parse(localStorage.getItem('snms_user') || '{}');
-        await db.lots.delete(lotId);
-        await db.sync_queue.add({
-          table: 'lots',
-          action: 'DELETE',
-          payload: { id: lotId },
-          created_at: Date.now(),
-        });
+        const deletedAt = new Date().toISOString();
+        const oldLot = await db.lots.get(lotId);
+        if (oldLot) {
+          await db.lots.update(lotId, { deleted_at: deletedAt, sync_status: 'pending' });
+          await db.sync_queue.add({
+            table: 'lots',
+            action: 'UPDATE',
+            payload: { ...oldLot, deleted_at: deletedAt },
+            created_at: Date.now(),
+          });
+        }
         window.dispatchEvent(new Event('online'));
       } catch (error) {
         console.error('Failed to delete lot:', error);

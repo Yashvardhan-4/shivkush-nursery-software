@@ -69,13 +69,17 @@ export default function QRManagementPage() {
   const handleDelete = async (id: string) => {
     if (!confirm('Are you sure you want to delete this QR code?')) return;
     try {
-      await db.payment_qrs.delete(id);
-      await db.sync_queue.add({
-        table: 'payment_qrs',
-        action: 'DELETE',
-        payload: { id },
-        created_at: Date.now()
-      });
+      const deletedAt = new Date().toISOString();
+      const oldQr = await db.payment_qrs.get(id);
+      if (oldQr) {
+        await db.payment_qrs.update(id, { deleted_at: deletedAt, sync_status: 'pending' });
+        await db.sync_queue.add({
+          table: 'payment_qrs',
+          action: 'UPDATE',
+          payload: { ...oldQr, deleted_at: deletedAt },
+          created_at: Date.now()
+        });
+      }
       window.dispatchEvent(new Event('online'));
     } catch (err) {
       console.error(err);

@@ -200,13 +200,17 @@ export default function EditLotPage({ params }: Props) {
       setLoading(true);
       try {
         const user = JSON.parse(localStorage.getItem('snms_user') || '{}');
-        await db.lots.delete(id);
-        await db.sync_queue.add({
-          table: 'lots',
-          action: 'DELETE',
-          payload: { id },
-          created_at: Date.now(),
-        });
+        const deletedAt = new Date().toISOString();
+        const oldLot = await db.lots.get(id);
+        if (oldLot) {
+          await db.lots.update(id, { deleted_at: deletedAt, sync_status: 'pending' });
+          await db.sync_queue.add({
+            table: 'lots',
+            action: 'UPDATE',
+            payload: { ...oldLot, deleted_at: deletedAt },
+            created_at: Date.now(),
+          });
+        }
         await logAudit(user.id || '00000000-0000-0000-0000-000000000000', user.name || 'Owner', 'DELETE_LOT', 'lots', id, { lot_number: lotNumber });
         window.dispatchEvent(new Event('online'));
         router.push('/lots');

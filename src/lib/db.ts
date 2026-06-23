@@ -17,6 +17,7 @@ export interface Plant {
   selling_price: number;
   active: boolean;
   pricing_tiers?: PricingTier[];
+  deleted_at?: string;
 }
 
 export interface PaymentQR {
@@ -27,6 +28,7 @@ export interface PaymentQR {
   active: boolean;
   sync_status: 'synced' | 'pending';
   created_at: string;
+  deleted_at?: string;
 }
 
 export interface Lot {
@@ -41,6 +43,7 @@ export interface Lot {
   status: 'Growing' | 'Ready' | 'Completed';
   notes: string | null;
   created_at?: string;
+  deleted_at?: string;
 }
 
 export interface Customer {
@@ -48,6 +51,7 @@ export interface Customer {
   name: string;
   mobile: string;
   city: string | null;
+  deleted_at?: string;
 }
 
 export interface User {
@@ -87,6 +91,7 @@ export interface Booking {
   refund_payment_mode?: 'Cash' | 'UPI' | null;
   refund_status?: 'Not Refunded' | 'Refunded' | 'Forfeited';
   refund_date?: string | null;
+  deleted_at?: string;
 }
 
 // Allotment: Owner assigns a specific lot's plants to a booking
@@ -98,6 +103,7 @@ export interface Allotment {
   allotted_by: string;   // owner user id
   allotted_at: string;   // ISO timestamp
   sync_status: 'synced' | 'pending';
+  deleted_at?: string;
 }
 
 export interface DirectSale {
@@ -117,6 +123,7 @@ export interface DirectSale {
   fulfillment_status?: 'Pending Handover' | 'Fulfilled';
   sync_status: 'synced' | 'pending';
   created_at: string;
+  deleted_at?: string;
 }
 
 export interface AttendanceRecord {
@@ -127,6 +134,7 @@ export interface AttendanceRecord {
   status: 'Present' | 'Absent' | 'Half Day';
   marked_by: string;
   sync_status: 'synced' | 'pending';
+  deleted_at?: string;
 }
 
 export interface AuditLog {
@@ -447,11 +455,12 @@ export async function splitAndDeliverBooking(
 
         // Update old allotment quantity
         if (allot.quantity === take) {
-          await db.allotments.delete(allot.id);
+          const deletedAt = new Date().toISOString();
+          await db.allotments.update(allot.id, { deleted_at: deletedAt, sync_status: 'pending' as const });
           await db.sync_queue.add({
             table: 'allotments',
-            action: 'DELETE',
-            payload: { id: allot.id },
+            action: 'UPDATE',
+            payload: { ...allot, deleted_at: deletedAt },
             created_at: Date.now()
           });
         } else {
