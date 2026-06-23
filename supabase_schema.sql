@@ -220,7 +220,7 @@ CREATE OR REPLACE FUNCTION process_sync_batch(payload JSON)
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
-AS $$
+AS $
 DECLARE
     item JSON;
     act TEXT;
@@ -251,7 +251,7 @@ BEGIN
                     (p->>'selling_price')::decimal,
                     p->>'description',
                     COALESCE((p->>'active')::boolean, true),
-                    COALESCE(p->'pricing_tiers', '[]'::jsonb),
+                    COALESCE(p->'pricing_tiers', '[]'::json),
                     COALESCE(NULLIF(p->>'created_at','')::timestamp with time zone, now())
                 ) ON CONFLICT (id) DO UPDATE SET
                     plant_name = EXCLUDED.plant_name,
@@ -269,7 +269,8 @@ BEGIN
                     selling_price = COALESCE((p->>'selling_price')::decimal, selling_price),
                     description = COALESCE(p->>'description', description),
                     pricing_tiers = COALESCE(p->'pricing_tiers', pricing_tiers),
-                    active = COALESCE((p->>'active')::boolean, active)
+                    active = COALESCE((p->>'active')::boolean, active),
+                    deleted_at = COALESCE(NULLIF(p->>'deleted_at', '')::timestamp with time zone, deleted_at)
                 WHERE id = item_id;
             ELSIF act = 'DELETE' THEN
                 DELETE FROM public.plants WHERE id = item_id;
@@ -291,7 +292,8 @@ BEGIN
                 UPDATE public.customers SET
                     name = COALESCE(p->>'name', name),
                     mobile = COALESCE(p->>'mobile', mobile),
-                    city = COALESCE(p->>'city', city)
+                    city = COALESCE(p->>'city', city),
+                    deleted_at = COALESCE(NULLIF(p->>'deleted_at', '')::timestamp with time zone, deleted_at)
                 WHERE id = item_id;
             ELSIF act = 'DELETE' THEN
                 DELETE FROM public.customers WHERE id = item_id;
@@ -308,7 +310,7 @@ BEGIN
                     (p->>'total_quantity')::integer,
                     COALESCE((p->>'initial_quantity')::integer, (p->>'total_quantity')::integer),
                     COALESCE((p->>'available_stock')::integer, (p->>'total_quantity')::integer),
-                    (p->>'ready_date')::date,
+                    COALESCE(NULLIF(p->>'ready_date', '')::date, CURRENT_DATE),
                     p->>'status',
                     p->>'notes',
                     COALESCE(NULLIF(p->>'created_at','')::timestamp with time zone, now())
@@ -330,9 +332,10 @@ BEGIN
                     total_quantity = COALESCE((p->>'total_quantity')::integer, total_quantity),
                     initial_quantity = COALESCE((p->>'initial_quantity')::integer, initial_quantity),
                     available_stock = COALESCE((p->>'available_stock')::integer, available_stock),
-                    ready_date = COALESCE((p->>'ready_date')::date, ready_date),
+                    ready_date = COALESCE(NULLIF(p->>'ready_date', '')::date, ready_date),
                     status = COALESCE(p->>'status', status),
-                    notes = COALESCE(p->>'notes', notes)
+                    notes = COALESCE(p->>'notes', notes),
+                    deleted_at = COALESCE(NULLIF(p->>'deleted_at', '')::timestamp with time zone, deleted_at)
                 WHERE id = item_id;
             ELSIF act = 'DELETE' THEN
                 DELETE FROM public.lots WHERE id = item_id;
@@ -361,7 +364,7 @@ BEGIN
                     NULLIF(p->>'advance_cash_amount', '')::decimal,
                     NULLIF(p->>'advance_upi_amount', '')::decimal,
                     (p->>'total_amount')::decimal,
-                    (p->>'booking_date')::date,
+                    COALESCE(NULLIF(p->>'booking_date', '')::date, CURRENT_DATE),
                     NULLIF(p->>'delivery_date', '')::date,
                     p->>'status',
                     p->>'remarks',
@@ -420,7 +423,8 @@ BEGIN
                     refund_amount = COALESCE((p->>'refund_amount')::decimal, refund_amount),
                     refund_payment_mode = COALESCE(p->>'refund_payment_mode', refund_payment_mode),
                     refund_status = COALESCE(p->>'refund_status', refund_status),
-                    refund_date = CASE WHEN p->>'refund_date' IS NOT NULL AND p->>'refund_date' != '' THEN (p->>'refund_date')::date ELSE refund_date END
+                    refund_date = CASE WHEN p->>'refund_date' IS NOT NULL AND p->>'refund_date' != '' THEN (p->>'refund_date')::date ELSE refund_date END,
+                    deleted_at = COALESCE(NULLIF(p->>'deleted_at', '')::timestamp with time zone, deleted_at)
                 WHERE id = item_id;
             ELSIF act = 'DELETE' THEN
                 DELETE FROM public.bookings WHERE id = item_id;
@@ -443,7 +447,8 @@ BEGIN
                     lot_id = COALESCE(NULLIF(p->>'lot_id', '')::uuid, lot_id),
                     quantity = COALESCE(NULLIF(p->>'quantity', '')::integer, quantity),
                     allotted_by = COALESCE(NULLIF(p->>'allotted_by', '')::uuid, allotted_by),
-                    allotted_at = COALESCE(NULLIF(p->>'allotted_at', '')::timestamp with time zone, allotted_at)
+                    allotted_at = COALESCE(NULLIF(p->>'allotted_at', '')::timestamp with time zone, allotted_at),
+                    deleted_at = COALESCE(NULLIF(p->>'deleted_at', '')::timestamp with time zone, deleted_at)
                 WHERE id = item_id;
             ELSIF act = 'DELETE' THEN
                 DELETE FROM public.allotments WHERE id = item_id;
@@ -486,7 +491,8 @@ BEGIN
                     upi_amount = COALESCE(NULLIF(p->>'upi_amount', '')::decimal, upi_amount),
                     worker_id = COALESCE(NULLIF(p->>'worker_id', '')::uuid, worker_id),
                     assigned_to = COALESCE(NULLIF(p->>'assigned_to', '')::uuid, assigned_to),
-                    fulfillment_status = COALESCE(p->>'fulfillment_status', fulfillment_status)
+                    fulfillment_status = COALESCE(p->>'fulfillment_status', fulfillment_status),
+                    deleted_at = COALESCE(NULLIF(p->>'deleted_at', '')::timestamp with time zone, deleted_at)
                 WHERE id = item_id;
             ELSIF act = 'DELETE' THEN
                 DELETE FROM public.direct_sales WHERE id = item_id;
@@ -506,7 +512,8 @@ BEGIN
                 UPDATE public.attendance SET
                     worker_id = COALESCE(NULLIF(p->>'worker_id', '')::uuid, worker_id),
                     date = COALESCE(NULLIF(p->>'date', '')::date, date),
-                    status = COALESCE(p->>'status', status)
+                    status = COALESCE(p->>'status', status),
+                    deleted_at = COALESCE(NULLIF(p->>'deleted_at', '')::timestamp with time zone, deleted_at)
                 WHERE id = item_id;
             ELSIF act = 'DELETE' THEN
                 DELETE FROM public.attendance WHERE id = item_id;
@@ -532,7 +539,8 @@ BEGIN
                     name = COALESCE(p->>'name', name),
                     upi_id = COALESCE(p->>'upi_id', upi_id),
                     image_data = COALESCE(p->>'image_data', image_data),
-                    active = COALESCE((p->>'active')::boolean, active)
+                    active = COALESCE((p->>'active')::boolean, active),
+                    deleted_at = COALESCE(NULLIF(p->>'deleted_at', '')::timestamp with time zone, deleted_at)
                 WHERE id = item_id;
             ELSIF act = 'DELETE' THEN
                 DELETE FROM public.payment_qrs WHERE id = item_id;
@@ -555,7 +563,8 @@ BEGIN
         END IF;
     END LOOP;
 END;
-$$;
+$;
+
 
 -- SEED AN INITIAL OWNER ACCOUNT
 -- Mobile: 9999999999, Password: admin
