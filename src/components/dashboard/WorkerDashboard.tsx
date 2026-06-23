@@ -35,17 +35,19 @@ export default function WorkerDashboard() {
         .reduce((sum, b) => sum + Math.max(0, b.total_amount - (b.advance_paid || 0)), 0)
       + allBookings
         .filter((b) => ((b.created_at && toLocalDateStr(b.created_at) === todayStr) || (!b.created_at && b.booking_date === todayStr)) && b.worker_id === workerId)
-        .reduce((sum, b) => sum + (b.advance_paid || 0), 0);
+        .reduce((sum, b) => sum + (b.advance_paid || 0), 0)
+      - allBookings
+        .filter((b) => b.status === 'Cancelled' && b.refund_status === 'Refunded' && b.refund_date === todayStr && b.worker_id === workerId)
+        .reduce((sum, b) => sum + Number(b.refund_amount || 0), 0);
   });
 
   // Free stock computation per plant
   const freeStockData = useLiveQuery(async () => {
-    const [plants, lots, allotments, bookings, sales] = await Promise.all([
+    const [plants, lots, allotments, bookings] = await Promise.all([
       db.plants.toArray(),
       db.lots.toArray(),
       db.allotments.toArray(),
-      db.bookings.toArray(),
-      db.direct_sales.toArray(),
+      db.bookings.toArray()
     ]);
 
     return plants
@@ -62,10 +64,8 @@ export default function WorkerDashboard() {
             lotBookings.filter(b => b.status !== 'Delivered' && b.status !== 'Cancelled').map(b => b.id)
           );
           const allottedInLot = allotments.filter(a => a.lot_id === lot.id && activeBookingIds.has(a.booking_id)).reduce((s, a) => s + a.quantity, 0);
-          const deliveredInLot = lotBookings.filter(b => b.status === 'Delivered').reduce((s, b) => s + b.quantity, 0);
-          const salesInLot = sales.filter(s => s.lot_id === lot.id).reduce((s, sale) => s + sale.quantity, 0);
           
-          freeStock += Math.max(0, lotTotal - allottedInLot - deliveredInLot - salesInLot);
+          freeStock += Math.max(0, lotTotal - allottedInLot);
           totalStock += lotTotal;
           allottedQty += allottedInLot;
         });

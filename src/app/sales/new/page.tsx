@@ -119,16 +119,8 @@ export default function NewDirectSalePage() {
       .filter(a => a.lot_id === lotId && activeBookingIds.has(a.booking_id))
       .reduce((s, a) => s + a.quantity, 0);
       
-    const deliveredBookingsQty = bookings
-      .filter(b => b.lot_id === lotId && b.status === 'Delivered')
-      .reduce((s, b) => s + b.quantity, 0);
-      
-    const directSalesQty = existingSales
-      .filter(s => s.lot_id === lotId)
-      .reduce((s, sale) => s + sale.quantity, 0);
-
     const cartQty = cart.filter(i => i.lotId === lotId).reduce((s, i) => s + i.quantity, 0);
-    return Math.max(0, (lot.available_stock ?? lot.total_quantity) - allottedInLot - deliveredBookingsQty - directSalesQty - cartQty);
+    return Math.max(0, (lot.available_stock ?? lot.total_quantity) - allottedInLot - cartQty);
   };
 
   // Total free stock across all active lots for a plant

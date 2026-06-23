@@ -101,7 +101,7 @@ export default function OwnerDashboard() {
           .reduce((sum, b) => sum + b.quantity, 0);
         const totalGrowing = allLots
           .filter((l) => l.plant_id === plant.id && l.status !== 'Completed')
-          .reduce((sum, l) => sum + l.total_quantity, 0);
+          .reduce((sum, l) => sum + (l.available_stock ?? l.total_quantity), 0);
         return totalBooked > totalGrowing;
       }).length
     : null;

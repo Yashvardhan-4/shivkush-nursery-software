@@ -86,16 +86,8 @@ function getAvailableInLot(lotId: string, lots: Lot[], allotments: Allotment[], 
     .filter(a => a.lot_id === lotId && activeBookingIds.has(a.booking_id))
     .reduce((sum, a) => sum + a.quantity, 0);
 
-  const deliveredQty = bookings
-    .filter(b => b.lot_id === lotId && b.status === 'Delivered')
-    .reduce((sum, b) => sum + b.quantity, 0);
-
-  const salesQty = directSales
-    .filter(s => s.lot_id === lotId)
-    .reduce((sum, s) => sum + s.quantity, 0);
-
   const availableStock = lot.available_stock ?? lot.total_quantity;
-  return Math.max(0, availableStock - allottedQty - deliveredQty - salesQty);
+  return Math.max(0, availableStock - allottedQty);
 }
 
 // ──────────────────────────────────────────────
