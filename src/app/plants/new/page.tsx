@@ -1,10 +1,11 @@
 'use client';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { db, generateId } from '@/lib/db';
-import type { PricingTier } from '@/lib/db';
+import { generateId } from '@/lib/utils';
+import type { PricingTier } from '@/lib/utils';
+import { supabase } from '@/lib/supabaseClient';
+import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Plus, Trash2, Tag } from 'lucide-react';
-
 export default function NewPlantPage() {
   const [name, setName] = useState('');
   const [variety, setVariety] = useState('');
@@ -15,6 +16,7 @@ export default function NewPlantPage() {
   const [newTierPrice, setNewTierPrice] = useState('');
   const [loading, setLoading] = useState(false);
   const router = useRouter();
+  const queryClient = useQueryClient();
 
   const handleAddTier = () => {
     const qty = parseInt(newTierQty);
@@ -40,6 +42,12 @@ export default function NewPlantPage() {
     e.preventDefault();
     setLoading(true);
 
+    if (!navigator.onLine) {
+      alert('You must be online to save.');
+      setLoading(false);
+      return;
+    }
+
     const newPlant = {
       id: generateId(),
       plant_name: name,
@@ -50,15 +58,15 @@ export default function NewPlantPage() {
       pricing_tiers: pricingTiers,
     };
 
-    await db.plants.add(newPlant);
-    await db.sync_queue.add({
-      table: 'plants',
-      action: 'INSERT',
-      payload: newPlant,
-      created_at: Date.now(),
-    });
+    const { error } = await supabase.from('plants').insert(newPlant);
+    if (error) {
+      console.error(error);
+      alert('Failed to save plant');
+      setLoading(false);
+      return;
+    }
 
-    window.dispatchEvent(new Event('online'));
+    queryClient.invalidateQueries({ queryKey: ['plants'] });
     router.push('/plants');
   };
 

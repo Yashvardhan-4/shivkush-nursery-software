@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db, logAudit, splitAndDeliverBooking } from '@/lib/db';
+import { supabase } from '@/lib/supabaseClient';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+
 import { PackageOpen, CheckCircle, Clock, X } from 'lucide-react';
 
 export default function FulfillmentPage() {
@@ -15,55 +16,72 @@ export default function FulfillmentPage() {
     setUserId(user.id);
   }, []);
 
-  const bookings = useLiveQuery(() => db.bookings.where('assigned_to').equals(userId).toArray(), [userId]);
-  const sales = useLiveQuery(() => db.direct_sales.where('assigned_to').equals(userId).toArray(), [userId]);
-  const plants = useLiveQuery(() => db.plants.toArray());
-  const lots = useLiveQuery(() => db.lots.toArray());
-  const allotments = useLiveQuery(() => db.allotments.toArray());
-
-  const pendingSales = sales?.filter(s => s.fulfillment_status === 'Pending Handover') || [];
-  const pendingBookings = bookings?.filter(b => ['Pending', 'Allocated', 'Ready'].includes(b.status)) || [];
+  const queryClient = useQueryClient();
+  const { data: queriesData } = useQuery({
+    queryKey: ['fulfillment-data', userId],
+    queryFn: async () => {
+      if (!userId) return null;
+      const [b, s, p, l, a] = await Promise.all([
+        supabase.from('bookings').select('*').eq('assigned_to', userId).is('deleted_at', null),
+        supabase.from('direct_sales').select('*').eq('assigned_to', userId).is('deleted_at', null),
+        supabase.from('plants').select('*').is('deleted_at', null),
+        supabase.from('lots').select('*').is('deleted_at', null),
+        supabase.from('allotments').select('*').is('deleted_at', null),
+      ]);
+      return {
+        bookings: b.data || [],
+        sales: s.data || [],
+        plants: p.data || [],
+        lots: l.data || [],
+        allotments: a.data || [],
+      };
+    },
+    enabled: !!userId
+  });
+  const { bookings, sales, plants, lots, allotments } = queriesData || {};
+  
+  const pendingSales = sales?.filter((s: any) => s.fulfillment_status === 'Pending Handover') || [];
+  const pendingBookings = bookings?.filter((b: any) => ['Pending', 'Allocated', 'Ready'].includes(b.status)) || [];
 
   const checkSoldOutLot = async (lotId: string | null | undefined, plantId: string) => {
     if (!lotId || !lots || !allotments || !bookings || !sales) return;
-    const lot = lots.find(l => l.id === lotId);
+    const lot = lots.find((l: any) => l.id === lotId);
     if (!lot || lot.status === 'Completed') return;
 
-    const currentBookings = await db.bookings.toArray();
-    const currentSales = await db.direct_sales.toArray();
+    const currentBookings = await supabase.from('bookings').select('quantity, lot_id, status').is('deleted_at', null);
+    const currentSales = await supabase.from('direct_sales').select('quantity, lot_id').is('deleted_at', null);
 
-    const deliveredQty = currentBookings.filter(b => b.lot_id === lotId && b.status === 'Delivered').reduce((s,b) => s + b.quantity, 0);
-    const salesQty = currentSales.filter(s => s.lot_id === lotId).reduce((s, sale) => s + sale.quantity, 0);
+    const deliveredQty = (currentBookings.data || []).filter((b: any) => b.lot_id === lotId && b.status === 'Delivered').reduce((s: number,b: any) => s + b.quantity, 0);
+    const salesQty = (currentSales.data || []).filter((s: any) => s.lot_id === lotId).reduce((s: number, sale: any) => s + sale.quantity, 0);
 
     const physicalStockRemaining = (lot.available_stock ?? lot.total_quantity) - deliveredQty - salesQty;
     
     if (physicalStockRemaining <= 0) {
-       const updatedLot = { ...lot, status: 'Completed' as const };
-       await db.lots.put(updatedLot);
-       await db.sync_queue.add({ table: 'lots', action: 'UPDATE', payload: { ...updatedLot, sync_status: undefined }, created_at: Date.now() });
+       await supabase.from('lots').update({ status: 'Completed' }).eq('id', lotId);
     }
   };
 
   const handleFulfillSale = async (id: string) => {
     try {
-      const sale = await db.direct_sales.get(id);
+      if (!navigator.onLine) { alert('You must be online to save.'); return; }
+      const sale = sales?.find((s: any) => s.id === id);
       if (!sale) return;
 
-      await db.transaction('rw', [db.direct_sales, db.bookings, db.allotments, db.lots, db.sync_queue, db.audit_logs], async () => {
-        const updates = { fulfillment_status: 'Fulfilled' as const, sync_status: 'pending' as const };
-        await db.direct_sales.update(id, updates);
-        await db.sync_queue.add({
-          table: 'direct_sales',
-          action: 'UPDATE',
-          payload: { ...sale, ...updates, sync_status: undefined },
-          created_at: Date.now()
-        });
+      await supabase.from('direct_sales').update({ fulfillment_status: 'Fulfilled' }).eq('id', id);
 
-        const user = JSON.parse(localStorage.getItem('snms_user') || '{}');
-        await logAudit(user.id, user.name, 'FULFILL_SALE', 'direct_sales', id, { note: 'Handed over to customer' });
-        await checkSoldOutLot(sale.lot_id, sale.plant_id);
+      const user = JSON.parse(localStorage.getItem('snms_user') || '{}');
+      await supabase.from('audit_logs').insert({
+        id: crypto.randomUUID(),
+        user_id: user.id || '00000000-0000-0000-0000-000000000000',
+        user_name: user.name || 'Owner',
+        action: 'FULFILL_SALE',
+        entity_type: 'direct_sales',
+        entity_id: id,
+        details: { note: 'Handed over to customer' }
       });
-      window.dispatchEvent(new Event('online'));
+
+      await checkSoldOutLot(sale.lot_id, sale.plant_id);
+      queryClient.invalidateQueries({ queryKey: ['fulfillment-data'] });
     } catch (e) {
       console.error(e);
       alert('Failed to fulfill sale');
@@ -84,16 +102,27 @@ export default function FulfillmentPage() {
     }
 
     try {
-      const user = JSON.parse(localStorage.getItem('snms_user') || '{}');
-      await splitAndDeliverBooking(selectedBookingForDelivery.id, qty, user.id, user.name);
+      if (!navigator.onLine) { alert('You must be online to save.'); return; }
       
-      const booking = await db.bookings.get(selectedBookingForDelivery.id);
-      if (booking) {
-        await checkSoldOutLot(booking.lot_id, booking.plant_id);
+      const booking = bookings?.find((b: any) => b.id === selectedBookingForDelivery.id);
+      if (!booking) return;
+
+      const user = JSON.parse(localStorage.getItem('snms_user') || '{}');
+      const { error } = await supabase.rpc('process_delivery', {
+        p_booking_id: booking.id,
+        p_delivery_qty: qty,
+        p_user_id: user.id || '00000000-0000-0000-0000-000000000000',
+        p_user_name: user.name || 'Owner'
+      });
+
+      if (error) {
+        throw new Error(error.message);
       }
       
+      await checkSoldOutLot(booking.lot_id, booking.plant_id);
+      
+      queryClient.invalidateQueries({ queryKey: ['fulfillment-data'] });
       setSelectedBookingForDelivery(null);
-      window.dispatchEvent(new Event('online'));
     } catch (e) {
       console.error(e);
       alert('Failed to deliver booking');
@@ -134,8 +163,8 @@ export default function FulfillmentPage() {
             Direct Sales
           </h2>
           <div className="grid gap-3">
-            {pendingSales.map(sale => {
-              const plant = plants.find(p => p.id === sale.plant_id);
+            {pendingSales.map((sale: any) => {
+              const plant = plants.find((p: any) => p.id === sale.plant_id);
               return (
                 <div key={sale.id} className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex items-center justify-between">
                   <div>
@@ -163,8 +192,8 @@ export default function FulfillmentPage() {
             Bookings
           </h2>
           <div className="grid gap-3">
-            {pendingBookings.map(booking => {
-              const plant = plants.find(p => p.id === booking.plant_id);
+            {pendingBookings.map((booking: any) => {
+              const plant = plants.find((p: any) => p.id === booking.plant_id);
               const isReady = booking.status === 'Ready';
               return (
                 <div key={booking.id} className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex items-center justify-between">

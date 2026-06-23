@@ -1,7 +1,7 @@
 'use client';
 
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '@/lib/db';
+import { supabase } from '@/lib/supabaseClient';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Pencil, AlertTriangle, Check, Trash2 } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
@@ -10,15 +10,33 @@ export default function LotList() {
   const { t } = useLanguage();
   const [statusFilter, setStatusFilter] = useState<'Growing' | 'Ready' | 'Completed'>('Ready');
 
-  const lots = useLiveQuery(async () => (await db.lots.toArray()).filter(l => !l.deleted_at));
-  const plants = useLiveQuery(async () => (await db.plants.toArray()).filter(p => !p.deleted_at));
-  const allotments = useLiveQuery(async () => (await db.allotments.toArray()).filter(a => !a.deleted_at));
-  const bookings = useLiveQuery(async () => (await db.bookings.toArray()).filter(b => !b.deleted_at));
-  const directSales = useLiveQuery(async () => (await db.direct_sales.toArray()).filter(s => !s.deleted_at));
+  const queryClient = useQueryClient();
+  const { data: queriesData } = useQuery({
+    queryKey: ['lot-list-data'],
+    queryFn: async () => {
+      const [lotsRes, plantsRes, allotmentsRes, bookingsRes, directSalesRes] = await Promise.all([
+        supabase.from('lots').select('*').is('deleted_at', null),
+        supabase.from('plants').select('*').is('deleted_at', null),
+        supabase.from('allotments').select('*').is('deleted_at', null),
+        supabase.from('bookings').select('*').is('deleted_at', null),
+        supabase.from('direct_sales').select('*').is('deleted_at', null)
+      ]);
+      return {
+        lots: lotsRes.data || [],
+        plants: plantsRes.data || [],
+        allotments: allotmentsRes.data || [],
+        bookings: bookingsRes.data || [],
+        directSales: directSalesRes.data || []
+      };
+    }
+  });
+
+  const { lots, plants, allotments, bookings, directSales } = queriesData || {};
 
   const handleMarkReady = async (lotId: string) => {
     try {
-      const lot = await db.lots.get(lotId);
+      if (!navigator.onLine) { alert('You must be online to save.'); return; }
+      const lot = lots?.find(l => l.id === lotId);
       if (!lot) return;
       
       const updates = {
@@ -26,31 +44,19 @@ export default function LotList() {
         updated_at: new Date().toISOString()
       };
       
-      await db.lots.update(lotId, updates);
-      await db.sync_queue.add({
-        table: 'lots',
-        action: 'UPDATE',
-        payload: { ...lot, ...updates, sync_status: undefined },
-        created_at: Date.now(),
-      });
+      await supabase.from('lots').update(updates).eq('id', lotId);
 
-      // Also mark all 'Allocated' bookings tied to this lot via allotments as 'Ready'
-      const lotAllotments = await db.allotments.where('lot_id').equals(lotId).toArray();
+      const lotAllotments = allotments?.filter(a => a.lot_id === lotId) || [];
       const bookingIds = new Set(lotAllotments.map(a => a.booking_id));
-      const allocatedBookings = (await Promise.all(Array.from(bookingIds).map(id => db.bookings.get(id)))).filter(Boolean) as any[];
+      const allocatedBookings = (bookings || []).filter(b => bookingIds.has(b.id));
+      
       for (const b of allocatedBookings) {
         if (b.status === 'Allocated') {
-          await db.bookings.update(b.id, { status: 'Ready', sync_status: 'pending' });
-          await db.sync_queue.add({
-            table: 'bookings',
-            action: 'UPDATE',
-            payload: { ...b, status: 'Ready', sync_status: undefined },
-            created_at: Date.now(),
-          });
+          await supabase.from('bookings').update({ status: 'Ready' }).eq('id', b.id);
         }
       }
 
-      window.dispatchEvent(new Event('online'));
+      queryClient.invalidateQueries({ queryKey: ['lot-list-data'] });
     } catch (error) {
       console.error('Failed to mark lot as ready:', error);
       alert('Failed to update lot status');
@@ -60,19 +66,10 @@ export default function LotList() {
   const handleDeleteLot = async (lotId: string) => {
     if (confirm('Are you sure you want to completely delete this empty lot? This action cannot be undone.')) {
       try {
-        const user = JSON.parse(localStorage.getItem('snms_user') || '{}');
+        if (!navigator.onLine) { alert('You must be online to save.'); return; }
         const deletedAt = new Date().toISOString();
-        const oldLot = await db.lots.get(lotId);
-        if (oldLot) {
-          await db.lots.update(lotId, { deleted_at: deletedAt, sync_status: 'pending' });
-          await db.sync_queue.add({
-            table: 'lots',
-            action: 'UPDATE',
-            payload: { ...oldLot, deleted_at: deletedAt },
-            created_at: Date.now(),
-          });
-        }
-        window.dispatchEvent(new Event('online'));
+        await supabase.from('lots').update({ deleted_at: deletedAt }).eq('id', lotId);
+        queryClient.invalidateQueries({ queryKey: ['lot-list-data'] });
       } catch (error) {
         console.error('Failed to delete lot:', error);
         alert('Failed to delete lot');

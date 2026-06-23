@@ -1,8 +1,9 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { db, generateId, resolvePlantPrice, toLocalDateStr } from '@/lib/db';
-import { useLiveQuery } from 'dexie-react-hooks';
+import { generateId, resolvePlantPrice, toLocalDateStr } from '@/lib/utils';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { supabase } from '@/lib/supabaseClient';
 import { PlusCircle, Trash2, QrCode, X } from 'lucide-react';
 import Link from 'next/link';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
@@ -42,9 +43,13 @@ export default function NewBookingPage() {
   const [city, setCity] = useState('');
   const [deliveryDate, setDeliveryDate] = useState('');
   
-  const activeQrs = useLiveQuery(async () => {
-    const qrs = await db.payment_qrs.toArray();
-    return qrs.filter(q => q.active);
+  const { data: activeQrs } = useQuery({
+    queryKey: ['payment_qrs'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('payment_qrs').select('*').eq('active', true).is('deleted_at', null);
+      if (error) throw error;
+      return data || [];
+    }
   });
   const [showQR, setShowQR] = useState(false);
   
@@ -64,13 +69,66 @@ export default function NewBookingPage() {
   const [loading, setLoading] = useState(false);
   const router = useRouter();
 
-  const plants = useLiveQuery(() => db.plants.toArray());
-  const lots = useLiveQuery(() => db.lots.where('plant_id').equals(plantId).toArray(), [plantId]);
-  const bookings = useLiveQuery(() => db.bookings.toArray());
-  const allotments = useLiveQuery(() => db.allotments.toArray());
-  const direct_sales = useLiveQuery(() => db.direct_sales.toArray());
-  const customers = useLiveQuery(() => db.customers.toArray());
-  const users = useLiveQuery(() => db.users.toArray());
+  const queryClient = useQueryClient();
+
+  const { data: plants } = useQuery({
+    queryKey: ['plants'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('plants').select('*').is('deleted_at', null).eq('active', true);
+      if (error) throw error;
+      return data || [];
+    }
+  });
+  const { data: lots } = useQuery({
+    queryKey: ['lots', plantId],
+    queryFn: async () => {
+      if (!plantId) return [];
+      const { data, error } = await supabase.from('lots').select('*').eq('plant_id', plantId).is('deleted_at', null);
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!plantId
+  });
+  const { data: bookings } = useQuery({
+    queryKey: ['bookings'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('bookings').select('*').is('deleted_at', null);
+      if (error) throw error;
+      return data || [];
+    }
+  });
+  const { data: allotments } = useQuery({
+    queryKey: ['allotments'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('allotments').select('*').is('deleted_at', null);
+      if (error) throw error;
+      return data || [];
+    }
+  });
+  const { data: direct_sales } = useQuery({
+    queryKey: ['direct_sales'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('direct_sales').select('*').is('deleted_at', null);
+      if (error) throw error;
+      return data || [];
+    }
+  });
+  const { data: customers } = useQuery({
+    queryKey: ['customers'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('customers').select('*').is('deleted_at', null);
+      if (error) throw error;
+      return data || [];
+    }
+  });
+  const { data: users } = useQuery({
+    queryKey: ['users'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('users').select('*').is('deleted_at', null);
+      if (error) throw error;
+      return data || [];
+    }
+  });
   const workers = users?.filter(u => u.role === 'worker') || [];
 
   const uniqueCities = Array.from(new Set(customers?.map(c => c.city).filter(Boolean) as string[]));
@@ -207,6 +265,7 @@ export default function NewBookingPage() {
 
   const handleSaveBooking = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!navigator.onLine) { alert('You must be online to save.'); return; }
     if (cart.length === 0) return alert(t('addAtLeastOneBookingError'));
     if ((parseFloat(advancePaid) || 0) > totalAmount) {
       alert(t('advanceExceedTotalError'));
@@ -257,12 +316,9 @@ export default function NewBookingPage() {
         itemUpi += upiRemaining;
       }
 
-      const itemPayMode: 'Cash' | 'UPI' | 'Split' = (itemCash > 0 && itemUpi > 0) ? 'Split' : (itemUpi > 0 ? 'UPI' : 'Cash');
-      const finalItemPayMode = itemAdvance > 0 ? itemPayMode : null;
-
       return {
         id: generateId(),
-        booking_number: bookingNumber,
+        booking_number: `${Math.floor(Date.now() / 1000).toString(36).toUpperCase()}-${index + 1}`,
         customer_name: customerName,
         customer_phone: customerPhone,
         city: city,
@@ -270,48 +326,49 @@ export default function NewBookingPage() {
         lot_id: item.lotId || null,
         quantity: item.quantity,
         advance_paid: itemAdvance,
-        advance_payment_mode: finalItemPayMode,
-        advance_cash_amount: itemCash > 0 ? itemCash : null,
-        advance_upi_amount: itemUpi > 0 ? itemUpi : null,
+        advance_payment_mode: paymentMode,
+        advance_cash_amount: itemCash,
+        advance_upi_amount: itemUpi,
         total_amount: item.amount,
-        booking_date: toLocalDateStr(createdAt),
-        delivery_date: deliveryDate || null,
-        status: 'Pending' as const,
+        booking_date: createdAt,
+        delivery_date: deliveryDate,
+        status: item.lotId ? 'Allocated' : 'Pending',
+        remarks: 'Created from Cart',
         worker_id: user.id,
         assigned_to: assignedTo || null,
-        sync_status: 'pending' as const,
         created_at: createdAt,
         remarks: ''
       };
     });
 
-    await db.transaction('rw', [db.customers, db.bookings, db.sync_queue], async () => {
-      if (customerPhone && customerName) {
-        let cust = await db.customers.where('mobile').equals(customerPhone).first();
-        if (!cust) {
-          cust = { id: generateId(), name: customerName, mobile: customerPhone, city: city || null };
-          await db.customers.add(cust);
-        } else {
-          cust.name = customerName;
-          if (city) cust.city = city;
-          await db.customers.put(cust);
-        }
-        await db.sync_queue.add({ table: 'customers', action: 'INSERT', payload: cust, created_at: Date.now() });
-      }
+    const auditPayload = {
+      user_id: user.id || '00000000-0000-0000-0000-000000000000',
+      user_name: user.name || 'Owner',
+      action: 'CREATE_BOOKINGS',
+      details: { items_count: newBookings.length, advance }
+    };
 
-      await db.bookings.bulkAdd(newBookings);
-      
-      for (const b of newBookings) {
-        await db.sync_queue.add({
-          table: 'bookings',
-          action: 'INSERT',
-          payload: b,
-          created_at: Date.now()
-        });
-      }
+    const customerPayload = {
+      name: customerName,
+      mobile: customerPhone,
+      city: city
+    };
+
+    const { error } = await supabase.rpc('process_bookings_batch', {
+      p_bookings: newBookings,
+      p_customer: customerPayload,
+      p_audit: auditPayload
     });
 
-    window.dispatchEvent(new Event('online'));
+    if (error) {
+      console.error(error);
+      alert('Failed to save bookings');
+      setLoading(false);
+      return;
+    }
+
+    queryClient.invalidateQueries({ queryKey: ['bookings-data'] });
+    queryClient.invalidateQueries({ queryKey: ['customers'] });
     router.push('/bookings');
   };
 

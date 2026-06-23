@@ -1,18 +1,19 @@
 'use client';
 
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db, toLocalDateStr } from '@/lib/db';
+import { useQuery } from '@tanstack/react-query';
+import { supabase } from '@/lib/supabaseClient';
+import { toLocalDateStr } from '@/lib/utils';
 import { Banknote, ShoppingCart, User, BookOpen, Truck } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 
 export default function RecentTransactions({ workerId }: { workerId?: string }) {
   const { t } = useLanguage();
 
-  const allSales = useLiveQuery(() => db.direct_sales.toArray());
-  const allBookings = useLiveQuery(() => db.bookings.toArray());
-  const allUsers = useLiveQuery(() => db.users.toArray());
-  const allPlants = useLiveQuery(() => db.plants.toArray());
-  const allAuditLogs = useLiveQuery(() => db.audit_logs.toArray());
+  const { data: allSales } = useQuery({ queryKey: ['direct_sales'], queryFn: async () => { const { data } = await supabase.from('direct_sales').select('*').is('deleted_at', null); return data || []; } });
+  const { data: allBookings } = useQuery({ queryKey: ['bookings'], queryFn: async () => { const { data } = await supabase.from('bookings').select('*').is('deleted_at', null); return data || []; } });
+  const { data: allUsers } = useQuery({ queryKey: ['users'], queryFn: async () => { const { data } = await supabase.from('users').select('*').is('deleted_at', null); return data || []; } });
+  const { data: allPlants } = useQuery({ queryKey: ['plants'], queryFn: async () => { const { data } = await supabase.from('plants').select('*').is('deleted_at', null).eq('active', true); return data || []; } });
+  const { data: allAuditLogs } = useQuery({ queryKey: ['audit_logs'], queryFn: async () => { const { data } = await supabase.from('audit_logs').select('*'); return data || []; } });
 
   if (!allSales || !allBookings || !allUsers || !allPlants || !allAuditLogs) {
     return (

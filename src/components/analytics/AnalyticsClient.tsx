@@ -1,8 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '@/lib/db';
+import { useQuery } from '@tanstack/react-query';
+import { supabase } from '@/lib/supabaseClient';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { 
   BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, 
@@ -15,9 +15,9 @@ export default function AnalyticsClient() {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
 
-  const bookings = useLiveQuery(() => db.bookings.toArray());
-  const directSales = useLiveQuery(() => db.direct_sales.toArray());
-  const plants = useLiveQuery(() => db.plants.toArray());
+  const { data: bookings } = useQuery({ queryKey: ['bookings'], queryFn: async () => { const { data } = await supabase.from('bookings').select('*').is('deleted_at', null); return data || []; } });
+  const { data: directSales } = useQuery({ queryKey: ['direct_sales'], queryFn: async () => { const { data } = await supabase.from('direct_sales').select('*').is('deleted_at', null); return data || []; } });
+  const { data: plants } = useQuery({ queryKey: ['plants'], queryFn: async () => { const { data } = await supabase.from('plants').select('*').is('deleted_at', null).eq('active', true); return data || []; } });
 
   if (!bookings || !directSales || !plants) {
     return <div className="text-center py-10">Loading analytics...</div>;

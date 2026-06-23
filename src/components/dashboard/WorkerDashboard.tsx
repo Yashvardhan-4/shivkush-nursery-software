@@ -1,11 +1,11 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db, toLocalDateStr } from '@/lib/db';
+import { useQuery } from '@tanstack/react-query';
+import { supabase } from '@/lib/supabaseClient';
+import { toLocalDateStr } from '@/lib/utils';
 import { Banknote, PlusCircle, BookOpen, Layers, Leaf, Package } from 'lucide-react';
 import Link from 'next/link';
-import { SyncButton } from '@/components/ui/SyncButton';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 
 export default function WorkerDashboard() {
@@ -16,54 +16,47 @@ export default function WorkerDashboard() {
     if (userStr) setWorkerId(JSON.parse(userStr).id);
   }, []);
 
-  const todaySalesTotal = useLiveQuery(async () => {
-    const todayStr = toLocalDateStr();
-    const userStr = localStorage.getItem('snms_user');
-    const user = userStr ? JSON.parse(userStr) : null;
-    const workerId = user?.id;
+  const { data: allSales } = useQuery({ queryKey: ['direct_sales'], queryFn: async () => { const { data } = await supabase.from('direct_sales').select('*').is('deleted_at', null); return data || []; } });
+  const { data: allBookings } = useQuery({ queryKey: ['bookings'], queryFn: async () => { const { data } = await supabase.from('bookings').select('*').is('deleted_at', null); return data || []; } });
+  const { data: allPlants } = useQuery({ queryKey: ['plants'], queryFn: async () => { const { data } = await supabase.from('plants').select('*').is('deleted_at', null).eq('active', true); return data || []; } });
+  const { data: allLots } = useQuery({ queryKey: ['lots'], queryFn: async () => { const { data } = await supabase.from('lots').select('*').is('deleted_at', null); return data || []; } });
+  const { data: allAllotments } = useQuery({ queryKey: ['allotments'], queryFn: async () => { const { data } = await supabase.from('allotments').select('*').is('deleted_at', null); return data || []; } });
 
-    const [allSales, allBookings] = await Promise.all([
-      db.direct_sales.filter(s => !s.deleted_at).toArray(),
-      db.bookings.filter(b => !b.deleted_at).toArray()
-    ]);
-    
+  const todaySalesTotal = (() => {
+    const todayStr = toLocalDateStr();
+    if (!workerId || !allSales || !allBookings) return null;
+
     return allSales
         .filter((s) => s.created_at && toLocalDateStr(s.created_at) === todayStr && s.worker_id === workerId)
-        .reduce((sum, s) => sum + s.amount, 0)
+        .reduce((sum, s) => sum + Number(s.amount || 0), 0)
       + allBookings
         .filter((b) => b.delivery_date === todayStr && b.status === 'Delivered' && b.worker_id === workerId)
-        .reduce((sum, b) => sum + Math.max(0, b.total_amount - (b.advance_paid || 0)), 0)
+        .reduce((sum, b) => sum + Math.max(0, Number(b.total_amount || 0) - Number(b.advance_paid || 0)), 0)
       + allBookings
         .filter((b) => ((b.created_at && toLocalDateStr(b.created_at) === todayStr) || (!b.created_at && b.booking_date === todayStr)) && b.worker_id === workerId)
-        .reduce((sum, b) => sum + (b.advance_paid || 0), 0)
+        .reduce((sum, b) => sum + Number(b.advance_paid || 0), 0)
       - allBookings
         .filter((b) => b.status === 'Cancelled' && b.refund_status === 'Refunded' && b.refund_date === todayStr && b.worker_id === workerId)
         .reduce((sum, b) => sum + Number(b.refund_amount || 0), 0);
-  });
+  })();
 
-  // Free stock computation per plant
-  const freeStockData = useLiveQuery(async () => {
-    const [plants, lots, allotments, bookings] = await Promise.all([
-      db.plants.filter(p => !p.deleted_at).toArray(),
-      db.lots.filter(l => !l.deleted_at).toArray(),
-      db.allotments.filter(a => !a.deleted_at).toArray(),
-      db.bookings.filter(b => !b.deleted_at).toArray()
-    ]);
+  const freeStockData = (() => {
+    if (!allPlants || !allLots || !allAllotments || !allBookings) return null;
 
-    return plants
+    return allPlants
       .map(plant => {
         let freeStock = 0;
         let totalStock = 0;
         let allottedQty = 0;
 
-        lots.filter(l => l.plant_id === plant.id && l.status !== 'Completed').forEach(lot => {
+        allLots.filter(l => l.plant_id === plant.id && l.status !== 'Completed').forEach(lot => {
           const lotTotal = lot.available_stock ?? lot.total_quantity;
-          const lotBookings = bookings.filter(b => b.lot_id === lot.id);
+          const lotBookings = allBookings.filter(b => b.lot_id === lot.id);
           
           const activeBookingIds = new Set(
             lotBookings.filter(b => b.status !== 'Delivered' && b.status !== 'Cancelled').map(b => b.id)
           );
-          const allottedInLot = allotments.filter(a => a.lot_id === lot.id && activeBookingIds.has(a.booking_id)).reduce((s, a) => s + a.quantity, 0);
+          const allottedInLot = allAllotments.filter(a => a.lot_id === lot.id && activeBookingIds.has(a.booking_id)).reduce((s, a) => s + a.quantity, 0);
           
           freeStock += Math.max(0, lotTotal - allottedInLot);
           totalStock += lotTotal;
@@ -73,14 +66,13 @@ export default function WorkerDashboard() {
         return { plant, totalStock, allottedQty, freeStock };
       })
       .filter(item => item.totalStock > 0);
-  });
+  })();
 
   const { t } = useLanguage();
   return (
     <div className="space-y-6">
       <header className="flex justify-between items-center mb-2">
         <h1 className="text-2xl font-black text-gray-900 tracking-tight">{t('Worker Dashboard')}</h1>
-        <SyncButton />
       </header>
 
       {/* Today's Sales Hero Card */}

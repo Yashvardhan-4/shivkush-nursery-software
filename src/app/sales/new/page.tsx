@@ -2,8 +2,9 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { ShoppingCart, User, Plus, Trash2, X, QrCode } from 'lucide-react';
-import { db, generateId, logAudit, resolvePlantPrice } from '@/lib/db';
-import { useLiveQuery } from 'dexie-react-hooks';
+import { generateId, logAudit, resolvePlantPrice } from '@/lib/utils';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { supabase } from '@/lib/supabaseClient';
 import Link from 'next/link';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 
@@ -40,9 +41,12 @@ export default function NewDirectSalePage() {
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   
-  const activeQrs = useLiveQuery(async () => {
-    const qrs = await db.payment_qrs.toArray();
-    return qrs.filter(q => q.active);
+  const { data: activeQrs } = useQuery({
+    queryKey: ['payment_qrs'],
+    queryFn: async () => {
+      const { data } = await supabase.from('payment_qrs').select('*').eq('active', true).is('deleted_at', null);
+      return data || [];
+    }
   });
   const [showQR, setShowQR] = useState(false);
   
@@ -62,14 +66,15 @@ export default function NewDirectSalePage() {
   const [loading, setLoading] = useState(false);
   const router = useRouter();
 
-  // Load all needed data for stock calculation and customer check
-  const plants = useLiveQuery(async () => (await db.plants.toArray()).filter(p => !p.deleted_at));
-  const lots = useLiveQuery(async () => (await db.lots.toArray()).filter(l => !l.deleted_at));
-  const allotments = useLiveQuery(async () => (await db.allotments.toArray()).filter(a => !a.deleted_at));
-  const bookings = useLiveQuery(async () => (await db.bookings.toArray()).filter(b => !b.deleted_at));
-  const existingSales = useLiveQuery(async () => (await db.direct_sales.toArray()).filter(s => !s.deleted_at));
-  const customers = useLiveQuery(async () => (await db.customers.toArray()).filter(c => !c.deleted_at));
-  const users = useLiveQuery(async () => (await db.users.toArray()).filter(u => !u.deleted_at));
+  const queryClient = useQueryClient();
+
+  const { data: plants } = useQuery({ queryKey: ['plants'], queryFn: async () => { const { data } = await supabase.from('plants').select('*').is('deleted_at', null).eq('active', true); return data || []; } });
+  const { data: lots } = useQuery({ queryKey: ['lots'], queryFn: async () => { const { data } = await supabase.from('lots').select('*').is('deleted_at', null); return data || []; } });
+  const { data: allotments } = useQuery({ queryKey: ['allotments'], queryFn: async () => { const { data } = await supabase.from('allotments').select('*').is('deleted_at', null); return data || []; } });
+  const { data: bookings } = useQuery({ queryKey: ['bookings'], queryFn: async () => { const { data } = await supabase.from('bookings').select('*').is('deleted_at', null); return data || []; } });
+  const { data: existingSales } = useQuery({ queryKey: ['direct_sales'], queryFn: async () => { const { data } = await supabase.from('direct_sales').select('*').is('deleted_at', null); return data || []; } });
+  const { data: customers } = useQuery({ queryKey: ['customers'], queryFn: async () => { const { data } = await supabase.from('customers').select('*').is('deleted_at', null); return data || []; } });
+  const { data: users } = useQuery({ queryKey: ['users'], queryFn: async () => { const { data } = await supabase.from('users').select('*').is('deleted_at', null); return data || []; } });
   const workers = users?.filter(u => u.role === 'worker') || [];
 
   // Auto-select first available lot (FIFO) when plant changes, sorted by ready_date
@@ -199,6 +204,7 @@ export default function NewDirectSalePage() {
 
   const handleSaveSale = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!navigator.onLine) { alert('You must be online to save.'); return; }
     if (cart.length === 0) return alert(t('addAtLeastOnePlantError'));
     if (!splitValid) return alert(t('splitAmountsMismatchError').replace('{totalAmount}', String(totalAmount)));
     setLoading(true);
@@ -248,63 +254,41 @@ export default function NewDirectSalePage() {
         upi_amount: itemUpi,
         worker_id: user.id,
         assigned_to: assignedTo || null,
-        fulfillment_status: assignedTo ? ('Pending Handover' as const) : undefined,
-        sync_status: 'pending' as const,
+        fulfillment_status: assignedTo ? ('Pending Handover') : undefined,
         created_at: createdAt
       };
     });
 
-    await db.transaction('rw', [db.customers, db.direct_sales, db.lots, db.sync_queue, db.audit_logs], async () => {
-      if (customerPhone && customerName) {
-        let cust = await db.customers.where('mobile').equals(customerPhone).first();
-        if (!cust) {
-          cust = { id: generateId(), name: customerName, mobile: customerPhone, city: null };
-          await db.customers.add(cust);
-        } else {
-          cust.name = customerName;
-          await db.customers.put(cust);
-        }
-        await db.sync_queue.add({ table: 'customers', action: 'INSERT', payload: cust, created_at: Date.now() });
-      }
+    const auditPayload = {
+      user_id: user.id || '00000000-0000-0000-0000-000000000000',
+      user_name: user.name || 'Owner',
+      action: 'CREATE_SALE',
+      details: { totalAmount, plantCount: cart.length }
+    };
 
-      await db.direct_sales.bulkAdd(newSales);
-      for (const s of newSales) {
-        await db.sync_queue.add({ table: 'direct_sales', action: 'INSERT', payload: s, created_at: Date.now() });
-      }
+    const customerPayload = {
+      name: customerName,
+      mobile: customerPhone,
+      city: null
+    };
 
-      // Decrement lot stock and Auto-archive completed lots
-      const lotUpdates = [];
-      for (const item of cart) {
-        if (item.lotId) {
-          const lot = await db.lots.get(item.lotId);
-          if (lot && lot.status !== 'Completed') {
-            const currentStock = lot.available_stock ?? lot.total_quantity;
-            const newStock = Math.max(0, currentStock - item.quantity);
-            lot.available_stock = newStock;
-            if (newStock <= 0) {
-              lot.status = 'Completed';
-            }
-            lotUpdates.push(lot);
-          }
-        }
-      }
-
-      if (lotUpdates.length > 0) {
-        const uniqueLotUpdates = Array.from(new Map(lotUpdates.map(l => [l.id, l])).values());
-        await db.lots.bulkPut(uniqueLotUpdates);
-        for (const l of uniqueLotUpdates) {
-          await db.sync_queue.add({ table: 'lots', action: 'UPDATE', payload: l, created_at: Date.now() });
-        }
-      }
-
-      // Audit log for the entire sale
-      await logAudit(user.id, user.name, 'CREATE_SALE', 'direct_sales', saleNumber, {
-        totalAmount,
-        plantCount: cart.length
-      });
+    const { error } = await supabase.rpc('process_direct_sales_batch', {
+      p_sales: newSales,
+      p_customer: customerPayload,
+      p_audit: auditPayload
     });
 
-    window.dispatchEvent(new Event('online'));
+    if (error) {
+      console.error(error);
+      alert('Failed to save direct sale');
+      setLoading(false);
+      return;
+    }
+
+    queryClient.invalidateQueries({ queryKey: ['customers'] });
+    queryClient.invalidateQueries({ queryKey: ['direct_sales'] });
+    queryClient.invalidateQueries({ queryKey: ['lots'] });
+
     router.push('/dashboard');
   };
 
@@ -480,7 +464,7 @@ export default function NewDirectSalePage() {
                 <button
                   type="button"
                   onClick={handleAddToCart}
-                  disabled={!quantity || (selectedLotId && selectedFreeStock !== null && selectedFreeStock <= 0)}
+                  disabled={!quantity || (!!selectedLotId && selectedFreeStock !== null && selectedFreeStock <= 0)}
                   className="w-1/3 bg-green-600 text-white rounded-xl font-black flex items-center justify-center disabled:opacity-50 active:scale-95 transition-transform"
                 >
                   {t('add')}

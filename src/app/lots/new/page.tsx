@@ -1,8 +1,8 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { db, generateId } from '@/lib/db';
-import { useLiveQuery } from 'dexie-react-hooks';
+import { supabase } from '@/lib/supabaseClient';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 export default function NewLotPage() {
   const [lotNumber, setLotNumber] = useState('LOT-...');
@@ -23,17 +23,25 @@ export default function NewLotPage() {
   const [loading, setLoading] = useState(false);
   const router = useRouter();
 
-  const plants = useLiveQuery(() => db.plants.toArray());
+  const queryClient = useQueryClient();
+  const { data: plants } = useQuery({
+    queryKey: ['plants'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('plants').select('*').is('deleted_at', null).eq('active', true);
+      if (error) throw error;
+      return data;
+    }
+  });
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!plantId) return alert('Select a plant');
+    if (!navigator.onLine) { alert('You must be online to save.'); return; }
     setLoading(true);
 
     const newLot = {
-      id: generateId(),
       lot_number: lotNumber,
-      lot_name: lotName || undefined,
+      lot_name: lotName || null,
       plant_id: plantId,
       total_quantity: parseInt(quantity),
       initial_quantity: parseInt(quantity),
@@ -44,16 +52,10 @@ export default function NewLotPage() {
     };
 
     try {
-      await db.transaction('rw', [db.lots, db.sync_queue], async () => {
-        await db.lots.add(newLot);
-        await db.sync_queue.add({
-          table: 'lots',
-          action: 'INSERT',
-          payload: newLot,
-          created_at: Date.now()
-        });
-      });
-      window.dispatchEvent(new Event('online'));
+      const { error } = await supabase.from('lots').insert(newLot);
+      if (error) throw error;
+      
+      queryClient.invalidateQueries({ queryKey: ['lots'] });
       router.push('/lots');
     } catch (error) {
       console.error('Failed to save lot:', error);

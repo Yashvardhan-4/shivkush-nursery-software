@@ -1,15 +1,15 @@
 'use client';
 
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '@/lib/db';
+import { useQuery } from '@tanstack/react-query';
+import { supabase } from '@/lib/supabaseClient';
 import { useState } from 'react';
 import { Calendar } from 'lucide-react';
 
 export default function DailyReport() {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   
-  const sales = useLiveQuery(() => db.direct_sales.toArray());
-  const bookings = useLiveQuery(() => db.bookings.toArray());
+  const { data: sales } = useQuery({ queryKey: ['direct_sales'], queryFn: async () => { const { data } = await supabase.from('direct_sales').select('*').is('deleted_at', null); return data || []; } });
+  const { data: bookings } = useQuery({ queryKey: ['bookings'], queryFn: async () => { const { data } = await supabase.from('bookings').select('*').is('deleted_at', null); return data || []; } });
 
   if (!sales || !bookings) {
     return <div className="p-4 text-center text-gray-500 font-medium">Calculating reports...</div>;

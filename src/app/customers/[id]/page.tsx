@@ -2,8 +2,8 @@
 
 import { use, useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '@/lib/db';
+import { useQuery } from '@tanstack/react-query';
+import { supabase } from '@/lib/supabaseClient';
 import { 
   ArrowLeft, 
   User, 
@@ -25,23 +25,46 @@ export default function CustomerDetailPage({ params }: Props) {
   const { id } = use(params);
   const router = useRouter();
 
-  const customer = useLiveQuery(() => db.customers.get(id), [id]);
-  const plants = useLiveQuery(() => db.plants.toArray());
+  const { data: customer, isLoading: loadingCustomer } = useQuery({
+    queryKey: ['customer', id],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('customers').select('*').eq('id', id).single();
+      if (error) throw error;
+      return data;
+    }
+  });
+
+  const { data: plants } = useQuery({
+    queryKey: ['plants'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('plants').select('*').eq('active', true);
+      if (error) throw error;
+      return data || [];
+    }
+  });
 
   // Retrieve transactions using customer phone number
-  const bookings = useLiveQuery(async () => {
-    if (!customer) return [];
-    return await db.bookings.where('customer_phone').equals(customer.mobile).toArray();
-  }, [customer]);
+  const { data: bookings } = useQuery({
+    queryKey: ['bookings', customer?.mobile],
+    enabled: !!customer?.mobile,
+    queryFn: async () => {
+      const { data, error } = await supabase.from('bookings').select('*').eq('customer_phone', customer.mobile);
+      if (error) throw error;
+      return data || [];
+    }
+  });
 
-  const sales = useLiveQuery(async () => {
-    if (!customer) return [];
-    // IndexDB doesn't have custom compound index on customer_phone yet, so we pull and filter
-    const all = await db.direct_sales.toArray();
-    return all.filter(s => s.customer_phone === customer.mobile);
-  }, [customer]);
+  const { data: sales } = useQuery({
+    queryKey: ['direct_sales', customer?.mobile],
+    enabled: !!customer?.mobile,
+    queryFn: async () => {
+      const { data, error } = await supabase.from('direct_sales').select('*').eq('customer_phone', customer.mobile);
+      if (error) throw error;
+      return data || [];
+    }
+  });
 
-  if (!customer || !plants || !bookings || !sales) {
+  if (loadingCustomer || !customer || !plants || !bookings || !sales) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin" />
@@ -230,3 +253,4 @@ export default function CustomerDetailPage({ params }: Props) {
     </div>
   );
 }
+

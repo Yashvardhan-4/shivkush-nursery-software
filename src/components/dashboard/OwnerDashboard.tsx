@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db, toLocalDateStr } from '@/lib/db';
+import { useQuery } from '@tanstack/react-query';
+import { supabase } from '@/lib/supabaseClient';
+import { toLocalDateStr } from '@/lib/utils';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import {
   Banknote,
@@ -19,7 +20,6 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 
-import { SyncButton } from '@/components/ui/SyncButton';
 
 function fmt(n: number) {
   return '₹' + n.toLocaleString('en-IN');
@@ -32,12 +32,40 @@ export default function OwnerDashboard() {
   const { t } = useLanguage();
   const todayStr = today();
 
-  const allSales = useLiveQuery(async () => (await db.direct_sales.toArray()).filter(s => !s.deleted_at));
-  const allBookings = useLiveQuery(async () => (await db.bookings.toArray()).filter(b => !b.deleted_at));
-  const allLots = useLiveQuery(async () => (await db.lots.toArray()).filter(l => !l.deleted_at));
-  const allPlants = useLiveQuery(async () => {
-    const all = await db.plants.toArray();
-    return all.filter(p => p.active && !p.deleted_at);
+  const { data: allSales } = useQuery({
+    queryKey: ['direct_sales'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('direct_sales').select('*').is('deleted_at', null);
+      if (error) throw error;
+      return data;
+    }
+  });
+
+  const { data: allBookings } = useQuery({
+    queryKey: ['bookings'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('bookings').select('*').is('deleted_at', null);
+      if (error) throw error;
+      return data;
+    }
+  });
+
+  const { data: allLots } = useQuery({
+    queryKey: ['lots'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('lots').select('*').is('deleted_at', null);
+      if (error) throw error;
+      return data;
+    }
+  });
+
+  const { data: allPlants } = useQuery({
+    queryKey: ['plants'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('plants').select('*').is('deleted_at', null).eq('active', true);
+      if (error) throw error;
+      return data;
+    }
   });
 
   const [ownerId, setOwnerId] = useState<string | null>(null);
@@ -142,7 +170,6 @@ export default function OwnerDashboard() {
     <div className="space-y-6">
       <header className="flex justify-between items-center mb-2">
         <h1 className="text-2xl font-black text-gray-900 tracking-tight">{t('Owner Dashboard')}</h1>
-        <SyncButton />
       </header>
       
       {/* ── Live Stat Cards ──────────────────────────────────────────────── */}

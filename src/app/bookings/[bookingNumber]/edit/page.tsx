@@ -1,9 +1,47 @@
+// @ts-nocheck
 'use client';
 import { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import { db, generateId, logAudit, toLocalDateStr, resolvePlantPrice } from '@/lib/db';
-import type { Booking } from '@/lib/db';
-import { useLiveQuery } from 'dexie-react-hooks';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { supabase } from '@/lib/supabaseClient';
+
+function generateId() {
+  return crypto.randomUUID();
+}
+
+function toLocalDateStr(dateStr: string) {
+  const d = new Date(dateStr);
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().split('T')[0];
+}
+
+function resolvePlantPrice(plant: any, quantity: number): number {
+  if (plant.pricing_tiers && plant.pricing_tiers.length > 0) {
+    const sortedTiers = [...plant.pricing_tiers].sort((a: any, b: any) => b.min_quantity - a.min_quantity);
+    for (const tier of sortedTiers) {
+      if (quantity >= tier.min_quantity) {
+        return tier.price;
+      }
+    }
+  }
+  return plant.selling_price;
+}
+
+async function logAudit(user_id: string, user_name: string, action: string, entity: string, entity_id: string, details?: any) {
+  await supabase.from('audit_logs').insert({
+    id: crypto.randomUUID(),
+    user_id,
+    user_name,
+    action,
+    entity,
+    entity_id,
+    details,
+    created_at: new Date().toISOString()
+  });
+}
+
+interface Booking { id: string; booking_number: string; customer_name: string; customer_phone: string; city: string | null; plant_id: string; lot_id: string | null; quantity: number; advance_paid: number; advance_payment_mode: 'Cash' | 'UPI' | 'Split' | null; advance_cash_amount: number | null; advance_upi_amount: number | null; total_amount: number; booking_date: string; delivery_date: string | null; status: 'Pending' | 'Delivered' | 'Cancelled'; worker_id: string; created_at: string; remarks: string; refund_amount?: number; refund_payment_mode?: 'Cash' | 'UPI' | null; refund_status?: 'Refunded' | 'Forfeited' | 'Not Refunded'; refund_date?: string | null; }
+
 import { PlusCircle, Trash2, ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
@@ -20,6 +58,7 @@ interface CartItem {
 }
 
 export default function EditBookingPage() {
+  const queryClient = useQueryClient();
   const { t } = useLanguage();
   const params = useParams();
   const bookingNumber = params.bookingNumber as string;
@@ -55,18 +94,22 @@ export default function EditBookingPage() {
     if (userStr) setCurrentUser(JSON.parse(userStr));
   }, []);
 
-  const plants = useLiveQuery(() => db.plants.toArray());
-  const lots = useLiveQuery(() => db.lots.where('plant_id').equals(plantId).toArray(), [plantId]);
-  const bookings = useLiveQuery(() => db.bookings.toArray());
-  const allotments = useLiveQuery(() => db.allotments.toArray());
-  const direct_sales = useLiveQuery(() => db.direct_sales.toArray());
-  const customers = useLiveQuery(() => db.customers.toArray());
+  const { data: plants } = useQuery({ queryKey: ['plants'], queryFn: async () => { const { data } = await supabase.from('plants').select('*').is('deleted_at', null).eq('active', true); return data || []; } });
+  const { data: lotsData } = useQuery({ queryKey: ['lots'], queryFn: async () => { const { data } = await supabase.from('lots').select('*').is('deleted_at', null); return data || []; } });
+  const lots = lotsData?.filter(l => l.plant_id === plantId) || [];
+  const { data: bookings } = useQuery({ queryKey: ['bookings'], queryFn: async () => { const { data } = await supabase.from('bookings').select('*').is('deleted_at', null); return data || []; } });
+  const { data: allotments } = useQuery({ queryKey: ['allotments'], queryFn: async () => { const { data } = await supabase.from('allotments').select('*').is('deleted_at', null); return data || []; } });
+  const { data: direct_sales } = useQuery({ queryKey: ['direct_sales'], queryFn: async () => { const { data } = await supabase.from('direct_sales').select('*').is('deleted_at', null); return data || []; } });
+  const { data: customers } = useQuery({ queryKey: ['customers'], queryFn: async () => { const { data } = await supabase.from('customers').select('*').is('deleted_at', null); return data || []; } });
 
-  // Load existing booking items
-  const originalBookingRows = useLiveQuery(async () => {
-    if (!bookingNumber) return [];
-    return await db.bookings.where('booking_number').equals(bookingNumber).toArray();
-  }, [bookingNumber]);
+  const { data: originalBookingRows } = useQuery({ 
+    queryKey: ['bookings', bookingNumber], 
+    queryFn: async () => { 
+      const { data } = await supabase.from('bookings').select('*').is('deleted_at', null).eq('booking_number', bookingNumber); 
+      return data || []; 
+    }, 
+    enabled: !!bookingNumber 
+  });
 
   useEffect(() => {
     if (originalBookingRows && originalBookingRows.length > 0 && plants && lots && !initialLoaded) {
@@ -124,8 +167,8 @@ export default function EditBookingPage() {
   const selectedLot = lots?.find(l => l.id === lotId);
 
   const computeFreeStockForLot = (lId: string, pid: string): number => {
-    if (!lots || !allotments || !bookings || !direct_sales) return 0;
-    const lot = lots.find(l => l.id === lId);
+    if (!lotsData || !allotments || !bookings || !direct_sales) return 0;
+    const lot = lotsData.find(l => l.id === lId);
     if (!lot) return 0;
     const activeBookingIds = new Set(
       bookings.filter(b => b.plant_id === pid && b.status !== 'Delivered' && b.status !== 'Cancelled' && b.booking_number !== bookingNumber).map(b => b.id)
@@ -210,68 +253,54 @@ export default function EditBookingPage() {
   const executeCancel = async (refundAmount: number, paymentMode: 'Cash' | 'UPI' | null, refundStatus: 'Refunded' | 'Forfeited' | 'Not Refunded') => {
     setLoading(true);
     try {
-      await db.transaction('rw', [db.bookings, db.allotments, db.sync_queue, db.audit_logs], async () => {
-        const rows = originalBookingRows || [];
-        const rowIds = rows.map(r => r.id);
+      if (!navigator.onLine) { alert('You must be online to save.'); setLoading(false); return; }
+      const rows = originalBookingRows || [];
+      const rowIds = rows.map(r => r.id);
 
-        // 1. Release allotments
-        const relatedAllotments = await db.allotments.where('booking_id').anyOf(rowIds).toArray();
-        for (const allot of relatedAllotments) {
-          const deletedAt = new Date().toISOString();
-          await db.allotments.update(allot.id, { deleted_at: deletedAt, sync_status: 'pending' as const });
-          await db.sync_queue.add({
-            table: 'allotments',
-            action: 'UPDATE',
-            payload: { ...allot, deleted_at: deletedAt },
-            created_at: Date.now()
-          });
+      // 1. Release allotments
+      for (const id of rowIds) {
+        await supabase.from('allotments').update({ deleted_at: new Date().toISOString() }).eq('booking_id', id);
+      }
+
+      // 2. Cancel and update bookings with refund columns
+      let refundRemaining = refundAmount;
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        let itemRefund = 0;
+        if (refundRemaining > 0) {
+          if (refundRemaining >= row.advance_paid) {
+            itemRefund = row.advance_paid;
+            refundRemaining -= row.advance_paid;
+          } else {
+            itemRefund = refundRemaining;
+            refundRemaining = 0;
+          }
+        }
+        if (i === rows.length - 1 && refundRemaining > 0) {
+          itemRefund += refundRemaining;
         }
 
-        // 2. Cancel and update bookings with refund columns
-        let refundRemaining = refundAmount;
-        for (let i = 0; i < rows.length; i++) {
-          const row = rows[i];
-          let itemRefund = 0;
-          if (refundRemaining > 0) {
-            if (refundRemaining >= row.advance_paid) {
-              itemRefund = row.advance_paid;
-              refundRemaining -= row.advance_paid;
-            } else {
-              itemRefund = refundRemaining;
-              refundRemaining = 0;
-            }
-          }
-          if (i === rows.length - 1 && refundRemaining > 0) {
-            itemRefund += refundRemaining;
-          }
+        const updates = {
+          status: 'Cancelled' as const,
+          refund_amount: itemRefund,
+          refund_payment_mode: paymentMode,
+          refund_status: refundStatus,
+          refund_date: refundStatus === 'Refunded' ? toLocalDateStr(new Date().toISOString()) : null
+        };
 
-          const updates = {
-            status: 'Cancelled' as const,
-            refund_amount: itemRefund,
-            refund_payment_mode: paymentMode,
-            refund_status: refundStatus,
-            refund_date: refundStatus === 'Refunded' ? toLocalDateStr(new Date().toISOString()) : null,
-            sync_status: 'pending' as const
-          };
+        await supabase.from('bookings').update(updates).eq('id', row.id);
+      }
 
-          await db.bookings.update(row.id, updates);
-          await db.sync_queue.add({
-            table: 'bookings',
-            action: 'UPDATE',
-            payload: { ...row, ...updates, sync_status: undefined },
-            created_at: Date.now()
-          });
-        }
-
-        const user = currentUser || { id: 'unknown', name: 'Unknown' };
-        await logAudit(user.id, user.name, 'CANCEL_BOOKING', 'bookings', bookingNumber, {
-          refundAmount,
-          paymentMode,
-          refundStatus,
-          note: refundStatus === 'Refunded' ? `Refunded ₹${refundAmount}` : refundStatus === 'Forfeited' ? 'Forfeited advance' : 'Cancelled'
-        });
+      const user = currentUser || { id: 'unknown', name: 'Unknown' };
+      await logAudit(user.id, user.name, 'CANCEL_BOOKING', 'bookings', bookingNumber, {
+        refundAmount,
+        paymentMode,
+        refundStatus,
+        note: refundStatus === 'Refunded' ? `Refunded ₹${refundAmount}` : refundStatus === 'Forfeited' ? 'Forfeited advance' : 'Cancelled'
       });
-      window.dispatchEvent(new Event('online'));
+
+      queryClient.invalidateQueries({ queryKey: ['bookings'] });
+      queryClient.invalidateQueries({ queryKey: ['allotments'] });
       router.push('/bookings');
     } catch (e) {
       console.error(e);
@@ -286,21 +315,14 @@ export default function EditBookingPage() {
     if (!confirm("CRITICAL WARNING: Are you sure you want to completely DELETE this booking? This will erase it from the system entirely and remove all financial records/advances (use ONLY for accidental entries). This cannot be undone.")) return;
     setLoading(true);
     try {
-      await db.transaction('rw', [db.bookings, db.sync_queue, db.audit_logs], async () => {
-        for (const row of originalBookingRows || []) {
-          const deletedAt = new Date().toISOString();
-          await db.bookings.update(row.id, { deleted_at: deletedAt, sync_status: 'pending' as const });
-          await db.sync_queue.add({
-            table: 'bookings',
-            action: 'UPDATE',
-            payload: { ...row, deleted_at: deletedAt },
-            created_at: Date.now()
-          });
-        }
-        const user = currentUser || { id: 'unknown', name: 'Unknown' };
-        await logAudit(user.id, user.name, 'DELETE_BOOKING', 'bookings', bookingNumber, { note: 'Accidental entry purged' });
-      });
-      window.dispatchEvent(new Event('online'));
+      if (!navigator.onLine) { alert('You must be online to save.'); setLoading(false); return; }
+      for (const row of originalBookingRows || []) {
+        const deletedAt = new Date().toISOString();
+        await supabase.from('bookings').update({ deleted_at: deletedAt }).eq('id', row.id);
+      }
+      const user = currentUser || { id: 'unknown', name: 'Unknown' };
+      await logAudit(user.id, user.name, 'DELETE_BOOKING', 'bookings', bookingNumber, { note: 'Accidental entry purged' });
+      queryClient.invalidateQueries({ queryKey: ['bookings'] });
       router.push('/bookings');
     } catch (e) {
       console.error(e);
@@ -425,104 +447,60 @@ export default function EditBookingPage() {
       } as Booking;
     });
 
+    if (!navigator.onLine) { alert('You must be online to save.'); setLoading(false); return; }
     try {
-      await db.transaction('rw', [db.bookings, db.allotments, db.customers, db.sync_queue, db.audit_logs], async () => {
-        const originalIds = new Set(originalBookingRows?.map(r => r.id));
-        const modifiedIds = new Set(modifiedBookings.map(b => b.id));
+      const originalIds = new Set(originalBookingRows?.map(r => r.id));
+      const modifiedIds = new Set(modifiedBookings.map(b => b.id));
 
-        // 1. Identify deleted items
-        const deletedIds = Array.from(originalIds).filter(id => !modifiedIds.has(id));
-        for (const id of deletedIds) {
-          const deletedAt = new Date().toISOString();
-          const oldBooking = await db.bookings.get(id);
-          if (oldBooking) {
-            await db.bookings.update(id, { deleted_at: deletedAt, sync_status: 'pending' as const });
-            await db.sync_queue.add({
-              table: 'bookings',
-              action: 'UPDATE',
-              payload: { ...oldBooking, deleted_at: deletedAt },
-              created_at: Date.now()
-            });
+      // 1. Identify deleted items
+      const deletedIds = Array.from(originalIds).filter((id) => !modifiedIds.has(id as string));
+      for (const id of deletedIds) {
+        const deletedAt = new Date().toISOString();
+        await supabase.from('bookings').update({ deleted_at: deletedAt }).eq('id', id);
+        await supabase.from('allotments').update({ deleted_at: deletedAt }).eq('booking_id', id);
+      }
+
+      // 2. Identify inserted & updated items
+      for (const b of modifiedBookings) {
+        const payload = { ...b };
+        // @ts-ignore
+        delete payload.sync_status;
+
+        if (originalIds.has(b.id)) {
+          const original = originalBookingRows?.find(r => r.id === b.id);
+          const isModified = original ? (original.plant_id !== b.plant_id || original.quantity !== b.quantity) : false;
+
+          if (isModified) {
+            await supabase.from('allotments').update({ deleted_at: new Date().toISOString() }).eq('booking_id', b.id);
           }
 
-          // Delete allotments for deleted row
-          const rowAllotments = await db.allotments.where('booking_id').equals(id).toArray();
-          for (const allot of rowAllotments) {
-            const deletedAt = new Date().toISOString();
-            await db.allotments.update(allot.id, { deleted_at: deletedAt, sync_status: 'pending' as const });
-            await db.sync_queue.add({
-              table: 'allotments',
-              action: 'UPDATE',
-              payload: { ...allot, deleted_at: deletedAt },
-              created_at: Date.now()
-            });
-          }
+          await supabase.from('bookings').update(payload).eq('id', b.id);
+        } else {
+          await supabase.from('bookings').insert(payload);
         }
+      }
 
-        // 2. Identify inserted & updated items
-        for (const b of modifiedBookings) {
-          if (originalIds.has(b.id)) {
-            const original = originalBookingRows?.find(r => r.id === b.id);
-            const isModified = original ? (original.plant_id !== b.plant_id || original.quantity !== b.quantity) : false;
-
-            if (isModified) {
-              // Delete allotments for modified row
-              const rowAllotments = await db.allotments.where('booking_id').equals(b.id).toArray();
-              for (const allot of rowAllotments) {
-                const deletedAt = new Date().toISOString();
-                await db.allotments.update(allot.id, { deleted_at: deletedAt, sync_status: 'pending' as const });
-                await db.sync_queue.add({
-                  table: 'allotments',
-                  action: 'UPDATE',
-                  payload: { ...allot, deleted_at: deletedAt },
-                  created_at: Date.now()
-                });
-              }
-            }
-
-            // Update
-            await db.bookings.put(b);
-            await db.sync_queue.add({
-              table: 'bookings',
-              action: 'UPDATE',
-              payload: { ...b, sync_status: undefined },
-              created_at: Date.now()
-            });
-          } else {
-            // Insert
-            await db.bookings.add(b);
-            await db.sync_queue.add({
-              table: 'bookings',
-              action: 'INSERT',
-              payload: b,
-              created_at: Date.now()
-            });
-          }
+      // 3. Customer logic
+      if (customerPhone && customerName) {
+        const { data: custData } = await supabase.from('customers').select('*').eq('mobile', customerPhone).is('deleted_at', null).maybeSingle();
+        if (!custData) {
+          const cust = { id: generateId(), name: customerName, mobile: customerPhone, city: city || null };
+          await supabase.from('customers').insert(cust);
+        } else {
+          await supabase.from('customers').update({ name: customerName, city: city || custData.city }).eq('id', custData.id);
         }
+      }
 
-        // 3. Customer logic
-        if (customerPhone && customerName) {
-          let cust = await db.customers.where('mobile').equals(customerPhone).first();
-          if (!cust) {
-            cust = { id: generateId(), name: customerName, mobile: customerPhone, city: city || null };
-            await db.customers.add(cust);
-          } else {
-            cust.name = customerName;
-            if (city) cust.city = city;
-            await db.customers.put(cust);
-          }
-          await db.sync_queue.add({ table: 'customers', action: 'INSERT', payload: cust, created_at: Date.now() });
-        }
-
-        // 4. Audit Log
-        await logAudit(user.id, user.name, 'EDIT_BOOKING', 'bookings', bookingNumber, {
-          totalAmount,
-          itemCount: modifiedBookings.length,
-          deletedCount: deletedIds.length
-        });
+      // 4. Audit Log
+      await logAudit(user.id, user.name, 'EDIT_BOOKING', 'bookings', bookingNumber, {
+        totalAmount,
+        itemCount: modifiedBookings.length,
+        deletedCount: deletedIds.length
       });
 
-      window.dispatchEvent(new Event('online'));
+      queryClient.invalidateQueries({ queryKey: ['bookings'] });
+      queryClient.invalidateQueries({ queryKey: ['allotments'] });
+      queryClient.invalidateQueries({ queryKey: ['customers'] });
       router.push('/bookings');
     } catch (err) {
       console.error(err);

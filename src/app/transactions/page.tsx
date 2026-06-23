@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db, toLocalDateStr } from '@/lib/db';
+import { useQuery } from '@tanstack/react-query';
+import { supabase } from '@/lib/supabaseClient';
+import { toLocalDateStr } from '@/lib/utils';
 import { ShoppingCart, BookOpen, Truck, Search, ChevronLeft } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import Link from 'next/link';
@@ -23,11 +24,12 @@ export default function TransactionsPage() {
     if (userStr) setCurrentUser(JSON.parse(userStr));
   }, []);
 
-  const allSalesQuery = useLiveQuery(() => db.direct_sales.toArray());
-  const allBookingsQuery = useLiveQuery(() => db.bookings.toArray());
-  const allUsers = useLiveQuery(() => db.users.toArray());
-  const allPlants = useLiveQuery(() => db.plants.toArray());
-  const allAuditLogs = useLiveQuery(() => db.audit_logs.toArray());
+
+  const { data: allSalesQuery } = useQuery({ queryKey: ['direct_sales'], queryFn: async () => { const { data } = await supabase.from('direct_sales').select('*').is('deleted_at', null); return data || []; } });
+  const { data: allBookingsQuery } = useQuery({ queryKey: ['bookings'], queryFn: async () => { const { data } = await supabase.from('bookings').select('*').is('deleted_at', null); return data || []; } });
+  const { data: allUsers } = useQuery({ queryKey: ['users'], queryFn: async () => { const { data } = await supabase.from('users').select('*').is('deleted_at', null); return data || []; } });
+  const { data: allPlants } = useQuery({ queryKey: ['plants'], queryFn: async () => { const { data } = await supabase.from('plants').select('*').is('deleted_at', null); return data || []; } });
+  const { data: allAuditLogs } = useQuery({ queryKey: ['audit_logs'], queryFn: async () => { const { data } = await supabase.from('audit_logs').select('*'); return data || []; } });
 
   // Filter transactions if worker
   const allSales = useMemo(() => {
@@ -120,7 +122,7 @@ export default function TransactionsPage() {
         if (totalBalance > 0) {
           let latestDeliveryTime = 0;
           deliveredItems.forEach(item => {
-            const t = deliveryLogs.get(item.id);
+            const t = deliveryLogs.get(item.id) as number | undefined;
             if (t && t > latestDeliveryTime) latestDeliveryTime = t;
           });
           const exactTime = latestDeliveryTime || new Date(first.delivery_date || first.booking_date).setHours(12, 0, 0, 0);

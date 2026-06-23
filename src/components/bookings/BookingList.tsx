@@ -1,8 +1,9 @@
 'use client';
 
 import { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db, logAudit, generateId, toLocalDateStr } from '@/lib/db';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { supabase } from '@/lib/supabaseClient';
+import { logAudit, generateId, toLocalDateStr } from '@/lib/utils';
 import { Search, Phone, MapPin, Package, Truck, XCircle, CheckCircle2, FileSpreadsheet, FileText, Pencil } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { exportToExcel, exportToPDF } from '@/lib/exportUtils';
@@ -52,11 +53,14 @@ export default function BookingList({ role, userId, userName }: BookingListProps
   const [splitAmounts, setSplitAmounts] = useState({ cash: '', upi: '' });
   const [deliveryRemarks, setDeliveryRemarks] = useState('');
 
-  const bookings = useLiveQuery(async () => (await db.bookings.orderBy('created_at').reverse().toArray()).filter(b => !b.deleted_at));
-  const plants = useLiveQuery(async () => (await db.plants.toArray()).filter(p => !p.deleted_at));
-  const lots = useLiveQuery(async () => (await db.lots.toArray()).filter(l => !l.deleted_at));
-  const allotments = useLiveQuery(async () => (await db.allotments.toArray()).filter(a => !a.deleted_at));
-  const direct_sales = useLiveQuery(async () => (await db.direct_sales.toArray()).filter(s => !s.deleted_at));
+
+  const queryClient = useQueryClient();
+
+  const { data: bookings } = useQuery({ queryKey: ['bookings'], queryFn: async () => { const { data } = await supabase.from('bookings').select('*').is('deleted_at', null).order('created_at', { ascending: false }); return data || []; } });
+  const { data: plants } = useQuery({ queryKey: ['plants'], queryFn: async () => { const { data } = await supabase.from('plants').select('*').is('deleted_at', null); return data || []; } });
+  const { data: lots } = useQuery({ queryKey: ['lots'], queryFn: async () => { const { data } = await supabase.from('lots').select('*').is('deleted_at', null); return data || []; } });
+  const { data: allotments } = useQuery({ queryKey: ['allotments'], queryFn: async () => { const { data } = await supabase.from('allotments').select('*').is('deleted_at', null); return data || []; } });
+  const { data: direct_sales } = useQuery({ queryKey: ['direct_sales'], queryFn: async () => { const { data } = await supabase.from('direct_sales').select('*').is('deleted_at', null); return data || []; } });
 
   const handleExportExcel = () => {
     if (!filtered || filtered.length === 0) return;
@@ -186,33 +190,29 @@ export default function BookingList({ role, userId, userName }: BookingListProps
   };
 
   async function cancelBookingRow(id: string) {
+    if (!navigator.onLine) { alert('You must be online to save.'); return; }
     if (!confirm(t('cancelItemConfirm'))) return;
     setActionLoading(`cancel_${id}`);
     try {
-      const row = await db.bookings.get(id);
+      const { data: row } = await supabase.from('bookings').select('*').eq('id', id).maybeSingle();
       if (!row) return;
-      await db.transaction('rw', [db.bookings, db.allotments, db.sync_queue, db.audit_logs], async () => {
-        await db.bookings.update(row.id, { status: 'Cancelled', sync_status: 'pending' });
 
-        // Release allotments so lot inventory is freed (Fix #006)
-        const rowAllotments = await db.allotments.where('booking_id').equals(id).toArray();
-        for (const a of rowAllotments) {
-          const deletedAt = new Date().toISOString();
-          await db.allotments.update(a.id, { deleted_at: deletedAt, sync_status: 'pending' as const });
-          await db.sync_queue.add({ table: 'allotments', action: 'UPDATE', payload: { ...a, deleted_at: deletedAt }, created_at: Date.now() });
-        }
+      await supabase.from('bookings').update({ status: 'Cancelled' }).eq('id', row.id);
 
-        await logAudit(userId, userName, 'CANCEL_BOOKING', 'bookings', row.id, {
-          booking_number: row.booking_number,
-          customer_name: row.customer_name,
-        });
-        await db.sync_queue.add({
-          table: 'bookings',
-          action: 'UPDATE',
-          payload: { ...row, status: 'Cancelled', sync_status: undefined },
-          created_at: Date.now(),
-        });
+      const { data: rowAllotments } = await supabase.from('allotments').select('*').eq('booking_id', id).is('deleted_at', null);
+      if (rowAllotments && rowAllotments.length > 0) {
+        const deletedAt = new Date().toISOString();
+        const allotIds = rowAllotments.map(a => a.id);
+        await supabase.from('allotments').update({ deleted_at: deletedAt }).in('id', allotIds);
+      }
+
+      await logAudit(userId, userName, 'CANCEL_BOOKING', 'bookings', row.id, {
+        booking_number: row.booking_number,
+        customer_name: row.customer_name,
       });
+
+      queryClient.invalidateQueries({ queryKey: ['bookings'] });
+      queryClient.invalidateQueries({ queryKey: ['allotments'] });
     } finally {
       setActionLoading(null);
     }
@@ -242,6 +242,7 @@ export default function BookingList({ role, userId, userName }: BookingListProps
   }
 
   async function confirmDelivery() {
+    if (!navigator.onLine) { alert('You must be online to save.'); return; }
     if (!deliveryModal) return;
     const { bookingNumber, items } = deliveryModal;
     setActionLoading(`deliver_${bookingNumber}`);
@@ -271,13 +272,12 @@ export default function BookingList({ role, userId, userName }: BookingListProps
       const amountCollectedNow = paymentMode === 'Split' ? splitTotal : targetCollection;
 
       const todayStr = toLocalDateStr();
-      const rows = await db.bookings.where('booking_number').equals(bookingNumber).toArray();
+      const { data: rows } = await supabase.from('bookings').select('*').eq('booking_number', bookingNumber).is('deleted_at', null);
 
       const newlyProcessedRows: any[] = [];
-      const ops = [];
       const remarksToAppend = deliveryRemarks.trim();
 
-      for (const row of rows) {
+      for (const row of (rows || [])) {
         if (row.status === 'Delivered' || row.status === 'Cancelled') {
            continue; 
         }
@@ -293,83 +293,69 @@ export default function BookingList({ role, userId, userName }: BookingListProps
         const unitPrice = row.total_amount / totalQty;
         
         const updatedRemarks = remarksToAppend 
-          ? (row.remarks ? row.remarks + '\nDelivery Note: ' + remarksToAppend : 'Delivery Note: ' + remarksToAppend)
+          ? (row.remarks ? row.remarks + '\\nDelivery Note: ' + remarksToAppend : 'Delivery Note: ' + remarksToAppend)
           : (row.remarks || null);
 
         if (deliverQty === totalQty) {
-           const updated = { ...row, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, worker_id: userId, sync_status: 'pending' };
+           const updated = { ...row, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, worker_id: userId };
            newlyProcessedRows.push(updated);
-           ops.push(async () => {
-             await db.bookings.update(row.id, { status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, worker_id: userId, sync_status: 'pending' });
-             await db.sync_queue.add({ table: 'bookings', action: 'UPDATE', payload: { ...row, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, worker_id: userId, sync_status: undefined }, created_at: Date.now() });
-             
-             // Decrement lot available_stock
-             if (row.lot_id) {
-               const lot = await db.lots.get(row.lot_id);
-               if (lot) {
-                 const newStock = Math.max(0, (lot.available_stock ?? lot.total_quantity) - totalQty);
-                 await db.lots.update(lot.id, { available_stock: newStock });
-                 await db.sync_queue.add({ table: 'lots', action: 'UPDATE', payload: { ...lot, available_stock: newStock, sync_status: undefined }, created_at: Date.now() });
-               }
+           
+           await supabase.from('bookings').update({ status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, worker_id: userId }).eq('id', row.id);
+           
+           if (row.lot_id) {
+             const { data: lot } = await supabase.from('lots').select('*').eq('id', row.lot_id).maybeSingle();
+             if (lot) {
+               const newStock = Math.max(0, (lot.available_stock ?? lot.total_quantity) - totalQty);
+               await supabase.from('lots').update({ available_stock: newStock }).eq('id', lot.id);
              }
-             await logAudit(userId, userName, 'DELIVER_BOOKING', 'bookings', row.id, { booking_number: row.booking_number, quantity: totalQty });
-           });
+           }
+           await logAudit(userId, userName, 'DELIVER_BOOKING', 'bookings', row.id, { booking_number: row.booking_number, quantity: totalQty });
         } else {
            const deliveredAmount = deliverQty * unitPrice;
            const remainingQty = totalQty - deliverQty;
            const remainingAmount = row.total_amount - deliveredAmount;
 
-           const updatedDelivered = { ...row, quantity: deliverQty, total_amount: deliveredAmount, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, worker_id: userId, sync_status: 'pending' };
+           const updatedDelivered = { ...row, quantity: deliverQty, total_amount: deliveredAmount, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, worker_id: userId };
            newlyProcessedRows.push(updatedDelivered);
            
            const newPendingId = generateId();
-           const newPending = { ...row, id: newPendingId, quantity: remainingQty, total_amount: remainingAmount, status: (row.status === 'Ready' || row.status === 'Allocated') ? row.status : 'Pending', sync_status: 'pending' as const };
+           const newPending = { ...row, id: newPendingId, quantity: remainingQty, total_amount: remainingAmount, status: (row.status === 'Ready' || row.status === 'Allocated') ? row.status : 'Pending' };
            newlyProcessedRows.push(newPending);
 
-           ops.push(async () => {
-             await db.bookings.update(row.id, { quantity: deliverQty, total_amount: deliveredAmount, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, worker_id: userId, sync_status: 'pending' });
-             await db.sync_queue.add({ table: 'bookings', action: 'UPDATE', payload: { ...row, quantity: deliverQty, total_amount: deliveredAmount, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, worker_id: userId, sync_status: undefined }, created_at: Date.now() });
-             
-             // Decrement lot available_stock
-             if (row.lot_id) {
-               const lot = await db.lots.get(row.lot_id);
-               if (lot) {
-                 const newStock = Math.max(0, (lot.available_stock ?? lot.total_quantity) - deliverQty);
-                 await db.lots.update(lot.id, { available_stock: newStock });
-                 await db.sync_queue.add({ table: 'lots', action: 'UPDATE', payload: { ...lot, available_stock: newStock, sync_status: undefined }, created_at: Date.now() });
-               }
+           await supabase.from('bookings').update({ quantity: deliverQty, total_amount: deliveredAmount, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, worker_id: userId }).eq('id', row.id);
+           
+           if (row.lot_id) {
+             const { data: lot } = await supabase.from('lots').select('*').eq('id', row.lot_id).maybeSingle();
+             if (lot) {
+               const newStock = Math.max(0, (lot.available_stock ?? lot.total_quantity) - deliverQty);
+               await supabase.from('lots').update({ available_stock: newStock }).eq('id', lot.id);
              }
-             await logAudit(userId, userName, 'DELIVER_BOOKING', 'bookings', row.id, { booking_number: row.booking_number, quantity: deliverQty });
-             
-             await db.bookings.add(newPending);
-             await db.sync_queue.add({ table: 'bookings', action: 'INSERT', payload: newPending, created_at: Date.now() });
+           }
+           await logAudit(userId, userName, 'DELIVER_BOOKING', 'bookings', row.id, { booking_number: row.booking_number, quantity: deliverQty });
+           
+           await supabase.from('bookings').insert(newPending);
 
-             const rowAllotments = await db.allotments.where('booking_id').equals(row.id).toArray();
-             let qtyToMove = remainingQty;
-             
-             for (const a of rowAllotments) {
-               if (qtyToMove <= 0) break;
-               if (a.quantity <= qtyToMove) {
-                 qtyToMove -= a.quantity;
-                 await db.allotments.update(a.id, { booking_id: newPendingId, sync_status: 'pending' });
-                 await db.sync_queue.add({ table: 'allotments', action: 'UPDATE', payload: { ...a, booking_id: newPendingId, sync_status: undefined }, created_at: Date.now() });
-               } else {
-                 const leftoverDeliveredQty = a.quantity - qtyToMove;
-                 const movedQty = qtyToMove;
-                 qtyToMove = 0;
-                 await db.allotments.update(a.id, { quantity: leftoverDeliveredQty, sync_status: 'pending' });
-                 await db.sync_queue.add({ table: 'allotments', action: 'UPDATE', payload: { ...a, quantity: leftoverDeliveredQty, sync_status: undefined }, created_at: Date.now() });
-                 const newAId = generateId();
-                 const newA = { ...a, id: newAId, booking_id: newPendingId, quantity: movedQty, sync_status: 'pending' as const };
-                 await db.allotments.add(newA);
-                 await db.sync_queue.add({ table: 'allotments', action: 'INSERT', payload: { ...newA, sync_status: undefined }, created_at: Date.now() });
-               }
+           const { data: rowAllotments } = await supabase.from('allotments').select('*').eq('booking_id', row.id).is('deleted_at', null);
+           let qtyToMove = remainingQty;
+           
+           for (const a of (rowAllotments || [])) {
+             if (qtyToMove <= 0) break;
+             if (a.quantity <= qtyToMove) {
+               qtyToMove -= a.quantity;
+               await supabase.from('allotments').update({ booking_id: newPendingId }).eq('id', a.id);
+             } else {
+               const leftoverDeliveredQty = a.quantity - qtyToMove;
+               const movedQty = qtyToMove;
+               qtyToMove = 0;
+               await supabase.from('allotments').update({ quantity: leftoverDeliveredQty }).eq('id', a.id);
+               const newAId = generateId();
+               const newA = { ...a, id: newAId, booking_id: newPendingId, quantity: movedQty };
+               await supabase.from('allotments').insert(newA);
              }
-           });
+           }
         }
       }
 
-      // Re-distribute advance_paid across newly processed rows (Delivered first)
       newlyProcessedRows.sort((a, b) => (a.status === 'Delivered' ? -1 : 1));
       let remainingAdvance = availableAdvance;
       
@@ -384,15 +370,10 @@ export default function BookingList({ role, userId, userName }: BookingListProps
          }
          if (fRow.advance_paid !== rowAdvance) {
             fRow.advance_paid = rowAdvance;
-            const capturedRow = { ...fRow, advance_paid: rowAdvance };
-            ops.push(async () => {
-              await db.bookings.update(fRow.id, { advance_paid: rowAdvance, sync_status: 'pending' });
-              await db.sync_queue.add({ table: 'bookings', action: 'UPDATE', payload: { ...capturedRow, sync_status: undefined }, created_at: Date.now() });
-            });
+            await supabase.from('bookings').update({ advance_paid: rowAdvance }).eq('id', fRow.id);
          }
       }
 
-      // Distribute cash/upi collections
       const cashPool = paymentMode === 'Cash' ? targetCollection : paymentMode === 'UPI' ? 0 : parseFloat(splitAmounts.cash) || 0;
       const upiPool = paymentMode === 'UPI' ? targetCollection : paymentMode === 'Cash' ? 0 : parseFloat(splitAmounts.upi) || 0;
       let remainingCash = cashPool;
@@ -414,59 +395,44 @@ export default function BookingList({ role, userId, userName }: BookingListProps
                   remainingUpi -= rUpi;
                }
             }
-            const rowPayMode: 'Cash' | 'UPI' | 'Split' = (rCash > 0 && rUpi > 0) ? 'Split' : (rUpi > 0 ? 'UPI' : 'Cash');
+            const rowPayMode = (rCash > 0 && rUpi > 0) ? 'Split' : (rUpi > 0 ? 'UPI' : 'Cash');
             
-            const capturedId = fRow.id;
-            const capturedCash = rCash;
-            const capturedUpi = rUpi;
-            const capturedMode = rowPayMode;
-            fRow.payment_mode = capturedMode;
-            fRow.cash_amount = capturedCash;
-            fRow.upi_amount = capturedUpi;
-            const capturedRow = { ...fRow, sync_status: undefined };
-            ops.push(async () => {
-               await db.bookings.update(capturedId, { payment_mode: capturedMode, cash_amount: capturedCash, upi_amount: capturedUpi, sync_status: 'pending' });
-               await db.sync_queue.add({ table: 'bookings', action: 'UPDATE', payload: capturedRow, created_at: Date.now() });
-            });
+            fRow.payment_mode = rowPayMode;
+            fRow.cash_amount = rCash;
+            fRow.upi_amount = rUpi;
+            await supabase.from('bookings').update({ payment_mode: rowPayMode, cash_amount: rCash, upi_amount: rUpi }).eq('id', fRow.id);
          }
       }
 
-      await db.transaction('rw', [db.bookings, db.allotments, db.lots, db.sync_queue, db.audit_logs], async () => {
-        for (const op of ops) {
-           await op();
-        }
+      if (direct_sales && allotments && lots && bookings) {
+         const deliveredLots = new Set(newlyProcessedRows.filter(r => r.status === 'Delivered' && r.lot_id).map(r => r.lot_id));
+         for (const lId of deliveredLots) {
+             const lot = lots.find((l: any) => l.id === lId);
+             if (lot && lot.status !== 'Completed') {
+                const activeBookingIds = new Set(
+                  bookings.filter((b: any) => b.plant_id === lot.plant_id && b.status !== 'Delivered' && b.status !== 'Cancelled').map((b: any) => b.id)
+                );
+                const allottedQty = allotments.filter((a: any) => a.lot_id === lId && activeBookingIds.has(a.booking_id)).reduce((s: number,a: any) => s + a.quantity, 0);
+                const deliveredQty = bookings.filter((b: any) => b.lot_id === lId && b.status === 'Delivered').reduce((s: number,b: any) => s + b.quantity, 0);
+                const salesQty = direct_sales.filter((s: any) => s.lot_id === lId).reduce((s: number, sale: any) => s + sale.quantity, 0);
+                const freeStock = (lot.available_stock ?? lot.total_quantity) - allottedQty - deliveredQty - salesQty;
+                
+                if (freeStock <= 0) {
+                   await supabase.from('lots').update({ status: 'Completed' }).eq('id', lId);
+                }
+             }
+         }
+      }
 
-        // Check for sold-out lots to auto-archive
-        if (direct_sales && allotments && lots && bookings) {
-           const deliveredLots = new Set(newlyProcessedRows.filter(r => r.status === 'Delivered' && r.lot_id).map(r => r.lot_id));
-           for (const lId of deliveredLots) {
-               const lot = lots.find(l => l.id === lId);
-               if (lot && lot.status !== 'Completed') {
-                  const currentBookings = await db.bookings.toArray();
-                  const currentAllotments = await db.allotments.toArray();
-                  const activeBookingIds = new Set(
-                    currentBookings.filter(b => b.plant_id === lot.plant_id && b.status !== 'Delivered' && b.status !== 'Cancelled').map(b => b.id)
-                  );
-                  const allottedQty = currentAllotments.filter(a => a.lot_id === lId && activeBookingIds.has(a.booking_id)).reduce((s,a) => s + a.quantity, 0);
-                  const deliveredQty = currentBookings.filter(b => b.lot_id === lId && b.status === 'Delivered').reduce((s,b) => s + b.quantity, 0);
-                  const salesQty = direct_sales.filter(s => s.lot_id === lId).reduce((s, sale) => s + sale.quantity, 0);
-                  const freeStock = (lot.available_stock ?? lot.total_quantity) - allottedQty - deliveredQty - salesQty;
-                  
-                  if (freeStock <= 0) {
-                     const updatedLot = { ...lot, status: 'Completed' as const };
-                     await db.lots.put(updatedLot);
-                     await db.sync_queue.add({ table: 'lots', action: 'UPDATE', payload: { ...updatedLot, sync_status: undefined }, created_at: Date.now() });
-                  }
-               }
-           }
-        }
-
-        await logAudit(userId, userName, 'DELIVER_BOOKING', 'bookings', bookingNumber, {
-           customer_name: deliveryModal.customerName,
-           payment_mode: finalPaymentMode,
-           amount_collected: amountCollectedNow
-        });
+      await logAudit(userId, userName, 'DELIVER_BOOKING', 'bookings', bookingNumber, {
+         customer_name: deliveryModal.customerName,
+         payment_mode: finalPaymentMode,
+         amount_collected: amountCollectedNow
       });
+
+      queryClient.invalidateQueries({ queryKey: ['bookings'] });
+      queryClient.invalidateQueries({ queryKey: ['lots'] });
+      queryClient.invalidateQueries({ queryKey: ['allotments'] });
 
     } finally {
       setActionLoading(null);

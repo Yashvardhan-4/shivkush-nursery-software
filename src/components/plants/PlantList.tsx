@@ -1,7 +1,7 @@
 'use client';
 
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '@/lib/db';
+import { supabase } from '@/lib/supabaseClient';
+import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Search, Pencil } from 'lucide-react';
 
@@ -9,18 +9,30 @@ export default function PlantList({ role }: { role: string }) {
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('All');
   
-  const plants = useLiveQuery(
-    () => db.plants
-      .filter(p => {
-        const matchesActive = p.active !== false;
-        const matchesCategory = categoryFilter === 'All' || p.category === categoryFilter;
-        const matchesSearch = p.plant_name.toLowerCase().includes(search.toLowerCase()) || 
-          (p.variety ? p.variety.toLowerCase().includes(search.toLowerCase()) : false);
-        return matchesActive && matchesCategory && matchesSearch;
-      })
-      .toArray(),
-    [search, categoryFilter]
-  );
+  const { data: plants } = useQuery({
+    queryKey: ['plants', search, categoryFilter],
+    queryFn: async () => {
+      let query = supabase.from('plants').select('*').is('deleted_at', null).eq('active', true);
+      
+      if (categoryFilter !== 'All') {
+        query = query.eq('category', categoryFilter);
+      }
+      
+      const { data, error } = await query;
+      if (error) throw error;
+      
+      let filtered = data || [];
+      if (search) {
+        const s = search.toLowerCase();
+        filtered = filtered.filter((p: any) => 
+          p.plant_name.toLowerCase().includes(s) || 
+          (p.variety && p.variety.toLowerCase().includes(s))
+        );
+      }
+      
+      return filtered;
+    }
+  });
 
   if (!plants) return <div className="p-4 text-center text-gray-500 mt-10 font-medium">Loading plants...</div>;
 

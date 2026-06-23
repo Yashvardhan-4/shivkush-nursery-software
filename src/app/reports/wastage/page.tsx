@@ -3,8 +3,8 @@
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Search, AlertTriangle, Leaf } from 'lucide-react';
-import { db } from '@/lib/db';
-import { useLiveQuery } from 'dexie-react-hooks';
+import { useQuery } from '@tanstack/react-query';
+import { supabase } from '@/lib/supabaseClient';
 
 function toLocalDateStr(dateVal: number | string | Date): string {
   if (!dateVal) return '';
@@ -16,10 +16,9 @@ export default function WastageReportPage() {
   const router = useRouter();
   const [search, setSearch] = useState('');
 
-  // We fetch audit logs, lots, and plants
-  const auditLogs = useLiveQuery(() => db.audit_logs.where('action').equals('UPDATE_LOT').reverse().sortBy('created_at'));
-  const lots = useLiveQuery(async () => (await db.lots.toArray()).filter(l => !l.deleted_at));
-  const plants = useLiveQuery(async () => (await db.plants.toArray()).filter(p => !p.deleted_at));
+  const { data: auditLogs } = useQuery({ queryKey: ['audit_logs_wastage'], queryFn: async () => { const { data } = await supabase.from('audit_logs').select('*').eq('action', 'UPDATE_LOT').order('created_at', { ascending: false }); return data || []; } });
+  const { data: lots } = useQuery({ queryKey: ['lots'], queryFn: async () => { const { data } = await supabase.from('lots').select('*').is('deleted_at', null); return data || []; } });
+  const { data: plants } = useQuery({ queryKey: ['plants'], queryFn: async () => { const { data } = await supabase.from('plants').select('*').is('deleted_at', null); return data || []; } });
 
   if (!auditLogs || !lots || !plants) {
     return (

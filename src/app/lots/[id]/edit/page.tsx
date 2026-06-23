@@ -2,8 +2,8 @@
 
 import { useState, useEffect, use } from 'react';
 import { useRouter } from 'next/navigation';
-import { db, logAudit } from '@/lib/db';
-import { useLiveQuery } from 'dexie-react-hooks';
+import { supabase } from '@/lib/supabaseClient';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Save, AlertTriangle, CheckCircle, Clock, Archive, Trash2, Layers } from 'lucide-react';
 
 interface Props {
@@ -27,32 +27,52 @@ export default function EditLotPage({ params }: Props) {
   const [showMergeModal, setShowMergeModal] = useState(false);
   const [targetLotId, setTargetLotId] = useState('');
 
-  const lot = useLiveQuery(() => db.lots.get(id), [id]);
-  const plant = useLiveQuery(() => lot ? db.plants.get(lot.plant_id) : undefined, [lot]);
-  
-  const otherLots = useLiveQuery(async () => {
-    if (!lot) return [];
-    const all = await db.lots.where('plant_id').equals(lot.plant_id).toArray();
-    return all.filter(l => l.id !== id && l.status !== 'Completed');
-  }, [lot, id]);
+  const queryClient = useQueryClient();
+  const { data: queriesData, isLoading: isQueriesLoading } = useQuery({
+    queryKey: ['lot-details', id],
+    queryFn: async () => {
+      const { data: lotData, error: lotErr } = await supabase.from('lots').select('*').eq('id', id).single();
+      if (lotErr || !lotData) return { lot: null };
+      
+      const { data: plantData } = await supabase.from('plants').select('*').eq('id', lotData.plant_id).single();
+      
+      const { data: otherLotsData } = await supabase.from('lots')
+         .select('*')
+         .eq('plant_id', lotData.plant_id)
+         .neq('id', id)
+         .neq('status', 'Completed')
+         .is('deleted_at', null);
 
-  const allotments = useLiveQuery(async () => {
-    const all = await db.allotments.where('lot_id').equals(id).toArray();
-    const bIds = all.map(a => a.booking_id);
-    if (bIds.length === 0) return [];
-    const bookings = await db.bookings.where('id').anyOf(bIds).toArray();
-    const activeBookingIds = new Set(
-      bookings.filter(b => b.status !== 'Delivered' && b.status !== 'Cancelled').map(b => b.id)
-    );
-    return all.filter(a => activeBookingIds.has(a.booking_id));
-  }, [id]);
+      const { data: allotmentsData } = await supabase.from('allotments').select('*').eq('lot_id', id).is('deleted_at', null);
+      let validAllotments: any[] = [];
+      if (allotmentsData && allotmentsData.length > 0) {
+         const bIds = allotmentsData.map((a: any) => a.booking_id);
+         const { data: bData } = await supabase.from('bookings').select('id, status').in('id', bIds).is('deleted_at', null);
+         const activeBookingIds = new Set(
+            (bData || []).filter((b: any) => b.status !== 'Delivered' && b.status !== 'Cancelled').map((b: any) => b.id)
+         );
+         validAllotments = allotmentsData.filter((a: any) => activeBookingIds.has(a.booking_id));
+      }
 
-  const sales = useLiveQuery(() => db.direct_sales.where('lot_id').equals(id).toArray(), [id]);
-  const deliveredBookings = useLiveQuery(() => db.bookings.where('lot_id').equals(id).filter(b => b.status === 'Delivered').toArray(), [id]);
+      const { data: salesData } = await supabase.from('direct_sales').select('*').eq('lot_id', id).is('deleted_at', null);
+      const { data: deliveredBookingsData } = await supabase.from('bookings').select('*').eq('lot_id', id).eq('status', 'Delivered').is('deleted_at', null);
+
+      return {
+        lot: lotData,
+        plant: plantData,
+        otherLots: otherLotsData || [],
+        allotments: validAllotments,
+        sales: salesData || [],
+        deliveredBookings: deliveredBookingsData || []
+      };
+    }
+  });
+
+  const { lot, plant, otherLots, allotments, sales, deliveredBookings } = queriesData || {};
 
   // Populate form when lot loads
   useEffect(() => {
-    if (lot === null) { setNotFound(true); return; }
+    if (queriesData && !queriesData.lot) { setNotFound(true); return; }
     if (!lot) return;
     setLotNumber(lot.lot_number);
     setLotName(lot.lot_name || '');
@@ -60,7 +80,7 @@ export default function EditLotPage({ params }: Props) {
     setReadyDate(lot.ready_date);
     setStatus(lot.status);
     setNotes(lot.notes || '');
-  }, [lot]);
+  }, [lot, queriesData]);
 
   const allottedQty = allotments?.reduce((sum, a) => sum + a.quantity, 0) || 0;
   const soldQty = sales?.reduce((sum, s) => sum + s.quantity, 0) || 0;
@@ -81,50 +101,38 @@ export default function EditLotPage({ params }: Props) {
 
     if (!confirm(`Are you sure you want to transfer ${freeQty} free saplings from this lot into "${targetLot.lot_name || targetLot.lot_number}"? This cannot be undone.`)) return;
 
+    if (!navigator.onLine) { alert('You must be online to save.'); return; }
     setLoading(true);
     try {
       const user = JSON.parse(localStorage.getItem('snms_user') || '{}');
       
-      await db.transaction('rw', [db.lots, db.sync_queue, db.audit_logs], async () => {
-        // 1. Update Target Lot (increase both total_quantity and available_stock)
-        const targetUpdates = {
-          ...targetLot,
-          total_quantity: targetLot.total_quantity + freeQty,
-          available_stock: (targetLot.available_stock ?? targetLot.total_quantity) + freeQty,
-          notes: `${targetLot.notes || ''}\n[Merge] Received ${freeQty} saplings from lot ${lotNumber}`.trim()
-        };
-        await db.lots.put(targetUpdates);
-        await db.sync_queue.add({
-          table: 'lots',
-          action: 'UPDATE',
-          payload: { ...targetUpdates, sync_status: undefined },
-          created_at: Date.now()
-        });
+      const targetUpdates = {
+        total_quantity: targetLot.total_quantity + freeQty,
+        available_stock: (targetLot.available_stock ?? targetLot.total_quantity) + freeQty,
+        notes: `${targetLot.notes || ''}\n[Merge] Received ${freeQty} saplings from lot ${lotNumber}`.trim()
+      };
+      await supabase.from('lots').update(targetUpdates).eq('id', targetLot.id);
 
-        // 2. Update Source Lot (decrease both total_quantity and available_stock)
-        const sourceUpdates = {
-          ...lot!,
-          total_quantity: lot!.total_quantity - freeQty,
-          available_stock: lot!.total_quantity - freeQty - deliveredQty - soldQty,
-          status: usedQty === 0 ? 'Completed' as const : status,
-          notes: `${notes || ''}\n[Merge] Transferred ${freeQty} free saplings to lot ${targetLot.lot_name || targetLot.lot_number}`.trim()
-        };
-        await db.lots.put(sourceUpdates);
-        await db.sync_queue.add({
-          table: 'lots',
-          action: 'UPDATE',
-          payload: { ...sourceUpdates, sync_status: undefined },
-          created_at: Date.now()
-        });
+      const sourceUpdates = {
+        total_quantity: lot!.total_quantity - freeQty,
+        available_stock: lot!.total_quantity - freeQty - deliveredQty - soldQty,
+        status: usedQty === 0 ? 'Completed' : status,
+        notes: `${notes || ''}\n[Merge] Transferred ${freeQty} free saplings to lot ${targetLot.lot_name || targetLot.lot_number}`.trim()
+      };
+      await supabase.from('lots').update(sourceUpdates).eq('id', id);
 
-        await logAudit(user.id || '00000000-0000-0000-0000-000000000000', user.name || 'Owner', 'MERGE_LOT', 'lots', id, {
-          source_lot: lotNumber,
-          target_lot: targetLot.lot_number,
-          quantity: freeQty
-        });
+      await supabase.from('audit_logs').insert({
+        id: crypto.randomUUID(),
+        user_id: user.id || '00000000-0000-0000-0000-000000000000',
+        user_name: user.name || 'Owner',
+        action: 'MERGE_LOT',
+        entity_type: 'lots',
+        entity_id: id,
+        details: { source_lot: lotNumber, target_lot: targetLot.lot_number, quantity: freeQty }
       });
 
-      window.dispatchEvent(new Event('online'));
+      queryClient.invalidateQueries({ queryKey: ['lot-details'] });
+      queryClient.invalidateQueries({ queryKey: ['lots'] });
       alert('Lots merged successfully!');
       router.push('/lots');
     } catch (e) {
@@ -145,10 +153,10 @@ export default function EditLotPage({ params }: Props) {
       alert(`Cannot mark this lot as Completed because it has ${allottedQty} active allotments. Please fulfill or release these allotments first.`);
       return;
     }
+    if (!navigator.onLine) { alert('You must be online to save.'); return; }
     setLoading(true);
     try {
       const user = JSON.parse(localStorage.getItem('snms_user') || '{}');
-      const lot = await db.lots.get(id);
       if (!lot) return;
 
       const isStockAdjusted = lot.total_quantity !== newQty;
@@ -157,33 +165,38 @@ export default function EditLotPage({ params }: Props) {
         : notes;
 
       const updates = {
-        ...lot,
         lot_number: lotNumber,
-        lot_name: lotName || undefined,
+        lot_name: lotName || null,
         total_quantity: newQty,
         available_stock: newQty - deliveredQty - soldQty,
         ready_date: readyDate,
         status,
         notes: finalNotes,
       };
-      await db.lots.put(updates);
-      await db.sync_queue.add({
-        table: 'lots',
-        action: 'UPDATE',
-        payload: { ...updates, sync_status: undefined },
-        created_at: Date.now(),
+      
+      await supabase.from('lots').update(updates).eq('id', id);
+      
+      await supabase.from('audit_logs').insert({
+        id: crypto.randomUUID(),
+        user_id: user.id || '00000000-0000-0000-0000-000000000000',
+        user_name: user.name || 'Owner',
+        action: 'UPDATE_LOT',
+        entity_type: 'lots',
+        entity_id: id,
+        details: {
+          lot_number: lotNumber,
+          lot_name: lotName,
+          total_quantity: newQty,
+          available_stock: newQty - deliveredQty - soldQty,
+          ready_date: readyDate,
+          status,
+          notes: finalNotes,
+          adjustment_reason: isStockAdjusted ? adjustmentReason : undefined
+        }
       });
-      await logAudit(user.id || '00000000-0000-0000-0000-000000000000', user.name || 'Owner', 'UPDATE_LOT', 'lots', id, {
-        lot_number: lotNumber,
-        lot_name: lotName,
-        total_quantity: newQty,
-        available_stock: newQty - deliveredQty - soldQty,
-        ready_date: readyDate,
-        status,
-        notes: finalNotes,
-        adjustment_reason: isStockAdjusted ? adjustmentReason : undefined
-      });
-      window.dispatchEvent(new Event('online'));
+      
+      queryClient.invalidateQueries({ queryKey: ['lot-details'] });
+      queryClient.invalidateQueries({ queryKey: ['lots'] });
       router.push('/lots');
     } finally {
       setLoading(false);
@@ -197,22 +210,25 @@ export default function EditLotPage({ params }: Props) {
     }
     
     if (confirm('Are you sure you want to completely delete this lot? This action cannot be undone.')) {
+      if (!navigator.onLine) { alert('You must be online to save.'); return; }
       setLoading(true);
       try {
         const user = JSON.parse(localStorage.getItem('snms_user') || '{}');
         const deletedAt = new Date().toISOString();
-        const oldLot = await db.lots.get(id);
-        if (oldLot) {
-          await db.lots.update(id, { deleted_at: deletedAt, sync_status: 'pending' });
-          await db.sync_queue.add({
-            table: 'lots',
-            action: 'UPDATE',
-            payload: { ...oldLot, deleted_at: deletedAt },
-            created_at: Date.now(),
-          });
-        }
-        await logAudit(user.id || '00000000-0000-0000-0000-000000000000', user.name || 'Owner', 'DELETE_LOT', 'lots', id, { lot_number: lotNumber });
-        window.dispatchEvent(new Event('online'));
+        
+        await supabase.from('lots').update({ deleted_at: deletedAt }).eq('id', id);
+        
+        await supabase.from('audit_logs').insert({
+          id: crypto.randomUUID(),
+          user_id: user.id || '00000000-0000-0000-0000-000000000000',
+          user_name: user.name || 'Owner',
+          action: 'DELETE_LOT',
+          entity_type: 'lots',
+          entity_id: id,
+          details: { lot_number: lotNumber }
+        });
+        
+        queryClient.invalidateQueries({ queryKey: ['lots'] });
         router.push('/lots');
       } finally {
         setLoading(false);

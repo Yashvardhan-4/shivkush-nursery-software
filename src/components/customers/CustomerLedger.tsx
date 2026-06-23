@@ -1,17 +1,40 @@
 'use client';
 
 import { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '@/lib/db';
+import { useQuery } from '@tanstack/react-query';
+import { supabase } from '@/lib/supabaseClient';
 import { Search, Phone, MapPin, ChevronDown, ChevronUp, ShoppingBag, TrendingUp } from 'lucide-react';
 
 export default function CustomerLedger() {
   const [search, setSearch] = useState('');
   const [expandedPhone, setExpandedPhone] = useState<string | null>(null);
 
-  const bookings = useLiveQuery(() => db.bookings.toArray());
-  const directSales = useLiveQuery(() => db.direct_sales.toArray());
-  const plants = useLiveQuery(() => db.plants.toArray());
+  const { data: bookings } = useQuery({
+    queryKey: ['bookings'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('bookings').select('*');
+      if (error) throw error;
+      return data || [];
+    }
+  });
+
+  const { data: directSales } = useQuery({
+    queryKey: ['direct_sales'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('direct_sales').select('*');
+      if (error) throw error;
+      return data || [];
+    }
+  });
+
+  const { data: plants } = useQuery({
+    queryKey: ['plants'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('plants').select('*');
+      if (error) throw error;
+      return data || [];
+    }
+  });
 
   if (!bookings || !directSales || !plants) {
     return (

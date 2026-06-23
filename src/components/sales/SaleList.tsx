@@ -1,22 +1,32 @@
 'use client';
 
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '@/lib/db';
+import { useQuery } from '@tanstack/react-query';
+import { supabase } from '@/lib/supabaseClient';
 
 export default function SaleList() {
-  const sales = useLiveQuery(() => db.direct_sales.toArray());
-  const plants = useLiveQuery(() => db.plants.toArray());
+  const { data: sales, isLoading: salesLoading } = useQuery({
+    queryKey: ['direct_sales'],
+    queryFn: async () => {
+      const { data } = await supabase.from('direct_sales').select('*').is('deleted_at', null).order('created_at', { ascending: false });
+      return data || [];
+    }
+  });
 
-  if (!sales || !plants) {
+  const { data: plants, isLoading: plantsLoading } = useQuery({
+    queryKey: ['plants'],
+    queryFn: async () => {
+      const { data } = await supabase.from('plants').select('*').is('deleted_at', null);
+      return data || [];
+    }
+  });
+
+  if (salesLoading || plantsLoading || !sales || !plants) {
     return <div className="p-4 text-center text-gray-500 font-medium">Loading sales...</div>;
   }
 
-  // Sort sales descending by creation date
-  const sortedSales = [...sales].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-
   return (
     <div className="space-y-4">
-      {sortedSales.map(sale => {
+      {sales.map(sale => {
         const plant = plants.find(p => p.id === sale.plant_id);
         
         return (
@@ -35,7 +45,7 @@ export default function SaleList() {
           </div>
         );
       })}
-      {sortedSales.length === 0 && (
+      {sales.length === 0 && (
         <div className="text-center p-12 bg-white rounded-2xl border border-gray-100 border-dashed">
           <p className="text-gray-500 font-medium">No sales recorded yet.</p>
         </div>

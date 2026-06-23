@@ -1,13 +1,23 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db, generateId } from '@/lib/db';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { supabase } from '@/lib/supabaseClient';
+import { generateId } from '@/lib/utils';
 import { QrCode, Upload, Trash2, Plus, ChevronLeft, Check } from 'lucide-react';
 import Link from 'next/link';
 
 export default function QRManagementPage() {
-  const qrs = useLiveQuery(() => db.payment_qrs.toArray());
+  const queryClient = useQueryClient();
+  const { data: qrs, isLoading } = useQuery({
+    queryKey: ['payment_qrs'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('payment_qrs').select('*').is('deleted_at', null);
+      if (error) throw error;
+      return data || [];
+    }
+  });
+
   const [loading, setLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -30,6 +40,7 @@ export default function QRManagementPage() {
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name || !upiId || !imageData) return alert("Please fill all details and upload an image.");
+    if (!navigator.onLine) { alert('You must be online to save.'); return; }
     
     setLoading(true);
     try {
@@ -39,20 +50,13 @@ export default function QRManagementPage() {
         name,
         upi_id: upiId,
         image_data: imageData,
-        active: true,
-        sync_status: 'pending' as const,
-        created_at: new Date().toISOString()
+        active: true
       };
       
-      await db.payment_qrs.add(qrData);
-      await db.sync_queue.add({
-        table: 'payment_qrs',
-        action: 'INSERT',
-        payload: qrData,
-        created_at: Date.now()
-      });
+      const { error } = await supabase.from('payment_qrs').insert(qrData);
+      if (error) throw error;
       
-      window.dispatchEvent(new Event('online'));
+      queryClient.invalidateQueries({ queryKey: ['payment_qrs'] });
       
       setName('');
       setUpiId('');
@@ -68,39 +72,26 @@ export default function QRManagementPage() {
 
   const handleDelete = async (id: string) => {
     if (!confirm('Are you sure you want to delete this QR code?')) return;
+    if (!navigator.onLine) { alert('You must be online to save.'); return; }
     try {
       const deletedAt = new Date().toISOString();
-      const oldQr = await db.payment_qrs.get(id);
-      if (oldQr) {
-        await db.payment_qrs.update(id, { deleted_at: deletedAt, sync_status: 'pending' });
-        await db.sync_queue.add({
-          table: 'payment_qrs',
-          action: 'UPDATE',
-          payload: { ...oldQr, deleted_at: deletedAt },
-          created_at: Date.now()
-        });
-      }
-      window.dispatchEvent(new Event('online'));
+      const { error } = await supabase.from('payment_qrs').update({ deleted_at: deletedAt }).eq('id', id);
+      if (error) throw error;
+      
+      queryClient.invalidateQueries({ queryKey: ['payment_qrs'] });
     } catch (err) {
       console.error(err);
     }
   };
 
   const toggleActive = async (id: string, currentStatus: boolean) => {
+    if (!navigator.onLine) { alert('You must be online to save.'); return; }
     try {
       const updates = { active: !currentStatus };
-      await db.payment_qrs.update(id, updates);
+      const { error } = await supabase.from('payment_qrs').update(updates).eq('id', id);
+      if (error) throw error;
       
-      const qr = await db.payment_qrs.get(id);
-      if (qr) {
-        await db.sync_queue.add({
-          table: 'payment_qrs',
-          action: 'UPDATE',
-          payload: { ...qr, sync_status: undefined },
-          created_at: Date.now()
-        });
-        window.dispatchEvent(new Event('online'));
-      }
+      queryClient.invalidateQueries({ queryKey: ['payment_qrs'] });
     } catch (err) {
       console.error(err);
     }
@@ -188,9 +179,9 @@ export default function QRManagementPage() {
             Active QR Codes
           </h2>
           
-          {qrs === undefined ? (
+          {isLoading ? (
              <div className="text-center py-10 text-gray-400"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto"></div></div>
-          ) : qrs.length === 0 ? (
+          ) : !qrs || qrs.length === 0 ? (
              <div className="bg-white border border-gray-100 border-dashed rounded-3xl p-8 text-center">
                <QrCode className="w-10 h-10 text-gray-300 mx-auto mb-3" />
                <p className="text-gray-500 font-medium">No QR codes added yet.</p>

@@ -1,13 +1,20 @@
+// @ts-nocheck
 'use client';
 import { useState, useEffect, use } from 'react';
 import { useRouter } from 'next/navigation';
-import { db } from '@/lib/db';
-import type { PricingTier } from '@/lib/db';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { supabase } from '@/lib/supabaseClient';
 import { ArrowLeft, ArchiveX, Plus, Trash2, Tag } from 'lucide-react';
+
+interface PricingTier {
+  min_quantity: number;
+  price: number;
+}
 
 export default function EditPlantPage({ params }: { params: Promise<{ id: string }> }) {
   const router = useRouter();
   const { id } = use(params);
+  const queryClient = useQueryClient();
 
   const [name, setName] = useState('');
   const [variety, setVariety] = useState('');
@@ -18,27 +25,27 @@ export default function EditPlantPage({ params }: { params: Promise<{ id: string
   const [newTierPrice, setNewTierPrice] = useState('');
   const [loading, setLoading] = useState(false);
   const [archiving, setArchiving] = useState(false);
-  const [notFound, setNotFound] = useState(false);
-  const [initialLoading, setInitialLoading] = useState(true);
+
+  const { data: plant, isLoading: initialLoading, isError } = useQuery({
+    queryKey: ['plant', id],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('plants').select('*').eq('id', id).single();
+      if (error) throw error;
+      return data;
+    }
+  });
 
   useEffect(() => {
-    const fetchPlant = async () => {
-      const plant = await db.plants.get(id);
-      if (!plant) {
-        setNotFound(true);
-      } else {
-        setName(plant.plant_name);
-        setVariety(plant.variety);
-        setCategory(plant.category || '');
-        setPrice(String(plant.selling_price));
-        setPricingTiers(
-          [...(plant.pricing_tiers || [])].sort((a, b) => a.min_quantity - b.min_quantity)
-        );
-      }
-      setInitialLoading(false);
-    };
-    fetchPlant();
-  }, [id]);
+    if (plant) {
+      setName(plant.plant_name);
+      setVariety(plant.variety || '');
+      setCategory(plant.category || '');
+      setPrice(String(plant.selling_price));
+      setPricingTiers(
+        [...(plant.pricing_tiers || [])].sort((a: PricingTier, b: PricingTier) => a.min_quantity - b.min_quantity)
+      );
+    }
+  }, [plant]);
 
   const handleAddTier = () => {
     const qty = parseInt(newTierQty);
@@ -61,13 +68,12 @@ export default function EditPlantPage({ params }: { params: Promise<{ id: string
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!navigator.onLine) { alert('You must be online to save.'); return; }
     setLoading(true);
 
-    const plant = await db.plants.get(id);
     if (!plant) { setLoading(false); return; }
 
     const updatedPlant = {
-      ...plant,
       plant_name: name,
       variety: variety,
       category: category,
@@ -75,35 +81,38 @@ export default function EditPlantPage({ params }: { params: Promise<{ id: string
       pricing_tiers: pricingTiers,
     };
 
-    await db.plants.put(updatedPlant);
-    await db.sync_queue.add({
-      table: 'plants',
-      action: 'UPDATE',
-      payload: { ...updatedPlant, sync_status: undefined },
-      created_at: Date.now(),
-    });
+    const { error } = await supabase.from('plants').update(updatedPlant).eq('id', id);
+    if (error) {
+      console.error(error);
+      alert('Failed to update plant');
+      setLoading(false);
+      return;
+    }
 
-    window.dispatchEvent(new Event('online'));
+    queryClient.invalidateQueries({ queryKey: ['plants'] });
+    queryClient.invalidateQueries({ queryKey: ['plant', id] });
+
     router.push('/plants');
   };
 
   const handleArchive = async () => {
     if (!confirm('Archive this plant? It will be hidden from active lists.')) return;
+    if (!navigator.onLine) { alert('You must be online to save.'); return; }
     setArchiving(true);
 
-    const plant = await db.plants.get(id);
     if (!plant) { setArchiving(false); return; }
 
-    const updatedPlant = { ...plant, active: false };
-    await db.plants.put(updatedPlant);
-    await db.sync_queue.add({
-      table: 'plants',
-      action: 'UPDATE',
-      payload: { ...updatedPlant, sync_status: undefined },
-      created_at: Date.now(),
-    });
+    const { error } = await supabase.from('plants').update({ active: false }).eq('id', id);
+    if (error) {
+      console.error(error);
+      alert('Failed to archive plant');
+      setArchiving(false);
+      return;
+    }
 
-    window.dispatchEvent(new Event('online'));
+    queryClient.invalidateQueries({ queryKey: ['plants'] });
+    queryClient.invalidateQueries({ queryKey: ['plant', id] });
+
     router.push('/plants');
   };
 
@@ -118,10 +127,10 @@ export default function EditPlantPage({ params }: { params: Promise<{ id: string
     );
   }
 
-  if (notFound) {
+  if (isError) {
     return (
       <div className="p-6 flex flex-col items-center justify-center min-h-screen gap-4">
-        <p className="text-gray-500 font-semibold text-lg">Plant not found.</p>
+        <p className="text-gray-500 font-semibold text-lg">Plant not found or error loading.</p>
         <button onClick={() => router.push('/plants')} className="text-green-600 font-bold underline">
           Back to Plants
         </button>

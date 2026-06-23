@@ -1,7 +1,8 @@
 'use client';
 import { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db, generateId, resolvePlantPrice } from '@/lib/db';
+import { useQuery } from '@tanstack/react-query';
+import { supabase } from '@/lib/supabaseClient';
+import { generateId, resolvePlantPrice } from '@/lib/utils';
 import { Leaf, Info, Trash2, Plus, Share2, Printer, X, FileText } from 'lucide-react';
 
 interface TempItem {
@@ -52,9 +53,13 @@ export default function CalculatorPage() {
   const [discount, setDiscount] = useState('');
 
   // Database Query for Plants dropdown
-  const plants = useLiveQuery(async () => {
-    const all = await db.plants.toArray();
-    return all.filter(p => p.active);
+  const { data: plants } = useQuery({
+    queryKey: ['plants'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('plants').select('*').eq('active', true);
+      if (error) throw error;
+      return data || [];
+    }
   });
   const selectedPlant = plants?.find(p => p.id === plantId);
 
