@@ -49,8 +49,8 @@ export default function WorkerDashboard() {
         let totalStock = 0;
         let allottedQty = 0;
 
-        allLots.filter(l => l.plant_id === plant.id && l.status !== 'Completed').forEach(lot => {
-          const lotTotal = lot.available_stock ?? lot.total_quantity;
+        allLots.filter(l => l.plant_id === plant.id && l.status === 'Ready').forEach(lot => {
+          const lotTotal = lot.total_quantity;
           const lotBookings = allBookings.filter(b => b.lot_id === lot.id);
           
           const activeBookingIds = new Set(
@@ -58,7 +58,11 @@ export default function WorkerDashboard() {
           );
           const allottedInLot = allAllotments.filter(a => a.lot_id === lot.id && activeBookingIds.has(a.booking_id)).reduce((s, a) => s + a.quantity, 0);
           
-          freeStock += Math.max(0, lotTotal - allottedInLot);
+          const lotFree = lot.available_stock !== null && lot.available_stock !== undefined
+            ? lot.available_stock
+            : lot.total_quantity - allottedInLot;
+          
+          freeStock += Math.max(0, lotFree);
           totalStock += lotTotal;
           allottedQty += allottedInLot;
         });

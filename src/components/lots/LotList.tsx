@@ -136,6 +136,7 @@ export default function LotList() {
 
           const soldQty = deliveredQty + directSoldQty;
           
+          const availableStock = lot.total_quantity;
           const freeStock = Math.max(0, lot.available_stock ?? lot.initial_quantity ?? lot.total_quantity);
           
           const readyDate = new Date(lot.ready_date);

@@ -77,13 +77,13 @@ export default function NewDirectSalePage() {
   const { data: users } = useQuery({ queryKey: ['users'], queryFn: async () => { const { data } = await supabase.from('users').select('*').is('deleted_at', null); return data || []; } });
   const workers = users?.filter(u => u.role === 'worker') || [];
 
-  // Auto-select first available lot (FIFO) when plant changes, sorted by ready_date
+  // Auto-select first READY lot (FIFO) when plant changes, sorted by ready_date
   useEffect(() => {
     if (!plantId) { setSelectedLotId(''); return; }
     if (!autoAllocate) return;
     const lotsData = lots || [];
     const first = lotsData
-      .filter(l => l.plant_id === plantId && l.status !== 'Completed')
+      .filter(l => l.plant_id === plantId && l.status === 'Ready')
       .sort((a, b) => new Date(a.ready_date).getTime() - new Date(b.ready_date).getTime())[0];
     setSelectedLotId(first?.id || '');
   }, [plantId, lots, autoAllocate]);
@@ -112,27 +112,21 @@ export default function NewDirectSalePage() {
     }
   };
 
-  // Per-lot free stock: respects allotments, delivered bookings, and direct sales
+  // Per-lot free stock: available_stock already reflects deducted allotments (set by DB RPC)
+  // We only subtract what's in the current cart (not yet committed to DB)
   const computeFreeStockForLot = (lotId: string, pid: string): number => {
     if (!lots || !allotments || !bookings || !existingSales) return 0;
     const lot = lots.find(l => l.id === lotId);
     if (!lot) return 0;
-    const activeBookingIds = new Set(
-      bookings.filter(b => b.plant_id === pid && b.status !== 'Delivered' && b.status !== 'Cancelled').map(b => b.id)
-    );
-    const allottedInLot = allotments
-      .filter(a => a.lot_id === lotId && activeBookingIds.has(a.booking_id))
-      .reduce((s, a) => s + a.quantity, 0);
-      
     const cartQty = cart.filter(i => i.lotId === lotId).reduce((s, i) => s + i.quantity, 0);
-    return Math.max(0, (lot.available_stock ?? lot.total_quantity) - allottedInLot - cartQty);
+    return Math.max(0, (lot.available_stock ?? lot.total_quantity) - cartQty);
   };
 
-  // Total free stock across all active lots for a plant
+  // Total free stock across all READY lots for a plant
   const computeFreeStock = (pid: string): number => {
     if (!lots) return 0;
     return lots
-      .filter(l => l.plant_id === pid && l.status !== 'Completed')
+      .filter(l => l.plant_id === pid && l.status === 'Ready')
       .reduce((sum, l) => sum + computeFreeStockForLot(l.id, pid), 0);
   };
 
@@ -415,7 +409,7 @@ export default function NewDirectSalePage() {
               </div>
 
               {/* Lot selector */}
-              {lots && lots.filter(l => l.plant_id === plantId && l.status !== 'Completed').length > 0 ? (
+              {lots && lots.filter(l => l.plant_id === plantId && l.status === 'Ready').length > 0 ? (
                 <>
                   {!autoAllocate && (
                     <div className="space-y-1">
@@ -427,7 +421,7 @@ export default function NewDirectSalePage() {
                       >
                         <option value="">-- No Lot Assigned --</option>
                         {lots
-                          .filter(l => l.plant_id === plantId && l.status !== 'Completed')
+                          .filter(l => l.plant_id === plantId && l.status === 'Ready')
                           .sort((a, b) => new Date(a.ready_date).getTime() - new Date(b.ready_date).getTime())
                           .map(l => {
                             const free = computeFreeStockForLot(l.id, plantId);

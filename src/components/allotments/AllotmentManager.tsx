@@ -132,7 +132,7 @@ function AllotmentRow({
 
   const plant = plants.find((p) => p.id === booking.plant_id);
   const eligibleLots = lots
-    .filter((l) => l.plant_id === booking.plant_id && l.status !== 'Completed')
+    .filter((l) => l.plant_id === booking.plant_id && l.status === 'Ready')
     .sort((a, b) => new Date(a.ready_date).getTime() - new Date(b.ready_date).getTime());
   
   const hasStock = eligibleLots.some(lot => getAvailableInLot(lot.id, lots, allotments, bookings, directSales) > 0);
