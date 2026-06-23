@@ -5,7 +5,12 @@ import { useRouter } from 'next/navigation';
 import { ArrowLeft, Search, AlertTriangle, Leaf } from 'lucide-react';
 import { db } from '@/lib/db';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { toLocalDateStr } from '@/lib/utils';
+
+function toLocalDateStr(dateVal: number | string | Date): string {
+  if (!dateVal) return '';
+  const d = new Date(dateVal);
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
 
 export default function WastageReportPage() {
   const router = useRouter();
