@@ -50,9 +50,9 @@ export default function OwnerDashboard() {
     }
   }, []);
 
-  // Today's total income = direct sales + balance collected at delivery + advances collected today
+  // Today's total income = direct sales + balance collected at delivery + advances collected today - refunds issued today
   const todaySalesTotal = (allSales && allBookings)
-    ? allSales
+    ? (allSales
         .filter((s) => s.created_at && toLocalDateStr(s.created_at) === todayStr)
         .reduce((sum, s) => sum + Number(s.amount || 0), 0)
       + allBookings
@@ -60,12 +60,15 @@ export default function OwnerDashboard() {
         .reduce((sum, b) => sum + Math.max(0, Number(b.total_amount || 0) - Number(b.advance_paid || 0)), 0)
       + allBookings
         .filter((b) => b.created_at && toLocalDateStr(b.created_at) === todayStr)
-        .reduce((sum, b) => sum + Number(b.advance_paid || 0), 0)
+        .reduce((sum, b) => sum + Number(b.advance_paid || 0), 0))
+      - allBookings
+        .filter((b) => b.status === 'Cancelled' && b.refund_status === 'Refunded' && b.refund_date === todayStr)
+        .reduce((sum, b) => sum + Number(b.refund_amount || 0), 0)
     : null;
 
-  // Owner's sales = income from transactions by the owner user
+  // Owner's sales = income from transactions by the owner user - refunds issued today
   const ownerSalesTotal = (allSales && allBookings && ownerId)
-    ? allSales
+    ? (allSales
         .filter((s) => s.created_at && toLocalDateStr(s.created_at) === todayStr && s.worker_id === ownerId)
         .reduce((sum, s) => sum + Number(s.amount || 0), 0)
       + allBookings
@@ -73,7 +76,10 @@ export default function OwnerDashboard() {
         .reduce((sum, b) => sum + Math.max(0, Number(b.total_amount || 0) - Number(b.advance_paid || 0)), 0)
       + allBookings
         .filter((b) => b.created_at && toLocalDateStr(b.created_at) === todayStr && b.worker_id === ownerId)
-        .reduce((sum, b) => sum + Number(b.advance_paid || 0), 0)
+        .reduce((sum, b) => sum + Number(b.advance_paid || 0), 0))
+      - allBookings
+        .filter((b) => b.status === 'Cancelled' && b.refund_status === 'Refunded' && b.refund_date === todayStr)
+        .reduce((sum, b) => sum + Number(b.refund_amount || 0), 0)
     : null;
 
   const pendingBookingsCount = allBookings
@@ -108,7 +114,7 @@ export default function OwnerDashboard() {
         const salesQty = allSales
           .filter((s) => s.lot_id === lot.id)
           .reduce((sum, s) => sum + s.quantity, 0);
-        return (deliveredQty + salesQty) > (lot.available_stock ?? lot.total_quantity);
+        return (deliveredQty + salesQty) > lot.total_quantity;
       })
     : [];
 

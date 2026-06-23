@@ -56,7 +56,7 @@ export default function EditLotPage({ params }: Props) {
     if (!lot) return;
     setLotNumber(lot.lot_number);
     setLotName(lot.lot_name || '');
-    setAvailableStock(String(lot.available_stock ?? lot.total_quantity));
+    setAvailableStock(String(lot.total_quantity));
     setReadyDate(lot.ready_date);
     setStatus(lot.status);
     setNotes(lot.notes || '');
@@ -105,7 +105,7 @@ export default function EditLotPage({ params }: Props) {
         const sourceUpdates = {
           ...lot!,
           total_quantity: lot!.total_quantity - freeQty,
-          available_stock: usedQty,
+          available_stock: lot!.total_quantity - freeQty - deliveredQty - soldQty,
           status: usedQty === 0 ? 'Completed' as const : status,
           notes: `${notes || ''}\n[Merge] Transferred ${freeQty} free saplings to lot ${targetLot.lot_name || targetLot.lot_number}`.trim()
         };
@@ -151,16 +151,17 @@ export default function EditLotPage({ params }: Props) {
       const lot = await db.lots.get(id);
       if (!lot) return;
 
-      const isStockAdjusted = lot.available_stock !== newQty;
+      const isStockAdjusted = lot.total_quantity !== newQty;
       const finalNotes = isStockAdjusted && adjustmentReason
-        ? `${notes || ''}\n[Adjustment] Stock changed from ${lot.available_stock} to ${newQty} because: ${adjustmentReason}`.trim()
+        ? `${notes || ''}\n[Adjustment] Stock changed from ${lot.total_quantity} to ${newQty} because: ${adjustmentReason}`.trim()
         : notes;
 
       const updates = {
         ...lot,
         lot_number: lotNumber,
         lot_name: lotName || undefined,
-        available_stock: newQty,
+        total_quantity: newQty,
+        available_stock: newQty - deliveredQty - soldQty,
         ready_date: readyDate,
         status,
         notes: finalNotes,
@@ -175,7 +176,8 @@ export default function EditLotPage({ params }: Props) {
       await logAudit(user.id || '00000000-0000-0000-0000-000000000000', user.name || 'Owner', 'UPDATE_LOT', 'lots', id, {
         lot_number: lotNumber,
         lot_name: lotName,
-        available_stock: newQty,
+        total_quantity: newQty,
+        available_stock: newQty - deliveredQty - soldQty,
         ready_date: readyDate,
         status,
         notes: finalNotes,
@@ -260,7 +262,7 @@ export default function EditLotPage({ params }: Props) {
              'Lot Sold Out'}
           </p>
           <p className="text-xs font-semibold text-gray-500 mt-0.5">
-            {allottedQty} plants allotted to bookings · {newQty - allottedQty} free
+            {allottedQty} plants allotted to bookings · {newQty - usedQty} free
           </p>
         </div>
       </div>
@@ -365,7 +367,7 @@ export default function EditLotPage({ params }: Props) {
         </div>
 
         {/* Adjustment Reason */}
-        {lot && newQty !== (lot.available_stock ?? lot.total_quantity) && (
+        {lot && newQty !== lot.total_quantity && (
           <div className="space-y-2 animate-in slide-in-from-top-4 duration-200">
             <label className="text-xs font-black text-red-700 uppercase tracking-wider flex items-center gap-1">
               ⚠️ Reason for stock adjustment *
