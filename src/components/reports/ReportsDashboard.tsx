@@ -21,7 +21,7 @@ import {
   CalendarDays,
 } from 'lucide-react';
 
-type Tab = 'reconciliation' | 'production' | 'lots';
+type Tab = 'reconciliation' | 'production' | 'lots' | 'workers';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 function fmt(n: number) {
@@ -146,7 +146,7 @@ function ReconciliationTab() {
   const { data: plantsRaw } = useQuery({ queryKey: ['plants'], queryFn: async () => { const { data } = await supabase.from('plants').select('*').is('deleted_at', null).eq('active', true); return data || []; } });
   const { data: bookingsRaw } = useQuery({ queryKey: ['bookings'], queryFn: async () => { const { data } = await supabase.from('bookings').select('*').is('deleted_at', null); return data || []; } });
   const { data: auditLogsRaw } = useQuery({ queryKey: ['audit_logs'], queryFn: async () => { const { data } = await supabase.from('audit_logs').select('*'); return data || []; } });
-  const { data: usersRaw } = useQuery({ queryKey: ['users'], queryFn: async () => { const { data } = await supabase.from('users').select('*').is('deleted_at', null); return data || []; } });
+  const { data: usersRaw } = useQuery({ queryKey: ['users'], queryFn: async () => { const { data } = await supabase.from('users').select('id, name, role'); return data || []; } });
 
   if (!salesRaw || !plantsRaw || !bookingsRaw || !auditLogsRaw || !usersRaw) {
     return <LoadingCard />;
@@ -861,6 +861,294 @@ function LoadingCard() {
   );
 }
 
+// ─── Workers Report Tab ───────────────────────────────────────────────────────
+function WorkersTab() {
+  const [selectedDate, setSelectedDate] = useState(todayIST());
+  const [selectedWorker, setSelectedWorker] = useState<string>('all');
+
+  const { data: salesRaw } = useQuery({ queryKey: ['direct_sales'], queryFn: async () => { const { data } = await supabase.from('direct_sales').select('*').is('deleted_at', null); return data || []; } });
+  const { data: bookingsRaw } = useQuery({ queryKey: ['bookings'], queryFn: async () => { const { data } = await supabase.from('bookings').select('*').is('deleted_at', null); return data || []; } });
+  const { data: plantsRaw } = useQuery({ queryKey: ['plants'], queryFn: async () => { const { data } = await supabase.from('plants').select('*').is('deleted_at', null); return data || []; } });
+  const { data: usersRaw } = useQuery({ queryKey: ['users'], queryFn: async () => { const { data } = await supabase.from('users').select('id, name, role'); return data || []; } });
+
+  if (!salesRaw || !bookingsRaw || !plantsRaw || !usersRaw) return <LoadingCard />;
+
+  const plantMap = new Map(plantsRaw.map(p => [p.id, p.variety ? `${p.plant_name} - ${p.variety}` : p.plant_name]));
+
+  // Build per-worker stats
+  const workers = usersRaw; // all users (owner + workers)
+
+  const getWorkerStats = (workerId: string, dateStr: string | null) => {
+    const salesFilter = salesRaw.filter(s =>
+      s.worker_id === workerId &&
+      (!dateStr || (s.created_at && toLocalDateStr(s.created_at) === dateStr))
+    );
+    // Group by sale_number to avoid double-counting split items
+    const saleGroups = salesFilter.reduce((g, s) => {
+      if (!g[s.sale_number]) g[s.sale_number] = [];
+      g[s.sale_number].push(s);
+      return g;
+    }, {} as Record<string, typeof salesFilter>);
+
+    let salesCash = 0, salesUpi = 0;
+    Object.values(saleGroups).forEach(grp => {
+      const first = grp[0];
+      if (first.payment_mode === 'Cash') salesCash += grp.reduce((s, i) => s + i.amount, 0);
+      else if (first.payment_mode === 'UPI') salesUpi += grp.reduce((s, i) => s + i.amount, 0);
+      else if (first.payment_mode === 'Split') { salesCash += first.cash_amount || 0; salesUpi += first.upi_amount || 0; }
+    });
+
+    const advances = bookingsRaw.filter(b =>
+      b.worker_id === workerId &&
+      (!dateStr || (b.created_at && toLocalDateStr(b.created_at) === dateStr)) &&
+      (b.advance_paid || 0) > 0
+    );
+    let advCash = 0, advUpi = 0;
+    advances.forEach(b => {
+      if (b.advance_payment_mode === 'Cash' || !b.advance_payment_mode) advCash += b.advance_paid || 0;
+      else if (b.advance_payment_mode === 'UPI') advUpi += b.advance_paid || 0;
+      else if (b.advance_payment_mode === 'Split') { advCash += b.advance_cash_amount || 0; advUpi += b.advance_upi_amount || 0; }
+    });
+
+    const deliveries = bookingsRaw.filter(b =>
+      b.worker_id === workerId &&
+      b.status === 'Delivered' &&
+      (!dateStr || b.delivery_date === dateStr)
+    );
+    let delCash = 0, delUpi = 0;
+    deliveries.forEach(b => {
+      const bal = Math.max(0, (b.total_amount || 0) - (b.advance_paid || 0));
+      if (b.payment_mode === 'Cash') delCash += bal;
+      else if (b.payment_mode === 'UPI') delUpi += bal;
+      else if (b.payment_mode === 'Split') { delCash += b.cash_amount || 0; delUpi += b.upi_amount || 0; }
+    });
+
+    const totalCash = salesCash + advCash + delCash;
+    const totalUpi = salesUpi + advUpi + delUpi;
+
+    return {
+      saleCount: Object.keys(saleGroups).length,
+      advanceCount: new Set(advances.map(b => b.booking_number)).size,
+      deliveryCount: new Set(deliveries.map(b => b.booking_number)).size,
+      salesCash, salesUpi, advCash, advUpi, delCash, delUpi,
+      totalCash, totalUpi,
+      total: totalCash + totalUpi,
+    };
+  };
+
+  // Transaction list for selected worker
+  const txList: { id: string; label: string; plant: string; customer: string; amount: number; cash: number; upi: number; mode: string; time: string }[] = [];
+  if (selectedWorker !== 'all') {
+    salesRaw
+      .filter(s => s.worker_id === selectedWorker && (!selectedDate || toLocalDateStr(s.created_at) === selectedDate))
+      .forEach(s => {
+        txList.push({
+          id: `s_${s.id}`,
+          label: 'Direct Sale',
+          plant: plantMap.get(s.plant_id) || 'Plant',
+          customer: s.customer_name || 'Walk-in',
+          amount: s.amount,
+          cash: s.payment_mode === 'Cash' ? s.amount : (s.cash_amount || 0),
+          upi: s.payment_mode === 'UPI' ? s.amount : (s.upi_amount || 0),
+          mode: s.payment_mode,
+          time: s.created_at ? new Date(s.created_at).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true }) : '',
+        });
+      });
+    bookingsRaw
+      .filter(b => b.worker_id === selectedWorker && (!selectedDate || toLocalDateStr(b.created_at) === selectedDate) && (b.advance_paid || 0) > 0)
+      .forEach(b => {
+        txList.push({
+          id: `a_${b.id}`,
+          label: 'Advance',
+          plant: plantMap.get(b.plant_id) || 'Plant',
+          customer: b.customer_name || 'Customer',
+          amount: b.advance_paid || 0,
+          cash: b.advance_payment_mode === 'Cash' || !b.advance_payment_mode ? b.advance_paid || 0 : (b.advance_cash_amount || 0),
+          upi: b.advance_payment_mode === 'UPI' ? b.advance_paid || 0 : (b.advance_upi_amount || 0),
+          mode: b.advance_payment_mode || 'Cash',
+          time: b.created_at ? new Date(b.created_at).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true }) : '',
+        });
+      });
+    bookingsRaw
+      .filter(b => b.worker_id === selectedWorker && b.status === 'Delivered' && (!selectedDate || b.delivery_date === selectedDate))
+      .forEach(b => {
+        const bal = Math.max(0, (b.total_amount || 0) - (b.advance_paid || 0));
+        if (bal <= 0) return;
+        txList.push({
+          id: `d_${b.id}`,
+          label: 'Final Payment',
+          plant: plantMap.get(b.plant_id) || 'Plant',
+          customer: b.customer_name || 'Customer',
+          amount: bal,
+          cash: b.payment_mode === 'Cash' ? bal : (b.cash_amount || 0),
+          upi: b.payment_mode === 'UPI' ? bal : (b.upi_amount || 0),
+          mode: b.payment_mode || 'Cash',
+          time: b.delivery_date || '',
+        });
+      });
+  }
+
+  const overallStats = selectedWorker !== 'all' ? getWorkerStats(selectedWorker, selectedDate) : null;
+
+  return (
+    <div className="space-y-4">
+      {/* Date Picker */}
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 flex items-center gap-3">
+        <CalendarDays className="w-5 h-5 text-gray-400 shrink-0" />
+        <input
+          type="date"
+          value={selectedDate}
+          onChange={e => setSelectedDate(e.target.value)}
+          className="flex-1 text-sm font-bold text-gray-800 bg-transparent outline-none"
+        />
+        <button onClick={() => setSelectedDate('')} className="text-xs font-bold text-gray-400 underline">All Dates</button>
+      </div>
+
+      {/* Worker Selector */}
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        <button
+          onClick={() => setSelectedWorker('all')}
+          className={`px-4 py-2 rounded-xl text-xs font-black whitespace-nowrap transition-all ${
+            selectedWorker === 'all' ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-600'
+          }`}
+        >
+          All Workers
+        </button>
+        {workers.map(w => (
+          <button
+            key={w.id}
+            onClick={() => setSelectedWorker(w.id)}
+            className={`px-4 py-2 rounded-xl text-xs font-black whitespace-nowrap transition-all ${
+              selectedWorker === w.id ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-600'
+            }`}
+          >
+            {w.name} {w.role === 'owner' ? '(Owner)' : ''}
+          </button>
+        ))}
+      </div>
+
+      {/* All Workers Summary */}
+      {selectedWorker === 'all' && (
+        <div className="space-y-3">
+          {workers.map(w => {
+            const s = getWorkerStats(w.id, selectedDate || null);
+            if (s.total === 0) return null;
+            return (
+              <div
+                key={w.id}
+                className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 space-y-3 cursor-pointer active:scale-95 transition-transform"
+                onClick={() => setSelectedWorker(w.id)}
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-black text-gray-900 text-base">{w.name}</p>
+                    <p className="text-xs font-semibold text-gray-400 capitalize">{w.role}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-2xl font-black text-green-600">{fmt(s.total)}</p>
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Total Collected</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="bg-sky-50 rounded-xl p-2 text-center">
+                    <p className="text-[10px] font-bold text-sky-600 uppercase">Sales</p>
+                    <p className="font-black text-sky-700">{s.saleCount}</p>
+                  </div>
+                  <div className="bg-violet-50 rounded-xl p-2 text-center">
+                    <p className="text-[10px] font-bold text-violet-600 uppercase">Advances</p>
+                    <p className="font-black text-violet-700">{s.advanceCount}</p>
+                  </div>
+                  <div className="bg-emerald-50 rounded-xl p-2 text-center">
+                    <p className="text-[10px] font-bold text-emerald-600 uppercase">Deliveries</p>
+                    <p className="font-black text-emerald-700">{s.deliveryCount}</p>
+                  </div>
+                </div>
+                <div className="flex gap-3">
+                  <div className="flex-1 bg-green-50 rounded-xl p-2 text-center">
+                    <p className="text-[10px] font-bold text-green-600 uppercase">Cash</p>
+                    <p className="font-black text-green-700">{fmt(s.totalCash)}</p>
+                  </div>
+                  <div className="flex-1 bg-blue-50 rounded-xl p-2 text-center">
+                    <p className="text-[10px] font-bold text-blue-600 uppercase">UPI</p>
+                    <p className="font-black text-blue-700">{fmt(s.totalUpi)}</p>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          {workers.every(w => getWorkerStats(w.id, selectedDate || null).total === 0) && (
+            <div className="p-8 text-center text-gray-400 text-sm font-medium bg-white rounded-2xl border border-gray-100">
+              No transactions {selectedDate ? `on ${new Date(selectedDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'long' })}` : 'found'}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Single Worker Detail */}
+      {selectedWorker !== 'all' && overallStats && (
+        <div className="space-y-3">
+          {/* Summary card */}
+          <div className="bg-gradient-to-br from-green-600 to-emerald-800 rounded-2xl p-5 text-white shadow-md">
+            <p className="text-xs font-bold uppercase tracking-widest opacity-80 mb-1">
+              {workers.find(w => w.id === selectedWorker)?.name}'s Collection
+            </p>
+            <p className="text-4xl font-black">{fmt(overallStats.total)}</p>
+            <div className="flex gap-6 mt-3">
+              <div><p className="text-[10px] uppercase opacity-70 font-bold mb-0.5">Cash</p><p className="font-black text-lg">{fmt(overallStats.totalCash)}</p></div>
+              <div><p className="text-[10px] uppercase opacity-70 font-bold mb-0.5">UPI</p><p className="font-black text-lg">{fmt(overallStats.totalUpi)}</p></div>
+            </div>
+            <div className="flex gap-4 mt-3">
+              <span className="text-xs font-bold opacity-80">{overallStats.saleCount} sales</span>
+              <span className="text-xs font-bold opacity-80">{overallStats.advanceCount} advances</span>
+              <span className="text-xs font-bold opacity-80">{overallStats.deliveryCount} deliveries</span>
+            </div>
+          </div>
+
+          {/* Transaction list */}
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+            {txList.length === 0 ? (
+              <div className="p-8 text-center text-gray-400 text-sm font-medium">No transactions found</div>
+            ) : (
+              <div className="divide-y divide-gray-50">
+                {txList.map(tx => (
+                  <div key={tx.id} className="p-4 flex items-start gap-3">
+                    <div className={`w-9 h-9 rounded-2xl flex items-center justify-center shrink-0 text-xs font-black ${
+                      tx.label === 'Direct Sale' ? 'bg-sky-100 text-sky-600' :
+                      tx.label === 'Advance' ? 'bg-violet-100 text-violet-600' :
+                      'bg-emerald-100 text-emerald-600'
+                    }`}>
+                      {tx.label === 'Direct Sale' ? <ShoppingCart className="w-4 h-4" /> : tx.label === 'Advance' ? <BookOpen className="w-4 h-4" /> : <Truck className="w-4 h-4" />}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-xs font-black text-gray-900">{tx.label}</p>
+                          <p className="text-[11px] font-semibold text-gray-500">{tx.customer} · {tx.plant}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="font-black text-gray-900">{fmt(tx.amount)}</p>
+                          <p className="text-[10px] text-gray-400">{tx.time}</p>
+                        </div>
+                      </div>
+                      <div className="mt-1">
+                        <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
+                          tx.mode === 'Cash' ? 'bg-green-100 text-green-700' :
+                          tx.mode === 'UPI' ? 'bg-blue-100 text-blue-700' :
+                          'bg-orange-100 text-orange-700'
+                        }`}>{tx.mode}</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 export default function ReportsDashboard() {
   const { t } = useLanguage();
@@ -897,12 +1185,22 @@ export default function ReportsDashboard() {
             {t('lots')}
           </div>
         </TabBtn>
+        <TabBtn
+          active={activeTab === 'workers'}
+          onClick={() => setActiveTab('workers')}
+        >
+          <div className="flex flex-col items-center gap-0.5">
+            <ClipboardList className="w-4 h-4" />
+            Workers
+          </div>
+        </TabBtn>
       </div>
 
       {/* Tab Content */}
       {activeTab === 'reconciliation' && <ReconciliationTab />}
       {activeTab === 'production' && <ProductionDemandTab />}
       {activeTab === 'lots' && <LotReportTab />}
+      {activeTab === 'workers' && <WorkersTab />}
     </div>
   );
 }
