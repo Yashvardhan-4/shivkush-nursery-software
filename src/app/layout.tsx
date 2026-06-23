@@ -4,6 +4,7 @@ import { QueryProvider } from "@/components/providers/QueryProvider";
 import { BottomNav } from "@/components/layout/BottomNav";
 import { LanguageProvider } from "@/lib/i18n/LanguageContext";
 import { NetworkStatus } from "@/components/ui/NetworkStatus";
+import RealtimeSyncProvider from "@/components/providers/RealtimeSyncProvider";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -40,11 +41,13 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col bg-gray-50 text-gray-900 pb-16 pb-safe" suppressHydrationWarning>
         <LanguageProvider>
           <QueryProvider>
-            <NetworkStatus />
-            <main className="flex-1 overflow-y-auto">
-              {children}
-            </main>
-            <BottomNav />
+            <RealtimeSyncProvider>
+              <NetworkStatus />
+              <main className="flex-1 overflow-y-auto">
+                {children}
+              </main>
+              <BottomNav />
+            </RealtimeSyncProvider>
           </QueryProvider>
         </LanguageProvider>
       </body>
