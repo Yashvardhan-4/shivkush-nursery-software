@@ -95,7 +95,7 @@ function getAvailableInLot(lotId: string, lots: Lot[], allotments: Allotment[], 
     .reduce((sum, a) => sum + a.quantity, 0);
 
   const availableStock = lot.available_stock ?? lot.total_quantity;
-  return Math.max(0, availableStock - allottedQty);
+  return Math.max(0, availableStock);
 }
 
 // ──────────────────────────────────────────────
@@ -161,28 +161,15 @@ function AllotmentRow({
     setError('');
     try {
       const user = getUser();
-      const bookingAllots = allotments.filter((a) => a.booking_id === booking.id);
-
-      const deletedAt = new Date().toISOString();
-      const allotIds = bookingAllots.map(a => a.id);
-      if (allotIds.length > 0) {
-        await supabase.from('allotments').update({ deleted_at: deletedAt }).in('id', allotIds);
-      }
-
-      await supabase.from('bookings').update({
-        status: 'Pending',
-        lot_id: null
-      }).eq('id', booking.id);
-
-      await supabase.from('audit_logs').insert({
-        id: crypto.randomUUID(),
-        user_id: user.id || '00000000-0000-0000-0000-000000000000',
-        user_name: user.name || 'Owner',
-        action: 'RELEASE_ALLOTMENT',
-        entity_type: 'allotments',
-        entity_id: booking.id,
-        details: { booking_id: booking.id, cleared_count: bookingAllots.length }
+      const { error } = await supabase.rpc('release_booking_allotments', {
+        p_booking_id: booking.id,
+        p_user_id: user.id || '00000000-0000-0000-0000-000000000000',
+        p_user_name: user.name || 'Owner'
       });
+
+      if (error) {
+        throw new Error(error.message);
+      }
       
       queryClient.invalidateQueries({ queryKey: ['allotments-data'] });
     } catch (e: any) {
