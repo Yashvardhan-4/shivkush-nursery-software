@@ -9,13 +9,10 @@ import { useLanguage } from '@/lib/i18n/LanguageContext';
 export default function RecentTransactions({ workerId }: { workerId?: string }) {
   const { t } = useLanguage();
 
-  const { data: allSales } = useQuery({ queryKey: ['direct_sales'], queryFn: async () => { const { data } = await supabase.from('direct_sales').select('*').is('deleted_at', null); return data || []; } });
-  const { data: allBookings } = useQuery({ queryKey: ['bookings'], queryFn: async () => { const { data } = await supabase.from('bookings').select('*').is('deleted_at', null); return data || []; } });
+  const { data: allTransactions } = useQuery({ queryKey: ['transactions'], queryFn: async () => { const { data } = await supabase.from('transactions').select('*').order('created_at', { ascending: false }); return data || []; } });
   const { data: allUsers } = useQuery({ queryKey: ['users'], queryFn: async () => { const { data } = await supabase.from('users').select('*'); return data || []; } });
-  const { data: allPlants } = useQuery({ queryKey: ['plants'], queryFn: async () => { const { data } = await supabase.from('plants').select('*').is('deleted_at', null).eq('active', true); return data || []; } });
-  const { data: allAuditLogs } = useQuery({ queryKey: ['audit_logs'], queryFn: async () => { const { data } = await supabase.from('audit_logs').select('*'); return data || []; } });
 
-  if (!allSales || !allBookings || !allUsers || !allPlants || !allAuditLogs) {
+  if (!allTransactions || !allUsers) {
     return (
       <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex justify-center items-center h-32">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600"></div>
@@ -23,127 +20,31 @@ export default function RecentTransactions({ workerId }: { workerId?: string }) 
     );
   }
 
-  // Create lookup maps
   const userMap = new Map(allUsers.map(u => [u.id, u.name]));
-  const plantMap = new Map(allPlants.map(p => [p.id, p.variety ? `${p.plant_name} - ${p.variety}` : p.plant_name]));
-  const deliveryLogs = new Map(allAuditLogs.filter(l => l.action === 'DELIVER_BOOKING').map(l => [l.record_id, new Date(l.created_at).getTime()]));
 
-  // Build unified ledger
-  const ledger: any[] = [];
+  let ledger = allTransactions.map(t => {
+    let title = t.customer_name || 'Walk In';
+    if (t.reference_type === 'DIRECT_SALE') title = `${t.customer_name || 'Walk In'} (${t.plant_names})`;
+    else if (t.reference_type === 'BOOKING_ADVANCE') title = `Advance - ${t.customer_name || 'Walk In'}`;
+    else if (t.reference_type === 'BOOKING_DELIVERY') title = `Final Pay - ${t.customer_name || 'Walk In'}`;
 
-  // 1. Direct Sales (Grouped by sale_number)
-  const salesByNo: Record<string, typeof allSales> = {};
-  for (const sale of allSales) {
-    if (workerId && sale.worker_id !== workerId) continue;
-    if (!salesByNo[sale.sale_number]) {
-      salesByNo[sale.sale_number] = [];
-    }
-    salesByNo[sale.sale_number].push(sale);
+    return {
+      id: t.id,
+      date: new Date(t.created_at).getTime(),
+      displayDate: new Date(t.created_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour: 'numeric', minute: 'numeric', hour12: true }),
+      title,
+      amount: t.amount,
+      mode: t.payment_mode,
+      cashAmount: t.cash_amount,
+      upiAmount: t.upi_amount,
+      worker: userMap.get(t.worker_id) || 'Unknown Worker',
+      type: t.reference_type === 'DIRECT_SALE' ? 'sale' : t.reference_type === 'BOOKING_ADVANCE' ? 'advance' : 'final'
+    };
+  });
+
+  if (workerId) {
+    ledger = ledger.filter(l => l.worker_id === workerId);
   }
-
-  for (const [saleNo, items] of Object.entries(salesByNo)) {
-    const first = items[0];
-    const totalAmount = items.reduce((sum, item) => sum + item.amount, 0);
-    const plantNames = items.map(item => `${plantMap.get(item.plant_id) || 'Plant'} (x${item.quantity})`).join(', ');
-
-    ledger.push({
-      id: `ds_${saleNo}`,
-      date: new Date(first.created_at).getTime(),
-      displayDate: new Date(first.created_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour: 'numeric', minute: 'numeric', hour12: true }),
-      title: `${t('Sale')} - ${first.customer_name || t('walkIn')} (${plantNames})`,
-      amount: totalAmount,
-      mode: first.payment_mode,
-      cashAmount: first.cash_amount,
-      upiAmount: first.upi_amount,
-      worker: userMap.get(first.worker_id) || 'Unknown Worker',
-      type: 'sale'
-    });
-  }
-
-  // 2. Bookings (Advance & Final Payments Grouped by booking_number)
-  const bookingsByNo: Record<string, typeof allBookings> = {};
-  for (const b of allBookings) {
-    if (workerId && b.worker_id !== workerId) continue;
-    if (!bookingsByNo[b.booking_number]) {
-      bookingsByNo[b.booking_number] = [];
-    }
-    bookingsByNo[b.booking_number].push(b);
-  }
-
-  for (const [bookingNo, items] of Object.entries(bookingsByNo)) {
-    const first = items[0];
-    const plantNames = items.map(item => `${plantMap.get(item.plant_id) || 'Plant'} (x${item.quantity})`).join(', ');
-
-    // Grouped Advance
-    const totalAdvance = items.reduce((sum, item) => sum + (item.advance_paid || 0), 0);
-    if (totalAdvance > 0) {
-      const dateStr = first.created_at || first.booking_date;
-      
-      // Sum split details
-      let totalCash: number | undefined = undefined;
-      let totalUpi: number | undefined = undefined;
-      items.forEach(item => {
-        if (item.advance_cash_amount !== undefined && item.advance_cash_amount !== null) {
-          totalCash = (totalCash || 0) + item.advance_cash_amount;
-        }
-        if (item.advance_upi_amount !== undefined && item.advance_upi_amount !== null) {
-          totalUpi = (totalUpi || 0) + item.advance_upi_amount;
-        }
-      });
-
-      ledger.push({
-        id: `adv_${bookingNo}`,
-        date: new Date(dateStr).getTime(),
-        displayDate: new Date(dateStr).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour: 'numeric', minute: 'numeric', hour12: true }),
-        title: `${t('Advance')} - ${first.customer_name || t('walkIn')} (${plantNames})`,
-        amount: totalAdvance,
-        mode: first.advance_payment_mode || 'Cash',
-        cashAmount: totalCash,
-        upiAmount: totalUpi,
-        worker: userMap.get(first.worker_id || '') || 'Unknown Worker',
-        type: 'advance'
-      });
-    }
-
-    // Grouped Final Payment (collected on delivery)
-    const deliveredItems = items.filter(item => item.status === 'Delivered');
-    if (deliveredItems.length > 0) {
-      const totalBalance = deliveredItems.reduce((sum, item) => sum + Math.max(0, item.total_amount - (item.advance_paid || 0)), 0);
-      if (totalBalance > 0) {
-        // Use the latest updated_at timestamp of the delivered items
-        const exactTime = Math.max(...deliveredItems.map(i => new Date(i.updated_at || i.created_at || i.delivery_date).getTime()));
-
-
-        // Sum split details
-        let totalCash: number | undefined = undefined;
-        let totalUpi: number | undefined = undefined;
-        deliveredItems.forEach(item => {
-          if (item.cash_amount !== undefined && item.cash_amount !== null) {
-            totalCash = (totalCash || 0) + item.cash_amount;
-          }
-          if (item.upi_amount !== undefined && item.upi_amount !== null) {
-            totalUpi = (totalUpi || 0) + item.upi_amount;
-          }
-        });
-
-        ledger.push({
-          id: `final_${bookingNo}`,
-          date: exactTime,
-          displayDate: new Date(exactTime).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour: 'numeric', minute: 'numeric', hour12: true }),
-          title: `${t('Final Pay')} - ${first.customer_name || t('walkIn')} (${plantNames})`,
-          amount: totalBalance,
-          mode: first.payment_mode || 'Cash',
-          cashAmount: totalCash,
-          upiAmount: totalUpi,
-          worker: userMap.get(first.worker_id || '') || 'Unknown Worker',
-          type: 'final'
-        });
-      }
-    }
-  }
-
-  // Sort by newest first
-  ledger.sort((a, b) => b.date - a.date);
 
   // Take top 30
   const recentLedger = ledger.slice(0, 30);

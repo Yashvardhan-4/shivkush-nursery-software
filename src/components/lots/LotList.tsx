@@ -203,28 +203,28 @@ export default function LotList() {
                   </div>
                 )}
 
-                <div className="grid grid-cols-5 gap-1 bg-gray-50 p-2 sm:p-3 rounded-xl overflow-hidden">
-                  <div className="text-center min-w-0">
-                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest truncate">{t('total')}</p>
-                    <p className="font-black text-gray-700 text-sm sm:text-lg truncate">
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 bg-gray-50 p-3 rounded-xl">
+                  <div className="text-center bg-white p-2 rounded-lg border border-gray-100 col-span-2 sm:col-span-1">
+                    <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">{t('total')}</p>
+                    <p className="font-black text-gray-700 text-xl">
                       {lot.initial_quantity ?? lot.total_quantity}
                     </p>
                   </div>
-                  <div className="text-center border-l border-gray-200 min-w-0">
-                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest truncate">Survived</p>
-                    <p className="font-black text-gray-900 text-sm sm:text-lg truncate">{availableStock}</p>
+                  <div className="text-center bg-white p-2 rounded-lg border border-gray-100">
+                    <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Survived</p>
+                    <p className="font-black text-gray-900 text-lg">{availableStock}</p>
                   </div>
-                  <div className="text-center border-l border-gray-200 min-w-0">
-                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest truncate">{t('allotted')}</p>
-                    <p className="font-black text-blue-600 text-sm sm:text-lg truncate">{allottedQty}</p>
+                  <div className="text-center bg-white p-2 rounded-lg border border-gray-100">
+                    <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">{t('allotted')}</p>
+                    <p className="font-black text-blue-600 text-lg">{allottedQty}</p>
                   </div>
-                  <div className="text-center border-l border-gray-200 min-w-0">
-                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest truncate">{t('sold')}</p>
-                    <p className="font-black text-orange-500 text-sm sm:text-lg truncate">{soldQty}</p>
+                  <div className="text-center bg-white p-2 rounded-lg border border-gray-100">
+                    <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">{t('sold')}</p>
+                    <p className="font-black text-orange-500 text-lg">{soldQty}</p>
                   </div>
-                  <div className="text-center border-l border-gray-200 min-w-0">
-                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest truncate">{t('free')}</p>
-                    <p className={`font-black text-sm sm:text-lg truncate ${freeStock > 0 ? 'text-green-600' : 'text-red-500'}`}>{freeStock}</p>
+                  <div className="text-center bg-white p-2 rounded-lg border border-gray-100">
+                    <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">{t('free')}</p>
+                    <p className={`font-black text-lg ${freeStock > 0 ? 'text-green-600' : 'text-red-500'}`}>{freeStock}</p>
                   </div>
                 </div>
 

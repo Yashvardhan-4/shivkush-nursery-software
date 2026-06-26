@@ -142,106 +142,19 @@ function ReconciliationTab() {
   const [selectedDate, setSelectedDate] = useState(todayIST());
   const todayStr = selectedDate;
 
-  const { data: salesRaw } = useQuery({ queryKey: ['direct_sales'], queryFn: async () => { const { data } = await supabase.from('direct_sales').select('*').is('deleted_at', null); return data || []; } });
-  const { data: plantsRaw } = useQuery({ queryKey: ['plants'], queryFn: async () => { const { data } = await supabase.from('plants').select('*').is('deleted_at', null).eq('active', true); return data || []; } });
-  const { data: bookingsRaw } = useQuery({ queryKey: ['bookings'], queryFn: async () => { const { data } = await supabase.from('bookings').select('*').is('deleted_at', null); return data || []; } });
-  const { data: auditLogsRaw } = useQuery({ queryKey: ['audit_logs'], queryFn: async () => { const { data } = await supabase.from('audit_logs').select('*'); return data || []; } });
-  const { data: usersRaw } = useQuery({ queryKey: ['users'], queryFn: async () => { const { data } = await supabase.from('users').select('id, name, role'); return data || []; } });
+  const { data: allTransactionsRaw } = useQuery({ queryKey: ['transactions'], queryFn: async () => { const { data } = await supabase.from('transactions').select('*').order('created_at', { ascending: false }); return data || []; } });
+  const { data: usersRaw } = useQuery({ queryKey: ['users'], queryFn: async () => { const { data } = await supabase.from('users').select('id, name'); return data || []; } });
 
-  if (!salesRaw || !plantsRaw || !bookingsRaw || !auditLogsRaw || !usersRaw) {
+  if (!allTransactionsRaw || !usersRaw) {
     return <LoadingCard />;
   }
 
-  // ── 1. Direct Sales ──
-  const sales = salesRaw.filter((s) => s.created_at && toLocalDateStr(s.created_at) === todayStr);
-
-  // ── 2. Bookings Delivered Today ──
-  const deliveredBookings = bookingsRaw.filter(b => b.delivery_date === todayStr && b.status === 'Delivered');
-
-  // ── 3. Bookings Created Today (Advance) ──
-  const newBookings = bookingsRaw.filter(b => b.created_at && toLocalDateStr(b.created_at) === todayStr);
-
-  // ── 4. Bookings Refunded Today ──
-  const refundedBookings = bookingsRaw.filter(b => b.status === 'Cancelled' && b.refund_status === 'Refunded' && b.refund_date === todayStr);
-
-  // Group by sale_number FIRST so that Split-payment multi-item sales only contribute
-  // cash_amount / upi_amount once.  Each row for the same sale stores the *whole-sale*
-  // split amounts (not per-item), so summing row-by-row would multiply them by item count.
-  const salesBySaleNumber = sales.reduce((groups, s) => {
-    if (!groups[s.sale_number]) groups[s.sale_number] = [];
-    groups[s.sale_number].push(s);
-    return groups;
-  }, {} as Record<string, typeof sales>);
-
-  const dsCash = Object.values(salesBySaleNumber).reduce((sum, group) => {
-    const first = group[0];
-    if (first.payment_mode === 'Cash') return sum + group.reduce((s, item) => s + item.amount, 0);
-    if (first.payment_mode === 'Split') return sum + (first.cash_amount || 0);
-    return sum; // UPI — no cash contribution
-  }, 0);
-
-  const dsUpi = Object.values(salesBySaleNumber).reduce((sum, group) => {
-    const first = group[0];
-    if (first.payment_mode === 'UPI') return sum + group.reduce((s, item) => s + item.amount, 0);
-    if (first.payment_mode === 'Split') return sum + (first.upi_amount || 0);
-    return sum; // Cash — no UPI contribution
-  }, 0);
-
-  const delCash = deliveredBookings.reduce((sum, b) => {
-    if (b.payment_mode === 'Cash') return sum + Math.max(0, b.total_amount - (b.advance_paid || 0));
-    if (b.payment_mode === 'Split') return sum + (b.cash_amount || 0);
-    return sum;
-  }, 0);
-
-  const delUpi = deliveredBookings.reduce((sum, b) => {
-    if (b.payment_mode === 'UPI') return sum + Math.max(0, b.total_amount - (b.advance_paid || 0));
-    if (b.payment_mode === 'Split') return sum + (b.upi_amount || 0);
-    return sum;
-  }, 0);
-
-  const advCash = newBookings.reduce((sum, b) => {
-    if ((b.advance_paid || 0) <= 0) return sum;
-    if (b.advance_payment_mode === 'Cash' || !b.advance_payment_mode) return sum + (b.advance_paid || 0);
-    if (b.advance_payment_mode === 'Split') return sum + (b.advance_cash_amount || 0);
-    return sum;
-  }, 0);
-
-  const advUpi = newBookings.reduce((sum, b) => {
-    if ((b.advance_paid || 0) <= 0) return sum;
-    if (b.advance_payment_mode === 'UPI') return sum + (b.advance_paid || 0);
-    if (b.advance_payment_mode === 'Split') return sum + (b.advance_upi_amount || 0);
-    return sum;
-  }, 0);
-
-  const refCash = refundedBookings.reduce((sum, b) => {
-    if (b.refund_payment_mode === 'Cash') return sum + (b.refund_amount || 0);
-    return sum;
-  }, 0);
-
-  const refUpi = refundedBookings.reduce((sum, b) => {
-    if (b.refund_payment_mode === 'UPI') return sum + (b.refund_amount || 0);
-    return sum;
-  }, 0);
-
-  const cashTotal = dsCash + delCash + advCash - refCash;
-  const upiTotal = dsUpi + delUpi + advUpi - refUpi;
-  const grandTotal = cashTotal + upiTotal;
-
-  const plantMap = new Map(plantsRaw.map((p) => [p.id, p]));
+  const allTransactions = allTransactionsRaw.filter(t => toLocalDateStr(t.created_at) === selectedDate);
   const userMap = new Map(usersRaw.map((u) => [u.id, u.name]));
-  const deliveryLogs = new Map(
-    auditLogsRaw
-      .filter(l => l.action === 'DELIVER_BOOKING')
-      .map(l => [l.record_id, new Date(l.created_at).getTime()])
-  );
 
-  const getPlantName = (plantId: string) => {
-    const plant = plantMap.get(plantId);
-    if (!plant) return 'Unknown';
-    return `${plant.plant_name}${plant.variety ? ' - ' + plant.variety : ''}`;
-  };
+  let cashTotal = 0;
+  let upiTotal = 0;
 
-  // Combine events for the list
   type CollectionEvent = {
     id: string;
     type: 'Direct Sale' | 'Booking Delivery' | 'Booking Advance' | 'Booking Refund';
@@ -259,140 +172,35 @@ function ReconciliationTab() {
 
   const collectionEvents: CollectionEvent[] = [];
 
-  // Group Direct Sales by sale_number
-  const salesByNumber: Record<string, typeof sales> = {};
-  sales.forEach(s => {
-    if (!salesByNumber[s.sale_number]) salesByNumber[s.sale_number] = [];
-    salesByNumber[s.sale_number].push(s);
-  });
+  for (const t of allTransactions) {
+    if (t.payment_mode === 'Cash') cashTotal += t.amount;
+    else if (t.payment_mode === 'UPI') upiTotal += t.amount;
+    else if (t.payment_mode === 'Split') {
+      cashTotal += t.cash_amount || 0;
+      upiTotal += t.upi_amount || 0;
+    }
 
-  Object.entries(salesByNumber).forEach(([saleNo, items]) => {
-    const first = items[0];
-    const totalAmount = items.reduce((sum, item) => sum + item.amount, 0);
-    const totalQty = items.reduce((sum, item) => sum + item.quantity, 0);
-    const plantNames = items.map(item => `${getPlantName(item.plant_id)} ×${item.quantity}`).join(', ');
+    let type: CollectionEvent['type'] = 'Direct Sale';
+    if (t.reference_type === 'BOOKING_ADVANCE') type = 'Booking Advance';
+    else if (t.reference_type === 'BOOKING_DELIVERY') type = 'Booking Delivery';
+
     collectionEvents.push({
-      id: `ds_${saleNo}`,
-      type: 'Direct Sale',
-      plant_name: plantNames,
-      customer_name: first.customer_name || 'Walk-in',
-      quantity: totalQty,
-      amount: totalAmount,
-      payment_mode: first.payment_mode,
-      cash_amount: first.cash_amount ?? undefined,
-      upi_amount: first.upi_amount ?? undefined,
-      timestamp: new Date(first.created_at).getTime(),
-      order_number: saleNo,
-      worker_name: userMap.get(first.worker_id || '') || 'Unknown Worker',
+      id: t.id,
+      type,
+      plant_name: t.plant_names || 'Unknown',
+      customer_name: t.customer_name || 'Walk-in',
+      quantity: 0, // Not stored in transactions directly, UI can omit or show -
+      amount: t.amount,
+      payment_mode: t.payment_mode || 'Cash',
+      cash_amount: t.cash_amount || 0,
+      upi_amount: t.upi_amount || 0,
+      timestamp: new Date(t.created_at).getTime(),
+      order_number: t.booking_number || 'N/A',
+      worker_name: userMap.get(t.worker_id) || 'Unknown Worker',
     });
-  });
+  }
 
-  // Group Booking Deliveries by booking_number
-  const delBookingsByNumber: Record<string, typeof deliveredBookings> = {};
-  deliveredBookings.forEach(b => {
-    if (!delBookingsByNumber[b.booking_number]) delBookingsByNumber[b.booking_number] = [];
-    delBookingsByNumber[b.booking_number].push(b);
-  });
-
-  Object.entries(delBookingsByNumber).forEach(([bookingNo, items]) => {
-    const first = items[0];
-    const totalQty = items.reduce((sum, item) => sum + item.quantity, 0);
-    const totalCollected = items.reduce((sum, item) => sum + Math.max(0, item.total_amount - (item.advance_paid || 0)), 0);
-    if (totalCollected > 0) {
-      const plantNames = items.map(item => `${getPlantName(item.plant_id)} ×${item.quantity}`).join(', ');
-      let totalCash: number | undefined = undefined;
-      let totalUpi: number | undefined = undefined;
-      items.forEach(item => {
-        if (item.cash_amount !== undefined && item.cash_amount !== null)
-          totalCash = (totalCash || 0) + item.cash_amount;
-        if (item.upi_amount !== undefined && item.upi_amount !== null)
-          totalUpi = (totalUpi || 0) + item.upi_amount;
-      });
-      collectionEvents.push({
-        id: `del_${bookingNo}`,
-        type: 'Booking Delivery',
-        plant_name: plantNames,
-        customer_name: first.customer_name || 'Customer',
-        quantity: totalQty,
-        amount: totalCollected,
-        payment_mode: first.payment_mode || 'Cash',
-        cash_amount: totalCash,
-        upi_amount: totalUpi,
-        timestamp: Math.max(...items.map(i => new Date(i.updated_at || i.created_at || i.delivery_date).getTime())),
-        order_number: bookingNo,
-        worker_name: userMap.get(first.worker_id || '') || 'Unknown Worker',
-      });
-    }
-  });
-
-  // Group Booking Advances by booking_number
-  const newBookingsByNumber: Record<string, typeof newBookings> = {};
-  newBookings.forEach(b => {
-    if (!newBookingsByNumber[b.booking_number]) newBookingsByNumber[b.booking_number] = [];
-    newBookingsByNumber[b.booking_number].push(b);
-  });
-
-  Object.entries(newBookingsByNumber).forEach(([bookingNo, items]) => {
-    const first = items[0];
-    const totalQty = items.reduce((sum, item) => sum + item.quantity, 0);
-    const totalAdvance = items.reduce((sum, item) => sum + (item.advance_paid || 0), 0);
-    if (totalAdvance > 0) {
-      const plantNames = items.map(item => `${getPlantName(item.plant_id)} ×${item.quantity}`).join(', ');
-      let totalCash: number | undefined = undefined;
-      let totalUpi: number | undefined = undefined;
-      items.forEach(item => {
-        if (item.advance_cash_amount !== undefined && item.advance_cash_amount !== null)
-          totalCash = (totalCash || 0) + item.advance_cash_amount;
-        if (item.advance_upi_amount !== undefined && item.advance_upi_amount !== null)
-          totalUpi = (totalUpi || 0) + item.advance_upi_amount;
-      });
-      collectionEvents.push({
-        id: `adv_${bookingNo}`,
-        type: 'Booking Advance',
-        plant_name: plantNames,
-        customer_name: first.customer_name || 'Customer',
-        quantity: totalQty,
-        amount: totalAdvance,
-        payment_mode: first.advance_payment_mode || 'Cash',
-        cash_amount: totalCash,
-        upi_amount: totalUpi,
-        timestamp: new Date(first.created_at || Date.now()).getTime(),
-        order_number: bookingNo,
-        worker_name: userMap.get(first.worker_id || '') || 'Unknown Worker',
-      });
-    }
-  });
-
-  // Group Booking Refunds by booking_number
-  const refundedBookingsByNumber: Record<string, typeof refundedBookings> = {};
-  refundedBookings.forEach(b => {
-    if (!refundedBookingsByNumber[b.booking_number]) refundedBookingsByNumber[b.booking_number] = [];
-    refundedBookingsByNumber[b.booking_number].push(b);
-  });
-
-  Object.entries(refundedBookingsByNumber).forEach(([bookingNo, items]) => {
-    const first = items[0];
-    const totalQty = items.reduce((sum, item) => sum + item.quantity, 0);
-    const totalRefund = items.reduce((sum, item) => sum + (item.refund_amount || 0), 0);
-    if (totalRefund > 0) {
-      const plantNames = items.map(item => `${getPlantName(item.plant_id)} ×${item.quantity}`).join(', ');
-      collectionEvents.push({
-        id: `ref_${bookingNo}`,
-        type: 'Booking Refund',
-        plant_name: plantNames,
-        customer_name: first.customer_name || 'Customer',
-        quantity: totalQty,
-        amount: -totalRefund,
-        payment_mode: first.refund_payment_mode || 'Cash',
-        timestamp: Math.max(...items.map(i => new Date(i.updated_at || i.created_at || i.refund_date).getTime())),
-        order_number: bookingNo,
-        worker_name: userMap.get(first.worker_id || '') || 'Unknown Worker',
-      });
-    }
-  });
-
-  // Sort events by time descending (latest at top)
-  collectionEvents.sort((a, b) => b.timestamp - a.timestamp);
+  const grandTotal = cashTotal + upiTotal;
 
   return (
     <div className="space-y-4">
@@ -783,56 +591,27 @@ function LotReportTab() {
                       </span>
                     </div>
 
-                    {/* Stats grid — 5 columns */}
-                    <div className="px-4 py-4 grid grid-cols-5 gap-1 text-center">
-                      {/* Total */}
-                      <div>
-                        <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">
-                          {t('total')}
-                        </p>
-                        <p className="text-lg font-black text-gray-700 mt-0.5">
-                          {lot.initial_quantity ?? lot.total_quantity}
-                        </p>
+                    {/* Stats grid — Responsive layout */}
+                    <div className="px-4 py-4 grid grid-cols-2 sm:grid-cols-5 gap-2 bg-gray-50 text-center">
+                      <div className="bg-white p-2 rounded-lg border border-gray-100 col-span-2 sm:col-span-1">
+                        <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">{t('total')}</p>
+                        <p className="text-xl font-black text-gray-700 mt-0.5">{lot.initial_quantity ?? lot.total_quantity}</p>
                       </div>
-                      {/* Stock */}
-                      <div className="border-l border-gray-100">
-                        <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">
-                          Available
-                        </p>
-                        <p className="text-lg font-black text-gray-800 mt-0.5">
-                          {availableStock}
-                        </p>
+                      <div className="bg-white p-2 rounded-lg border border-gray-100">
+                        <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Available</p>
+                        <p className="text-lg font-black text-gray-800 mt-0.5">{availableStock}</p>
                       </div>
-                      {/* Allotted */}
-                      <div className="border-l border-gray-100">
-                        <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">
-                          {t('allotted')}
-                        </p>
-                        <p className="text-lg font-black text-orange-600 mt-0.5">
-                          {allottedQty}
-                        </p>
+                      <div className="bg-white p-2 rounded-lg border border-gray-100">
+                        <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">{t('allotted')}</p>
+                        <p className="text-lg font-black text-orange-600 mt-0.5">{allottedQty}</p>
                       </div>
-                      {/* Sold */}
-                      <div className="border-l border-gray-100">
-                        <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">
-                          {t('sold')}
-                        </p>
-                        <p className="text-lg font-black text-sky-600 mt-0.5">
-                          {soldQty}
-                        </p>
+                      <div className="bg-white p-2 rounded-lg border border-gray-100">
+                        <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">{t('sold')}</p>
+                        <p className="text-lg font-black text-sky-600 mt-0.5">{soldQty}</p>
                       </div>
-                      {/* Free */}
-                      <div className="border-l border-gray-100">
-                        <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">
-                          {t('free')}
-                        </p>
-                        <p
-                          className={`text-lg font-black mt-0.5 ${
-                            freeStock > 0 ? 'text-green-600' : 'text-red-500'
-                          }`}
-                        >
-                          {freeStock}
-                        </p>
+                      <div className="bg-white p-2 rounded-lg border border-gray-100">
+                        <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">{t('free')}</p>
+                        <p className={`text-lg font-black mt-0.5 ${freeStock > 0 ? 'text-green-600' : 'text-red-500'}`}>{freeStock}</p>
                       </div>
                     </div>
 
@@ -876,126 +655,76 @@ function WorkersTab() {
   const [selectedDate, setSelectedDate] = useState(todayIST());
   const [selectedWorker, setSelectedWorker] = useState<string>('all');
 
-  const { data: salesRaw } = useQuery({ queryKey: ['direct_sales'], queryFn: async () => { const { data } = await supabase.from('direct_sales').select('*').is('deleted_at', null); return data || []; } });
-  const { data: bookingsRaw } = useQuery({ queryKey: ['bookings'], queryFn: async () => { const { data } = await supabase.from('bookings').select('*').is('deleted_at', null); return data || []; } });
-  const { data: plantsRaw } = useQuery({ queryKey: ['plants'], queryFn: async () => { const { data } = await supabase.from('plants').select('*').is('deleted_at', null); return data || []; } });
+  const { data: allTransactionsRaw } = useQuery({ queryKey: ['transactions'], queryFn: async () => { const { data } = await supabase.from('transactions').select('*').order('created_at', { ascending: false }); return data || []; } });
   const { data: usersRaw } = useQuery({ queryKey: ['users'], queryFn: async () => { const { data } = await supabase.from('users').select('id, name, role'); return data || []; } });
 
-  if (!salesRaw || !bookingsRaw || !plantsRaw || !usersRaw) return <LoadingCard />;
+  if (!allTransactionsRaw || !usersRaw) return <LoadingCard />;
 
-  const plantMap = new Map(plantsRaw.map(p => [p.id, p.variety ? `${p.plant_name} - ${p.variety}` : p.plant_name]));
-
-  // Build per-worker stats
-  const workers = usersRaw; // all users (owner + workers)
+  const workers = usersRaw;
 
   const getWorkerStats = (workerId: string, dateStr: string | null) => {
-    const salesFilter = salesRaw.filter(s =>
-      s.worker_id === workerId &&
-      (!dateStr || (s.created_at && toLocalDateStr(s.created_at) === dateStr))
+    const txs = allTransactionsRaw.filter(t => 
+      t.worker_id === workerId && 
+      (!dateStr || toLocalDateStr(t.created_at) === dateStr)
     );
-    // Group by sale_number to avoid double-counting split items
-    const saleGroups = salesFilter.reduce((g, s) => {
-      if (!g[s.sale_number]) g[s.sale_number] = [];
-      g[s.sale_number].push(s);
-      return g;
-    }, {} as Record<string, typeof salesFilter>);
 
     let salesCash = 0, salesUpi = 0;
-    Object.values(saleGroups).forEach(grp => {
-      const first = grp[0];
-      if (first.payment_mode === 'Cash') salesCash += grp.reduce((s, i) => s + i.amount, 0);
-      else if (first.payment_mode === 'UPI') salesUpi += grp.reduce((s, i) => s + i.amount, 0);
-      else if (first.payment_mode === 'Split') { salesCash += first.cash_amount || 0; salesUpi += first.upi_amount || 0; }
-    });
-
-    const advances = bookingsRaw.filter(b =>
-      b.worker_id === workerId &&
-      (!dateStr || (b.created_at && toLocalDateStr(b.created_at) === dateStr)) &&
-      (b.advance_paid || 0) > 0
-    );
     let advCash = 0, advUpi = 0;
-    advances.forEach(b => {
-      if (b.advance_payment_mode === 'Cash' || !b.advance_payment_mode) advCash += b.advance_paid || 0;
-      else if (b.advance_payment_mode === 'UPI') advUpi += b.advance_paid || 0;
-      else if (b.advance_payment_mode === 'Split') { advCash += b.advance_cash_amount || 0; advUpi += b.advance_upi_amount || 0; }
-    });
-
-    const deliveries = bookingsRaw.filter(b =>
-      b.worker_id === workerId &&
-      b.status === 'Delivered' &&
-      (!dateStr || b.delivery_date === dateStr)
-    );
     let delCash = 0, delUpi = 0;
-    deliveries.forEach(b => {
-      const bal = Math.max(0, (b.total_amount || 0) - (b.advance_paid || 0));
-      if (b.payment_mode === 'Cash') delCash += bal;
-      else if (b.payment_mode === 'UPI') delUpi += bal;
-      else if (b.payment_mode === 'Split') { delCash += b.cash_amount || 0; delUpi += b.upi_amount || 0; }
+    
+    let saleCount = 0;
+    let advanceCount = 0;
+    let deliveryCount = 0;
+
+    txs.forEach(t => {
+      const isSplit = t.payment_mode === 'Split';
+      const c = isSplit ? (t.cash_amount || 0) : (t.payment_mode === 'Cash' ? t.amount : 0);
+      const u = isSplit ? (t.upi_amount || 0) : (t.payment_mode === 'UPI' ? t.amount : 0);
+
+      if (t.reference_type === 'DIRECT_SALE') {
+        salesCash += c; salesUpi += u; saleCount++;
+      } else if (t.reference_type === 'BOOKING_ADVANCE') {
+        advCash += c; advUpi += u; advanceCount++;
+      } else if (t.reference_type === 'BOOKING_DELIVERY') {
+        delCash += c; delUpi += u; deliveryCount++;
+      }
     });
 
     const totalCash = salesCash + advCash + delCash;
     const totalUpi = salesUpi + advUpi + delUpi;
 
     return {
-      saleCount: Object.keys(saleGroups).length,
-      advanceCount: new Set(advances.map(b => b.booking_number)).size,
-      deliveryCount: new Set(deliveries.map(b => b.booking_number)).size,
+      saleCount, advanceCount, deliveryCount,
       salesCash, salesUpi, advCash, advUpi, delCash, delUpi,
       totalCash, totalUpi,
       total: totalCash + totalUpi,
     };
   };
 
-  // Transaction list for selected worker
-  const txList: { id: string; label: string; plant: string; customer: string; amount: number; cash: number; upi: number; mode: string; time: string }[] = [];
+  const txList = [];
   if (selectedWorker !== 'all') {
-    salesRaw
-      .filter(s => s.worker_id === selectedWorker && (!selectedDate || toLocalDateStr(s.created_at) === selectedDate))
-      .forEach(s => {
-        txList.push({
-          id: `s_${s.id}`,
-          label: 'Direct Sale',
-          plant: plantMap.get(s.plant_id) || 'Plant',
-          customer: s.customer_name || 'Walk-in',
-          amount: s.amount,
-          cash: s.payment_mode === 'Cash' ? s.amount : (s.cash_amount || 0),
-          upi: s.payment_mode === 'UPI' ? s.amount : (s.upi_amount || 0),
-          mode: s.payment_mode,
-          time: s.created_at ? new Date(s.created_at).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true }) : '',
-        });
+    const txs = allTransactionsRaw.filter(t => 
+      t.worker_id === selectedWorker && 
+      (!selectedDate || toLocalDateStr(t.created_at) === selectedDate)
+    );
+
+    txs.forEach(t => {
+      let label = 'Direct Sale';
+      if (t.reference_type === 'BOOKING_ADVANCE') label = 'Advance';
+      else if (t.reference_type === 'BOOKING_DELIVERY') label = 'Final Payment';
+
+      txList.push({
+        id: t.id,
+        label,
+        plant: t.plant_names || 'Unknown',
+        customer: t.customer_name || 'Walk-in',
+        amount: t.amount,
+        cash: t.payment_mode === 'Split' ? (t.cash_amount || 0) : (t.payment_mode === 'Cash' ? t.amount : 0),
+        upi: t.payment_mode === 'Split' ? (t.upi_amount || 0) : (t.payment_mode === 'UPI' ? t.amount : 0),
+        mode: t.payment_mode || 'Cash',
+        time: new Date(t.created_at).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true }),
       });
-    bookingsRaw
-      .filter(b => b.worker_id === selectedWorker && (!selectedDate || toLocalDateStr(b.created_at) === selectedDate) && (b.advance_paid || 0) > 0)
-      .forEach(b => {
-        txList.push({
-          id: `a_${b.id}`,
-          label: 'Advance',
-          plant: plantMap.get(b.plant_id) || 'Plant',
-          customer: b.customer_name || 'Customer',
-          amount: b.advance_paid || 0,
-          cash: b.advance_payment_mode === 'Cash' || !b.advance_payment_mode ? b.advance_paid || 0 : (b.advance_cash_amount || 0),
-          upi: b.advance_payment_mode === 'UPI' ? b.advance_paid || 0 : (b.advance_upi_amount || 0),
-          mode: b.advance_payment_mode || 'Cash',
-          time: b.created_at ? new Date(b.created_at).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true }) : '',
-        });
-      });
-    bookingsRaw
-      .filter(b => b.worker_id === selectedWorker && b.status === 'Delivered' && (!selectedDate || b.delivery_date === selectedDate))
-      .forEach(b => {
-        const bal = Math.max(0, (b.total_amount || 0) - (b.advance_paid || 0));
-        if (bal <= 0) return;
-        txList.push({
-          id: `d_${b.id}`,
-          label: 'Final Payment',
-          plant: plantMap.get(b.plant_id) || 'Plant',
-          customer: b.customer_name || 'Customer',
-          amount: bal,
-          cash: b.payment_mode === 'Cash' ? bal : (b.cash_amount || 0),
-          upi: b.payment_mode === 'UPI' ? bal : (b.upi_amount || 0),
-          mode: b.payment_mode || 'Cash',
-          time: b.delivery_date || '',
-        });
-      });
+    });
   }
 
   const overallStats = selectedWorker !== 'all' ? getWorkerStats(selectedWorker, selectedDate) : null;

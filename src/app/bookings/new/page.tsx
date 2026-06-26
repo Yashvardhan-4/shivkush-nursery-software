@@ -57,7 +57,6 @@ export default function NewBookingPage() {
   
   // Current Item State
   const [plantId, setPlantId] = useState('');
-  const [lotId, setLotId] = useState('');
   const [quantity, setQuantity] = useState('');
   
   const [assignedTo, setAssignedTo] = useState('');
@@ -134,32 +133,6 @@ export default function NewBookingPage() {
   const uniqueCities = Array.from(new Set(customers?.map(c => c.city).filter(Boolean) as string[]));
 
   const selectedPlant = plants?.find(p => p.id === plantId);
-  const selectedLot = lots?.find(l => l.id === lotId);
-
-  const computeFreeStockForLot = (lId: string, pid: string): number => {
-    if (!lots || !allotments || !bookings || !direct_sales) return 0;
-    const lot = lots.find(l => l.id === lId);
-    if (!lot) return 0;
-    const activeBookingIds = new Set(
-      bookings.filter(b => b.plant_id === pid && b.status !== 'Delivered' && b.status !== 'Cancelled').map(b => b.id)
-    );
-    const allottedInLot = allotments
-      .filter(a => a.lot_id === lId && activeBookingIds.has(a.booking_id))
-      .reduce((s, a) => s + a.quantity, 0);
-      
-    const deliveredBookingsQty = bookings
-      .filter(b => b.lot_id === lId && b.status === 'Delivered')
-      .reduce((s, b) => s + b.quantity, 0);
-      
-    const directSalesQty = direct_sales
-      .filter(s => s.lot_id === lId)
-      .reduce((s, sale) => s + sale.quantity, 0);
-
-    const cartQty = cart.filter(i => i.lotId === lId).reduce((s, i) => s + i.quantity, 0);
-    return Math.max(0, (lot.available_stock ?? lot.total_quantity) - allottedInLot - deliveredBookingsQty - directSalesQty - cartQty);
-  };
-
-  const availableQty = (lotId && plantId) ? computeFreeStockForLot(lotId, plantId) : 0;
 
   // Auto-complete triggers
   const handlePhoneChange = (val: string) => {
@@ -191,21 +164,14 @@ export default function NewBookingPage() {
     const qty = parseInt(quantity);
     if (isNaN(qty) || qty <= 0) return;
 
-    if (lotId && selectedLot) {
-      if (qty > availableQty) {
-        alert(`Cannot add more than available quantity (${availableQty}) for this lot.`);
-        return;
-      }
-    }
-
     let price = resolvePlantPrice(selectedPlant, qty);
     
     setCart([...cart, {
       id: generateId(),
       plantId: selectedPlant.id,
       plantName: selectedPlant.variety ? `${selectedPlant.plant_name} - ${selectedPlant.variety}` : selectedPlant.plant_name,
-      lotId: selectedLot ? selectedLot.id : '',
-      lotName: selectedLot ? (selectedLot.lot_name || selectedLot.lot_number) : t('noLotAssigned'),
+      lotId: '',
+      lotName: t('noLotAssigned'),
       quantity: qty,
       price: price,
       amount: price * qty
@@ -213,7 +179,6 @@ export default function NewBookingPage() {
 
     // Reset current item
     setPlantId('');
-    setLotId('');
     setQuantity('');
   };
 
@@ -472,27 +437,13 @@ export default function NewBookingPage() {
           </div>
           
           <div className="space-y-2">
-            <select value={plantId} onChange={e => { setPlantId(e.target.value); setLotId(''); }} className="w-full p-4 bg-white border border-blue-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold text-lg text-blue-900">
+            <select value={plantId} onChange={e => setPlantId(e.target.value)} className="w-full p-4 bg-white border border-blue-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold text-lg text-blue-900">
               <option value="">{t('choosePlantPlaceholder')}</option>
               {plants?.filter(p => p.active !== false).map(p => (
                 <option key={p.id} value={p.id}>{p.variety ? `${p.plant_name} - ${p.variety}` : p.plant_name} (₹{p.selling_price})</option>
               ))}
             </select>
           </div>
-
-          {plantId && currentUser?.role === 'owner' && (
-            <div className="space-y-2">
-              <select value={lotId} onChange={e => setLotId(e.target.value)} className="w-full p-4 bg-white border border-blue-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold text-blue-900">
-                <option value="">{t('noLotAllotLater')}</option>
-                {lots?.map(l => {
-                  const free = computeFreeStockForLot(l.id, plantId);
-                  return (
-                    <option key={l.id} value={l.id}>{l.lot_name || l.lot_number} ({t('availableLabel')} {free})</option>
-                  );
-                })}
-              </select>
-            </div>
-          )}
 
           {plantId && (
             <div className="flex space-x-2">

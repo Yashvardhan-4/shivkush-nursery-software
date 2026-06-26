@@ -392,6 +392,22 @@ export default function BookingList({ role, userId, userName }: BookingListProps
          }
       }
 
+      if (targetCollection > 0 && newlyProcessedRows.length > 0) {
+        await supabase.from('transactions').insert({
+          reference_type: 'BOOKING_DELIVERY',
+          reference_id: newlyProcessedRows[0].id,
+          booking_number: bookingNumber,
+          customer_name: deliveryModal.customerName,
+          plant_names: 'Multiple Plants',
+          amount: targetCollection,
+          payment_mode: paymentMode === 'Split' ? 'Split' : paymentMode,
+          cash_amount: paymentMode === 'Split' ? (parseFloat(splitAmounts.cash) || 0) : (paymentMode === 'Cash' ? targetCollection : 0),
+          upi_amount: paymentMode === 'Split' ? (parseFloat(splitAmounts.upi) || 0) : (paymentMode === 'UPI' ? targetCollection : 0),
+          worker_id: userId,
+          created_at: new Date().toISOString()
+        });
+      }
+
       if (direct_sales && allotments && lots && bookings) {
          const deliveredLots = new Set(newlyProcessedRows.filter(r => r.status === 'Delivered' && r.lot_id).map(r => r.lot_id));
          for (const lId of deliveredLots) {
