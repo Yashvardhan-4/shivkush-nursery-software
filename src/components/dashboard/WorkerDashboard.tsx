@@ -58,9 +58,9 @@ export default function WorkerDashboard() {
           );
           const allottedInLot = allAllotments.filter(a => a.lot_id === lot.id && activeBookingIds.has(a.booking_id)).reduce((s, a) => s + a.quantity, 0);
           
-          const lotFree = lot.available_stock !== null && lot.available_stock !== undefined
-            ? lot.available_stock
-            : lot.total_quantity - allottedInLot;
+          const deliveredQty = allBookings.filter(b => b.lot_id === lot.id && b.status === 'Delivered').reduce((s, b) => s + b.quantity, 0);
+          const directSoldQty = allSales ? allSales.filter(s => s.lot_id === lot.id).reduce((sum, sale) => sum + sale.quantity, 0) : 0;
+          const lotFree = Math.max(0, (lot.available_stock ?? lot.total_quantity) - allottedInLot - deliveredQty - directSoldQty);
           
           freeStock += Math.max(0, lotFree);
           totalStock += lotTotal;

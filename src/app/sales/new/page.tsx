@@ -40,6 +40,7 @@ export default function NewDirectSalePage() {
   
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
+  const [customerCity, setCustomerCity] = useState('');
   
   const { data: activeQrs } = useQuery({
     queryKey: ['payment_qrs'],
@@ -58,7 +59,6 @@ export default function NewDirectSalePage() {
   const [quantity, setQuantity] = useState('');
   
   const [assignedTo, setAssignedTo] = useState('');
-  const [autoAllocate, setAutoAllocate] = useState(true);
   
   const [paymentMode, setPaymentMode] = useState<'Cash' | 'UPI' | 'Split'>('Cash');
   const [cashAmount, setCashAmount] = useState('');
@@ -74,19 +74,10 @@ export default function NewDirectSalePage() {
   const { data: bookings } = useQuery({ queryKey: ['bookings'], queryFn: async () => { const { data } = await supabase.from('bookings').select('*').is('deleted_at', null); return data || []; } });
   const { data: existingSales } = useQuery({ queryKey: ['direct_sales'], queryFn: async () => { const { data } = await supabase.from('direct_sales').select('*').is('deleted_at', null); return data || []; } });
   const { data: customers } = useQuery({ queryKey: ['customers'], queryFn: async () => { const { data } = await supabase.from('customers').select('*').is('deleted_at', null); return data || []; } });
-  const { data: users } = useQuery({ queryKey: ['users'], queryFn: async () => { const { data } = await supabase.from('users').select('*').is('deleted_at', null); return data || []; } });
+  const { data: users } = useQuery({ queryKey: ['users'], queryFn: async () => { const { data } = await supabase.from('users').select('*'); return data || []; } });
   const workers = users?.filter(u => u.role === 'worker') || [];
 
-  // Auto-select first READY lot (FIFO) when plant changes, sorted by ready_date
-  useEffect(() => {
-    if (!plantId) { setSelectedLotId(''); return; }
-    if (!autoAllocate) return;
-    const lotsData = lots || [];
-    const first = lotsData
-      .filter(l => l.plant_id === plantId && l.status === 'Ready')
-      .sort((a, b) => new Date(a.ready_date).getTime() - new Date(b.ready_date).getTime())[0];
-    setSelectedLotId(first?.id || '');
-  }, [plantId, lots, autoAllocate]);
+
 
   const selectedPlant = plants?.find(p => p.id === plantId);
 
@@ -98,6 +89,7 @@ export default function NewDirectSalePage() {
       const found = customers.find(c => c.mobile === digits);
       if (found) {
         setCustomerName(found.name);
+        setCustomerCity(found.city || '');
       }
     }
   };
@@ -108,18 +100,23 @@ export default function NewDirectSalePage() {
       const matches = customers.filter(c => c.name.toLowerCase() === val.toLowerCase());
       if (matches.length === 1) {
         setCustomerPhone(matches[0].mobile);
+        setCustomerCity(matches[0].city || '');
       }
     }
   };
 
-  // Per-lot free stock: available_stock already reflects deducted allotments (set by DB RPC)
-  // We only subtract what's in the current cart (not yet committed to DB)
+  // Per-lot free stock
   const computeFreeStockForLot = (lotId: string, pid: string): number => {
     if (!lots || !allotments || !bookings || !existingSales) return 0;
     const lot = lots.find(l => l.id === lotId);
     if (!lot) return 0;
     const cartQty = cart.filter(i => i.lotId === lotId).reduce((s, i) => s + i.quantity, 0);
-    return Math.max(0, (lot.available_stock ?? lot.total_quantity) - cartQty);
+    const activeBookingIds = new Set(bookings.filter(b => b.status !== 'Delivered' && b.status !== 'Cancelled').map(b => b.id));
+    const allottedQty = allotments.filter(a => a.lot_id === lotId && activeBookingIds.has(a.booking_id)).reduce((sum, a) => sum + a.quantity, 0);
+    const deliveredQty = bookings.filter(b => b.lot_id === lotId && b.status === 'Delivered').reduce((sum, b) => sum + b.quantity, 0);
+    const directSoldQty = existingSales.filter(s => s.lot_id === lotId).reduce((sum, s) => sum + s.quantity, 0);
+    const soldQty = deliveredQty + directSoldQty;
+    return Math.max(0, (lot.available_stock ?? lot.total_quantity) - allottedQty - soldQty - cartQty);
   };
 
   // Total free stock across all READY lots for a plant
@@ -263,7 +260,7 @@ export default function NewDirectSalePage() {
     const customerPayload = {
       name: customerName,
       mobile: customerPhone,
-      city: null
+      city: customerCity || null
     };
 
     const { error } = await supabase.rpc('process_direct_sales_batch', {
@@ -301,7 +298,7 @@ export default function NewDirectSalePage() {
         {/* Optional Customer Details */}
         <div className="bg-white p-5 rounded-3xl shadow-sm border border-gray-100 space-y-4">
           <h2 className="font-black text-gray-800 border-b border-gray-100 pb-2">{t('customerDetails')} ({t('optional')})</h2>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="space-y-2">
               <label className="text-xs font-bold text-gray-500 uppercase">{t('customerName')}</label>
               <input 
@@ -336,6 +333,16 @@ export default function NewDirectSalePage() {
                   <option key={c.id} value={c.mobile}>{c.name}</option>
                 ))}
               </datalist>
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-gray-500 uppercase">City / Village</label>
+              <input 
+                type="text" 
+                value={customerCity} 
+                onChange={e => setCustomerCity(e.target.value)} 
+                className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-bold" 
+                placeholder="Pune" 
+              />
             </div>
           </div>
         </div>

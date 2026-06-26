@@ -302,13 +302,7 @@ export default function BookingList({ role, userId, userName }: BookingListProps
            
            await supabase.from('bookings').update({ status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, worker_id: userId }).eq('id', row.id);
            
-           if (row.lot_id) {
-             const { data: lot } = await supabase.from('lots').select('*').eq('id', row.lot_id).maybeSingle();
-             if (lot) {
-               const newStock = Math.max(0, (lot.available_stock ?? lot.total_quantity) - totalQty);
-               await supabase.from('lots').update({ available_stock: newStock }).eq('id', lot.id);
-             }
-           }
+
            await logAudit(userId, userName, 'DELIVER_BOOKING', 'bookings', row.id, { booking_number: row.booking_number, quantity: totalQty });
         } else {
            const deliveredAmount = deliverQty * unitPrice;
@@ -324,13 +318,7 @@ export default function BookingList({ role, userId, userName }: BookingListProps
 
            await supabase.from('bookings').update({ quantity: deliverQty, total_amount: deliveredAmount, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, worker_id: userId }).eq('id', row.id);
            
-           if (row.lot_id) {
-             const { data: lot } = await supabase.from('lots').select('*').eq('id', row.lot_id).maybeSingle();
-             if (lot) {
-               const newStock = Math.max(0, (lot.available_stock ?? lot.total_quantity) - deliverQty);
-               await supabase.from('lots').update({ available_stock: newStock }).eq('id', lot.id);
-             }
-           }
+
            await logAudit(userId, userName, 'DELIVER_BOOKING', 'bookings', row.id, { booking_number: row.booking_number, quantity: deliverQty });
            
            await supabase.from('bookings').insert(newPending);

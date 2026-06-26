@@ -24,8 +24,8 @@ import {
 type Tab = 'reconciliation' | 'production' | 'lots' | 'workers';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
-function fmt(n: number) {
-  return '₹' + n.toLocaleString('en-IN');
+function fmt(n: number | null | undefined) {
+  return '₹' + (n || 0).toLocaleString('en-IN');
 }
 function todayIST() {
   return toLocalDateStr();
@@ -318,7 +318,7 @@ function ReconciliationTab() {
         payment_mode: first.payment_mode || 'Cash',
         cash_amount: totalCash,
         upi_amount: totalUpi,
-        timestamp: deliveryLogs.get(bookingNo) || new Date(first.delivery_date + 'T23:59:59').getTime(),
+        timestamp: Math.max(...items.map(i => new Date(i.updated_at || i.created_at || i.delivery_date).getTime())),
         order_number: bookingNo,
         worker_name: userMap.get(first.worker_id || '') || 'Unknown Worker',
       });
@@ -384,7 +384,7 @@ function ReconciliationTab() {
         quantity: totalQty,
         amount: -totalRefund,
         payment_mode: first.refund_payment_mode || 'Cash',
-        timestamp: first.refund_date ? new Date(first.refund_date + 'T23:59:59').getTime() : Date.now(),
+        timestamp: Math.max(...items.map(i => new Date(i.updated_at || i.created_at || i.refund_date).getTime())),
         order_number: bookingNo,
         worker_name: userMap.get(first.worker_id || '') || 'Unknown Worker',
       });
@@ -557,13 +557,23 @@ function ProductionDemandTab() {
 
     const totalBooked = Math.max(0, rawTotalBooked - allottedToBookings);
 
+    const activeLots = new Set(lots.filter(l => l.plant_id === plant.id && l.status !== 'Completed').map(l => l.id));
+
+    const deliveredQty = bookings
+      .filter(b => b.plant_id === plant.id && b.status === 'Delivered' && activeLots.has(b.lot_id))
+      .reduce((sum, b) => sum + b.quantity, 0);
+
+    const soldQty = direct_sales
+      .filter(s => s.plant_id === plant.id && activeLots.has(s.lot_id))
+      .reduce((sum, s) => sum + s.quantity, 0);
+
     const totalStock = lots
       .filter((l) => l.plant_id === plant.id && l.status !== 'Completed')
       .reduce((sum, l) => sum + (l.available_stock ?? l.total_quantity), 0);
 
-    const totalGrowing = Math.max(0, totalStock - allottedToBookings);
+    const totalGrowing = Math.max(0, totalStock - allottedToBookings - deliveredQty - soldQty);
 
-    const deficit = Math.max(0, rawTotalBooked - totalStock);
+    const deficit = Math.max(0, totalBooked - totalGrowing);
 
     return {
       id: plant.id,

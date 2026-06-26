@@ -124,7 +124,7 @@ export default function NewBookingPage() {
   const { data: users } = useQuery({
     queryKey: ['users'],
     queryFn: async () => {
-      const { data, error } = await supabase.from('users').select('*').is('deleted_at', null);
+      const { data, error } = await supabase.from('users').select('*');
       if (error) throw error;
       return data || [];
     }

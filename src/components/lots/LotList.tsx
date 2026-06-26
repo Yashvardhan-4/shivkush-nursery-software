@@ -136,8 +136,8 @@ export default function LotList() {
 
           const soldQty = deliveredQty + directSoldQty;
           
-          const availableStock = lot.total_quantity;
-          const freeStock = Math.max(0, lot.available_stock ?? lot.initial_quantity ?? lot.total_quantity);
+          const availableStock = lot.available_stock ?? lot.total_quantity;
+          const freeStock = Math.max(0, availableStock - allottedQty - soldQty);
           
           const readyDate = new Date(lot.ready_date);
           const today = new Date();
@@ -156,12 +156,12 @@ export default function LotList() {
               
               <div className="pl-2">
                 <div className="flex justify-between items-start mb-4">
-                  <div>
-                    <h3 className="font-black text-gray-900 text-lg">{lot.lot_name || lot.lot_number}</h3>
-                    <p className="text-sm font-bold text-gray-500 mt-0.5">{plant?.plant_name} · {plant?.variety}</p>
+                  <div className="min-w-0 flex-1 pr-2">
+                    <h3 className="font-black text-gray-900 text-lg truncate">{lot.lot_name || lot.lot_number}</h3>
+                    <p className="text-sm font-bold text-gray-500 mt-0.5 truncate">{plant?.plant_name} · {plant?.variety}</p>
                   </div>
-                  <div className="flex items-center gap-2">
-                    {lot.lot_name && <span className="text-xs font-semibold text-gray-400 bg-gray-100 px-2 py-1 rounded-md">{lot.lot_number}</span>}
+                  <div className="flex items-center gap-2 shrink-0">
+                    {lot.lot_name && <span className="text-xs font-semibold text-gray-400 bg-gray-100 px-2 py-1 rounded-md hidden sm:inline-block">{lot.lot_number}</span>}
                     <span className={`px-3 py-1 rounded-full text-xs font-black ${statusColors[lot.status] || 'bg-gray-100 text-gray-600'}`}>
                       {isReady && lot.status === 'Growing'
                         ? t('overdueBadge')
@@ -178,7 +178,7 @@ export default function LotList() {
                     {allottedQty === 0 && soldQty === 0 && (
                       <button
                         onClick={() => handleDeleteLot(lot.id)}
-                        className="p-2 bg-red-50 rounded-xl text-red-500 active:scale-95 transition-all hover:bg-red-100"
+                        className="p-2 bg-red-50 rounded-xl text-red-500 hover:bg-red-100 active:scale-95 transition-all"
                         title="Delete empty lot"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -203,28 +203,28 @@ export default function LotList() {
                   </div>
                 )}
 
-                <div className="grid grid-cols-5 gap-1 bg-gray-50 p-3 rounded-xl">
-                  <div className="text-center">
-                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest">{t('total')}</p>
-                    <p className="font-black text-gray-700 text-lg">
-                      {lot.initial_quantity ?? Math.max(lot.total_quantity, allottedQty + soldQty)}
+                <div className="grid grid-cols-5 gap-1 bg-gray-50 p-2 sm:p-3 rounded-xl overflow-hidden">
+                  <div className="text-center min-w-0">
+                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest truncate">{t('total')}</p>
+                    <p className="font-black text-gray-700 text-sm sm:text-lg truncate">
+                      {lot.initial_quantity ?? lot.total_quantity}
                     </p>
                   </div>
-                  <div className="text-center border-l border-gray-200">
-                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest">Survived</p>
-                    <p className="font-black text-gray-900 text-lg">{availableStock}</p>
+                  <div className="text-center border-l border-gray-200 min-w-0">
+                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest truncate">Survived</p>
+                    <p className="font-black text-gray-900 text-sm sm:text-lg truncate">{availableStock}</p>
                   </div>
-                  <div className="text-center border-l border-gray-200">
-                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest">{t('allotted')}</p>
-                    <p className="font-black text-blue-600 text-lg">{allottedQty}</p>
+                  <div className="text-center border-l border-gray-200 min-w-0">
+                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest truncate">{t('allotted')}</p>
+                    <p className="font-black text-blue-600 text-sm sm:text-lg truncate">{allottedQty}</p>
                   </div>
-                  <div className="text-center border-l border-gray-200">
-                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest">{t('sold')}</p>
-                    <p className="font-black text-orange-500 text-lg">{soldQty}</p>
+                  <div className="text-center border-l border-gray-200 min-w-0">
+                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest truncate">{t('sold')}</p>
+                    <p className="font-black text-orange-500 text-sm sm:text-lg truncate">{soldQty}</p>
                   </div>
-                  <div className="text-center border-l border-gray-200">
-                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest">{t('free')}</p>
-                    <p className={`font-black text-lg ${freeStock > 0 ? 'text-green-600' : 'text-red-500'}`}>{freeStock}</p>
+                  <div className="text-center border-l border-gray-200 min-w-0">
+                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest truncate">{t('free')}</p>
+                    <p className={`font-black text-sm sm:text-lg truncate ${freeStock > 0 ? 'text-green-600' : 'text-red-500'}`}>{freeStock}</p>
                   </div>
                 </div>
 

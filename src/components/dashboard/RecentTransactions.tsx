@@ -11,7 +11,7 @@ export default function RecentTransactions({ workerId }: { workerId?: string }) 
 
   const { data: allSales } = useQuery({ queryKey: ['direct_sales'], queryFn: async () => { const { data } = await supabase.from('direct_sales').select('*').is('deleted_at', null); return data || []; } });
   const { data: allBookings } = useQuery({ queryKey: ['bookings'], queryFn: async () => { const { data } = await supabase.from('bookings').select('*').is('deleted_at', null); return data || []; } });
-  const { data: allUsers } = useQuery({ queryKey: ['users'], queryFn: async () => { const { data } = await supabase.from('users').select('*').is('deleted_at', null); return data || []; } });
+  const { data: allUsers } = useQuery({ queryKey: ['users'], queryFn: async () => { const { data } = await supabase.from('users').select('*'); return data || []; } });
   const { data: allPlants } = useQuery({ queryKey: ['plants'], queryFn: async () => { const { data } = await supabase.from('plants').select('*').is('deleted_at', null).eq('active', true); return data || []; } });
   const { data: allAuditLogs } = useQuery({ queryKey: ['audit_logs'], queryFn: async () => { const { data } = await supabase.from('audit_logs').select('*'); return data || []; } });
 
@@ -110,12 +110,9 @@ export default function RecentTransactions({ workerId }: { workerId?: string }) 
     if (deliveredItems.length > 0) {
       const totalBalance = deliveredItems.reduce((sum, item) => sum + Math.max(0, item.total_amount - (item.advance_paid || 0)), 0);
       if (totalBalance > 0) {
-        // Priority: exact delivery timestamp from Audit Log > End of delivery day > End of booking day
-        let exactTime = deliveryLogs.get(bookingNo);
-        if (!exactTime) {
-          const dStr = first.delivery_date || first.booking_date;
-          exactTime = new Date(dStr).setHours(23, 59, 59, 999);
-        }
+        // Use the latest updated_at timestamp of the delivered items
+        const exactTime = Math.max(...deliveredItems.map(i => new Date(i.updated_at || i.created_at || i.delivery_date).getTime()));
+
 
         // Sum split details
         let totalCash: number | undefined = undefined;
