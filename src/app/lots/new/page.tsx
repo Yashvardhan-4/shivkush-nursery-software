@@ -45,7 +45,6 @@ export default function NewLotPage() {
       plant_id: plantId,
       total_quantity: parseInt(quantity),
       initial_quantity: parseInt(quantity),
-      available_stock: parseInt(quantity),
       ready_date: readyDate,
       status: 'Growing' as const,
       notes: ''

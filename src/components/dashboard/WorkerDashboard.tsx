@@ -21,6 +21,7 @@ export default function WorkerDashboard() {
   const { data: allPlants } = useQuery({ queryKey: ['plants'], queryFn: async () => { const { data } = await supabase.from('plants').select('*').is('deleted_at', null).eq('active', true); return data || []; } });
   const { data: allLots } = useQuery({ queryKey: ['lots'], queryFn: async () => { const { data } = await supabase.from('lots').select('*').is('deleted_at', null); return data || []; } });
   const { data: allAllotments } = useQuery({ queryKey: ['allotments'], queryFn: async () => { const { data } = await supabase.from('allotments').select('*').is('deleted_at', null); return data || []; } });
+  const { data: inventory } = useQuery({ queryKey: ['vw_inventory_status'], queryFn: async () => { const { data } = await supabase.from('vw_inventory_status').select('*'); return data || []; } });
 
   const todaySalesTotal = (() => {
     const todayStr = toLocalDateStr();
@@ -58,9 +59,8 @@ export default function WorkerDashboard() {
           );
           const allottedInLot = allAllotments.filter(a => a.lot_id === lot.id && activeBookingIds.has(a.booking_id)).reduce((s, a) => s + a.quantity, 0);
           
-          const deliveredQty = allBookings.filter(b => b.lot_id === lot.id && b.status === 'Delivered').reduce((s, b) => s + b.quantity, 0);
-          const directSoldQty = allSales ? allSales.filter(s => s.lot_id === lot.id).reduce((sum, sale) => sum + sale.quantity, 0) : 0;
-          const lotFree = Math.max(0, (lot.available_stock ?? lot.total_quantity) - allottedInLot - deliveredQty - directSoldQty);
+          const inv = inventory?.find((i: any) => i.lot_id === lot.id);
+          const lotFree = inv ? Math.max(0, inv.free_stock) : 0;
           
           freeStock += Math.max(0, lotFree);
           totalStock += lotTotal;

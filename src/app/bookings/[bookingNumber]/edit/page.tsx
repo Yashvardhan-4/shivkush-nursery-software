@@ -101,6 +101,7 @@ export default function EditBookingPage() {
   const { data: allotments } = useQuery({ queryKey: ['allotments'], queryFn: async () => { const { data } = await supabase.from('allotments').select('*').is('deleted_at', null); return data || []; } });
   const { data: direct_sales } = useQuery({ queryKey: ['direct_sales'], queryFn: async () => { const { data } = await supabase.from('direct_sales').select('*').is('deleted_at', null); return data || []; } });
   const { data: customers } = useQuery({ queryKey: ['customers'], queryFn: async () => { const { data } = await supabase.from('customers').select('*').is('deleted_at', null); return data || []; } });
+  const { data: inventory } = useQuery({ queryKey: ['vw_inventory_status'], queryFn: async () => { const { data } = await supabase.from('vw_inventory_status').select('*'); return data || []; } });
 
   const { data: originalBookingRows } = useQuery({ 
     queryKey: ['bookings', bookingNumber], 
@@ -167,26 +168,17 @@ export default function EditBookingPage() {
   const selectedLot = lots?.find(l => l.id === lotId);
 
   const computeFreeStockForLot = (lId: string, pid: string): number => {
-    if (!lotsData || !allotments || !bookings || !direct_sales) return 0;
-    const lot = lotsData.find(l => l.id === lId);
-    if (!lot) return 0;
-    const activeBookingIds = new Set(
-      bookings.filter(b => b.plant_id === pid && b.status !== 'Delivered' && b.status !== 'Cancelled' && b.booking_number !== bookingNumber).map(b => b.id)
-    );
-    const allottedInLot = allotments
-      .filter(a => a.lot_id === lId && activeBookingIds.has(a.booking_id))
-      .reduce((s, a) => s + a.quantity, 0);
-      
-    const deliveredBookingsQty = bookings
-      .filter(b => b.lot_id === lId && b.status === 'Delivered' && b.booking_number !== bookingNumber)
-      .reduce((s, b) => s + b.quantity, 0);
-      
-    const directSalesQty = direct_sales
-      .filter(s => s.lot_id === lId)
-      .reduce((s, sale) => s + sale.quantity, 0);
+    if (!inventory || !allotments || !originalBookingRows) return 0;
+    const inv = inventory.find((i: any) => i.lot_id === lId);
+    if (!inv) return 0;
+    
+    const currentBookingIds = new Set(originalBookingRows.map((r: any) => r.id));
+    const currentBookingAllotted = allotments
+      .filter((a: any) => a.lot_id === lId && currentBookingIds.has(a.booking_id))
+      .reduce((sum: number, a: any) => sum + a.quantity, 0);
 
     const cartQty = cart.filter(i => i.lotId === lId).reduce((s, i) => s + i.quantity, 0);
-    return Math.max(0, (lot.available_stock ?? lot.total_quantity) - allottedInLot - deliveredBookingsQty - directSalesQty - cartQty);
+    return Math.max(0, inv.free_stock + currentBookingAllotted - cartQty);
   };
 
   const availableQty = (lotId && plantId) ? computeFreeStockForLot(lotId, plantId) : 0;

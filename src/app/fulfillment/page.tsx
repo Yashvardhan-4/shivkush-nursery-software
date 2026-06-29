@@ -44,19 +44,13 @@ export default function FulfillmentPage() {
   const pendingBookings = bookings?.filter((b: any) => ['Pending', 'Allocated', 'Ready'].includes(b.status)) || [];
 
   const checkSoldOutLot = async (lotId: string | null | undefined, plantId: string) => {
-    if (!lotId || !lots || !allotments || !bookings || !sales) return;
+    if (!lotId || !lots) return;
     const lot = lots.find((l: any) => l.id === lotId);
     if (!lot || lot.status === 'Completed') return;
 
-    const currentBookings = await supabase.from('bookings').select('quantity, lot_id, status').is('deleted_at', null);
-    const currentSales = await supabase.from('direct_sales').select('quantity, lot_id').is('deleted_at', null);
-
-    const deliveredQty = (currentBookings.data || []).filter((b: any) => b.lot_id === lotId && b.status === 'Delivered').reduce((s: number,b: any) => s + b.quantity, 0);
-    const salesQty = (currentSales.data || []).filter((s: any) => s.lot_id === lotId).reduce((s: number, sale: any) => s + sale.quantity, 0);
-
-    const physicalStockRemaining = (lot.available_stock ?? lot.total_quantity) - deliveredQty - salesQty;
+    const { data: invData } = await supabase.from('vw_inventory_status').select('current_physical_stock').eq('lot_id', lotId).single();
     
-    if (physicalStockRemaining <= 0) {
+    if (invData && invData.current_physical_stock <= 0) {
        await supabase.from('lots').update({ status: 'Completed' }).eq('id', lotId);
     }
   };

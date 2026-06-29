@@ -82,20 +82,19 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-function getAvailableInLot(lotId: string, lots: Lot[], allotments: Allotment[], bookings: Booking[], directSales: DirectSale[]): number {
-  const lot = lots.find((l) => l.id === lotId);
-  if (!lot) return 0;
-
-  const activeBookingIds = new Set(
-    bookings.filter(b => b.status !== 'Delivered' && b.status !== 'Cancelled').map(b => b.id)
-  );
-
-  const allottedQty = allotments
-    .filter(a => a.lot_id === lotId && activeBookingIds.has(a.booking_id))
+function getAvailableInLot(lotId: string, lots: Lot[], allotments: Allotment[], bookings: Booking[], directSales: DirectSale[], inventory: any[], bookingId: string): number {
+  if (!inventory) return 0;
+  const inv = inventory.find((i: any) => i.lot_id === lotId);
+  if (!inv) return 0;
+  
+  // Free stock in DB already subtracts ALL active allotments.
+  // Since we are allocating for `bookingId`, we must add back THIS booking's allotments in THIS lot,
+  // so the user can re-allocate their own reserved stock!
+  const currentBookingAllotted = allotments
+    .filter(a => a.lot_id === lotId && a.booking_id === bookingId)
     .reduce((sum, a) => sum + a.quantity, 0);
 
-  const availableStock = lot.available_stock ?? lot.total_quantity;
-  return Math.max(0, availableStock);
+  return Math.max(0, inv.free_stock + currentBookingAllotted);
 }
 
 // ──────────────────────────────────────────────
@@ -108,6 +107,7 @@ function AllotmentRow({
   allotments,
   plants,
   directSales,
+  inventory,
 }: {
   booking: Booking;
   bookings: Booking[];
@@ -115,6 +115,7 @@ function AllotmentRow({
   allotments: Allotment[];
   plants: Plant[];
   directSales: DirectSale[];
+  inventory: any[];
 }) {
   const queryClient = useQueryClient();
   const { t } = useLanguage();
@@ -135,20 +136,20 @@ function AllotmentRow({
     .filter((l) => l.plant_id === booking.plant_id && l.status === 'Ready')
     .sort((a, b) => new Date(a.ready_date).getTime() - new Date(b.ready_date).getTime());
   
-  const hasStock = eligibleLots.some(lot => getAvailableInLot(lot.id, lots, allotments, bookings, directSales) > 0);
+  const hasStock = eligibleLots.some(lot => getAvailableInLot(lot.id, lots, allotments, bookings, directSales, inventory, booking.id) > 0);
 
   // Auto-select first available lot (FIFO)
   useEffect(() => {
     if (!selectedLotId && eligibleLots.length > 0) {
-      const firstWithStock = eligibleLots.find(lot => getAvailableInLot(lot.id, lots, allotments, bookings, directSales) > 0);
+      const firstWithStock = eligibleLots.find(lot => getAvailableInLot(lot.id, lots, allotments, bookings, directSales, inventory, booking.id) > 0);
       if (firstWithStock) {
         setSelectedLotId(firstWithStock.id);
       }
     }
-  }, [eligibleLots, selectedLotId, lots, allotments, bookings, directSales]);
+  }, [eligibleLots, selectedLotId, lots, allotments, bookings, directSales, inventory, booking.id]);
 
   function availableInLot(lotId: string): number {
-    return getAvailableInLot(lotId, lots, allotments, bookings, directSales);
+    return getAvailableInLot(lotId, lots, allotments, bookings, directSales, inventory, booking.id);
   }
 
   const selectedLot = lots.find((l) => l.id === selectedLotId);
@@ -484,23 +485,25 @@ export default function AllotmentManager() {
   const { data: queriesData } = useQuery({
     queryKey: ['allotments-data'],
     queryFn: async () => {
-      const [bookingsRes, lotsRes, plantsRes, allotmentsRes, directSalesRes] = await Promise.all([
+      const [bookingsRes, lotsRes, plantsRes, allotmentsRes, directSalesRes, inventoryRes] = await Promise.all([
         supabase.from('bookings').select('*').is('deleted_at', null),
         supabase.from('lots').select('*').is('deleted_at', null),
         supabase.from('plants').select('*').is('deleted_at', null),
         supabase.from('allotments').select('*').is('deleted_at', null),
-        supabase.from('direct_sales').select('*').is('deleted_at', null)
+        supabase.from('direct_sales').select('*').is('deleted_at', null),
+        supabase.from('vw_inventory_status').select('*')
       ]);
       return {
         bookings: bookingsRes.data || [],
         lots: lotsRes.data || [],
         plants: plantsRes.data || [],
         allotments: allotmentsRes.data || [],
-        directSales: directSalesRes.data || []
+        directSales: directSalesRes.data || [],
+        inventory: inventoryRes.data || []
       };
     }
   });
-  const { bookings, lots, plants, allotments, directSales } = queriesData || {};
+  const { bookings, lots, plants, allotments, directSales, inventory } = queriesData || {};
 
   if (!bookings || !lots || !plants || !allotments || !directSales) {
     return (
@@ -611,6 +614,7 @@ export default function AllotmentManager() {
               allotments={allotments}
               plants={plants}
               directSales={directSales}
+              inventory={inventory}
             />
           ))}
         </div>

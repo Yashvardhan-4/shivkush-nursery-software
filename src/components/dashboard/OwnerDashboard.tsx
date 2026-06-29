@@ -68,6 +68,14 @@ export default function OwnerDashboard() {
       return data;
     }
   });
+  const { data: inventory } = useQuery({
+    queryKey: ['vw_inventory_status'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('vw_inventory_status').select('*');
+      if (error) throw error;
+      return data;
+    }
+  });
 
   const [ownerId, setOwnerId] = useState<string | null>(null);
 
@@ -123,14 +131,17 @@ export default function OwnerDashboard() {
     ? allLots.filter((l) => l.status === 'Ready').length
     : null;
 
-  const productionAlertsCount = (allPlants && allBookings && allLots)
+  const productionAlertsCount = (allPlants && allBookings && allLots && inventory)
     ? allPlants.filter((plant) => {
         const totalBooked = allBookings
           .filter((b) => b.plant_id === plant.id && b.status !== 'Cancelled' && b.status !== 'Delivered')
           .reduce((sum, b) => sum + b.quantity, 0);
         const totalGrowing = allLots
           .filter((l) => l.plant_id === plant.id && l.status !== 'Completed')
-          .reduce((sum, l) => sum + (l.available_stock ?? l.total_quantity), 0);
+          .reduce((sum, l) => {
+            const inv = inventory.find((i: any) => i.lot_id === l.id);
+            return sum + (inv ? inv.free_stock : 0);
+          }, 0);
         return totalBooked > totalGrowing;
       }).length
     : null;

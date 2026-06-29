@@ -334,8 +334,9 @@ function ProductionDemandTab() {
   const { data: bookings } = useQuery({ queryKey: ['bookings'], queryFn: async () => { const { data } = await supabase.from('bookings').select('*').is('deleted_at', null); return data || []; } });
   const { data: lots } = useQuery({ queryKey: ['lots'], queryFn: async () => { const { data } = await supabase.from('lots').select('*').is('deleted_at', null); return data || []; } });
   const { data: allotments } = useQuery({ queryKey: ['allotments'], queryFn: async () => { const { data } = await supabase.from('allotments').select('*').is('deleted_at', null); return data || []; } });
+  const { data: inventory } = useQuery({ queryKey: ['vw_inventory_status'], queryFn: async () => { const { data } = await supabase.from('vw_inventory_status').select('*'); return data || []; } });
 
-  if (!plants || !bookings || !lots || !allotments) {
+  if (!plants || !bookings || !lots || !allotments || !inventory) {
     return <LoadingCard />;
   }
 
@@ -377,9 +378,12 @@ function ProductionDemandTab() {
 
     const totalStock = lots
       .filter((l) => l.plant_id === plant.id && l.status !== 'Completed')
-      .reduce((sum, l) => sum + (l.available_stock ?? l.total_quantity), 0);
+      .reduce((sum, l) => {
+        const inv = inventory.find((i: any) => i.lot_id === l.id);
+        return sum + (inv ? inv.free_stock : 0);
+      }, 0);
 
-    const totalGrowing = Math.max(0, totalStock - allottedToBookings - deliveredQty - soldQty);
+    const totalGrowing = Math.max(0, totalStock);
 
     const deficit = Math.max(0, totalBooked - totalGrowing);
 
@@ -496,8 +500,9 @@ function LotReportTab() {
   const { data: allotments } = useQuery({ queryKey: ['allotments'], queryFn: async () => { const { data } = await supabase.from('allotments').select('*').is('deleted_at', null); return data || []; } });
   const { data: bookings } = useQuery({ queryKey: ['bookings'], queryFn: async () => { const { data } = await supabase.from('bookings').select('*').is('deleted_at', null); return data || []; } });
   const { data: directSales } = useQuery({ queryKey: ['direct_sales'], queryFn: async () => { const { data } = await supabase.from('direct_sales').select('*').is('deleted_at', null); return data || []; } });
+  const { data: inventory } = useQuery({ queryKey: ['vw_inventory_status'], queryFn: async () => { const { data } = await supabase.from('vw_inventory_status').select('*'); return data || []; } });
 
-  if (!lots || !plants || !allotments || !bookings || !directSales) {
+  if (!lots || !plants || !allotments || !bookings || !directSales || !inventory) {
     return <LoadingCard />;
   }
 
@@ -557,8 +562,8 @@ function LotReportTab() {
                   .reduce((sum, s) => sum + s.quantity, 0);
                 const soldQty = deliveredQty + directSoldQty;
                 
-                const availableStock = lot.available_stock ?? lot.initial_quantity ?? lot.total_quantity;
-                const freeStock = Math.max(0, availableStock - allottedQty - soldQty);
+                const inv = inventory.find((i: any) => i.lot_id === lot.id);
+                const freeStock = inv ? Math.max(0, inv.free_stock) : 0;
 
                 return (
                   <div

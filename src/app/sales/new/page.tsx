@@ -74,6 +74,7 @@ export default function NewDirectSalePage() {
   const { data: allotments } = useQuery({ queryKey: ['allotments'], queryFn: async () => { const { data } = await supabase.from('allotments').select('*').is('deleted_at', null); return data || []; } });
   const { data: bookings } = useQuery({ queryKey: ['bookings'], queryFn: async () => { const { data } = await supabase.from('bookings').select('*').is('deleted_at', null); return data || []; } });
   const { data: existingSales } = useQuery({ queryKey: ['direct_sales'], queryFn: async () => { const { data } = await supabase.from('direct_sales').select('*').is('deleted_at', null); return data || []; } });
+  const { data: inventory } = useQuery({ queryKey: ['vw_inventory_status'], queryFn: async () => { const { data } = await supabase.from('vw_inventory_status').select('*'); return data || []; } });
   const { data: customers } = useQuery({ queryKey: ['customers'], queryFn: async () => { const { data } = await supabase.from('customers').select('*').is('deleted_at', null); return data || []; } });
   const { data: users } = useQuery({ queryKey: ['users'], queryFn: async () => { const { data } = await supabase.from('users').select('*'); return data || []; } });
   const workers = users?.filter(u => u.role === 'worker') || [];
@@ -108,16 +109,11 @@ export default function NewDirectSalePage() {
 
   // Per-lot free stock
   const computeFreeStockForLot = (lotId: string, pid: string): number => {
-    if (!lots || !allotments || !bookings || !existingSales) return 0;
-    const lot = lots.find(l => l.id === lotId);
-    if (!lot) return 0;
+    if (!inventory) return 0;
+    const inv = inventory.find((i: any) => i.lot_id === lotId);
+    if (!inv) return 0;
     const cartQty = cart.filter(i => i.lotId === lotId).reduce((s, i) => s + i.quantity, 0);
-    const activeBookingIds = new Set(bookings.filter(b => b.status !== 'Delivered' && b.status !== 'Cancelled').map(b => b.id));
-    const allottedQty = allotments.filter(a => a.lot_id === lotId && activeBookingIds.has(a.booking_id)).reduce((sum, a) => sum + a.quantity, 0);
-    const deliveredQty = bookings.filter(b => b.lot_id === lotId && b.status === 'Delivered').reduce((sum, b) => sum + b.quantity, 0);
-    const directSoldQty = existingSales.filter(s => s.lot_id === lotId).reduce((sum, s) => sum + s.quantity, 0);
-    const soldQty = deliveredQty + directSoldQty;
-    return Math.max(0, (lot.available_stock ?? lot.total_quantity) - allottedQty - soldQty - cartQty);
+    return Math.max(0, inv.free_stock - cartQty);
   };
 
   // Total free stock across all READY lots for a plant

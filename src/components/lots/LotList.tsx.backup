@@ -14,26 +14,24 @@ export default function LotList() {
   const { data: queriesData } = useQuery({
     queryKey: ['lot-list-data'],
     queryFn: async () => {
-      const [lotsRes, plantsRes, allotmentsRes, bookingsRes, directSalesRes, inventoryRes] = await Promise.all([
+      const [lotsRes, plantsRes, allotmentsRes, bookingsRes, directSalesRes] = await Promise.all([
         supabase.from('lots').select('*').is('deleted_at', null),
         supabase.from('plants').select('*').is('deleted_at', null),
         supabase.from('allotments').select('*').is('deleted_at', null),
         supabase.from('bookings').select('*').is('deleted_at', null),
-        supabase.from('direct_sales').select('*').is('deleted_at', null),
-        supabase.from('vw_inventory_status').select('*')
+        supabase.from('direct_sales').select('*').is('deleted_at', null)
       ]);
       return {
         lots: lotsRes.data || [],
         plants: plantsRes.data || [],
         allotments: allotmentsRes.data || [],
         bookings: bookingsRes.data || [],
-        directSales: directSalesRes.data || [],
-        inventory: inventoryRes.data || []
+        directSales: directSalesRes.data || []
       };
     }
   });
 
-  const { lots, plants, allotments, bookings, directSales, inventory } = queriesData || {};
+  const { lots, plants, allotments, bookings, directSales } = queriesData || {};
 
   const handleMarkReady = async (lotId: string) => {
     try {
@@ -121,17 +119,25 @@ export default function LotList() {
           const plant = plants.find(p => p.id === lot.plant_id);
           const plantName = plant ? plant.plant_name : 'Unknown Plant';
 
-          const inv = inventory?.find((i: any) => i.lot_id === lot.id) || {
-            allocated_quantity: 0,
-            sold_quantity: 0,
-            free_stock: 0,
-            survived_quantity: lot.total_quantity
-          };
+          // Allotted to bookings for this specific lot
+          const allottedQty = allotments
+            .filter(a => a.lot_id === lot.id && activeBookingIds.has(a.booking_id))
+            .reduce((sum, a) => sum + a.quantity, 0);
 
-          const allottedQty = inv.allocated_quantity;
-          const soldQty = inv.sold_quantity;
-          const availableStock = inv.survived_quantity;
-          const freeStock = inv.free_stock;
+          // Delivered booking quantities for this lot
+          const deliveredQty = bookings
+            .filter(b => b.lot_id === lot.id && b.status === 'Delivered')
+            .reduce((sum, b) => sum + b.quantity, 0);
+
+          // Direct sales for this lot
+          const directSoldQty = directSales
+            .filter(s => s.lot_id === lot.id)
+            .reduce((sum, s) => sum + s.quantity, 0);
+
+          const soldQty = deliveredQty + directSoldQty;
+          
+          const availableStock = lot.available_stock ?? lot.total_quantity;
+          const freeStock = Math.max(0, availableStock - allottedQty - soldQty);
           
           const readyDate = new Date(lot.ready_date);
           const today = new Date();
@@ -243,3 +249,4 @@ export default function LotList() {
     </div>
   );
 }
+

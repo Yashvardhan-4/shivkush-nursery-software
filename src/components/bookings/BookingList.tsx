@@ -463,15 +463,8 @@ export default function BookingList({ role, userId, userName }: BookingListProps
          for (const lId of deliveredLots) {
              const lot = lots.find((l: any) => l.id === lId);
              if (lot && lot.status !== 'Completed') {
-                const activeBookingIds = new Set(
-                  bookings.filter((b: any) => b.plant_id === lot.plant_id && b.status !== 'Delivered' && b.status !== 'Cancelled').map((b: any) => b.id)
-                );
-                const allottedQty = allotments.filter((a: any) => a.lot_id === lId && activeBookingIds.has(a.booking_id)).reduce((s: number,a: any) => s + a.quantity, 0);
-                const deliveredQty = bookings.filter((b: any) => b.lot_id === lId && b.status === 'Delivered').reduce((s: number,b: any) => s + b.quantity, 0);
-                const salesQty = direct_sales.filter((s: any) => s.lot_id === lId).reduce((s: number, sale: any) => s + sale.quantity, 0);
-                const freeStock = (lot.available_stock ?? lot.total_quantity) - allottedQty - deliveredQty - salesQty;
-                
-                if (freeStock <= 0) {
+                const { data: invData } = await supabase.from('vw_inventory_status').select('current_physical_stock').eq('lot_id', lId).single();
+                if (invData && invData.current_physical_stock <= 0) {
                    await supabase.from('lots').update({ status: 'Completed' }).eq('id', lId);
                 }
              }
