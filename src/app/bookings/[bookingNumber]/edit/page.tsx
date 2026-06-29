@@ -292,6 +292,24 @@ export default function EditBookingPage() {
       }
 
       const user = currentUser || { id: 'unknown', name: 'Unknown' };
+
+      // 3. Update transactions ledger for refund
+      if (refundStatus === 'Refunded' && refundAmount > 0) {
+        await supabase.from('transactions').insert({
+          reference_type: 'BOOKING_REFUND',
+          reference_id: rows[0]?.id || generateId(),
+          booking_number: bookingNumber,
+          customer_name: rows[0]?.customer_name || 'Unknown',
+          plant_names: 'Multiple Plants',
+          amount: -refundAmount,
+          payment_mode: paymentMode,
+          cash_amount: paymentMode === 'Cash' ? -refundAmount : 0,
+          upi_amount: paymentMode === 'UPI' ? -refundAmount : 0,
+          worker_id: user.id,
+          created_at: new Date().toISOString()
+        });
+      }
+
       await logAudit(user.id, user.name, 'CANCEL_BOOKING', 'bookings', bookingNumber, {
         refundAmount,
         paymentMode,
@@ -480,7 +498,26 @@ export default function EditBookingPage() {
         }
       }
 
-      // 3. Customer logic
+      // 3. Update transactions ledger if advance changed
+      const oldTotalAdvance = originalBookingRows?.reduce((sum, r) => sum + (r.advance_paid || 0), 0) || 0;
+      if (advanceNum !== oldTotalAdvance) {
+        const diff = advanceNum - oldTotalAdvance;
+        await supabase.from('transactions').insert({
+          reference_type: 'BOOKING_ADVANCE_ADJUSTMENT',
+          reference_id: modifiedBookings[0]?.id || generateId(),
+          booking_number: bookingNumber,
+          customer_name: customerName,
+          plant_names: 'Multiple Plants',
+          amount: diff,
+          payment_mode: paymentMode === 'Split' ? 'Split' : paymentMode,
+          cash_amount: paymentMode === 'Split' ? (diff > 0 ? (parseFloat(splitAmounts.cash) || 0) : diff) : (paymentMode === 'Cash' ? diff : 0),
+          upi_amount: paymentMode === 'Split' ? (diff > 0 ? (parseFloat(splitAmounts.upi) || 0) : diff) : (paymentMode === 'UPI' ? diff : 0),
+          worker_id: user.id,
+          created_at: new Date().toISOString()
+        });
+      }
+
+      // 4. Customer logic
       if (customerPhone && customerName) {
         const { data: custData } = await supabase.from('customers').select('*').eq('mobile', customerPhone).is('deleted_at', null).maybeSingle();
         if (!custData) {

@@ -249,8 +249,10 @@ export default function BookingList({ role, userId, userName }: BookingListProps
     setDeliveryModal(null);
 
     try {
-      const pendingItems = items.filter((i: any) => i.status !== 'Delivered' && i.status !== 'Cancelled');
-      const availableAdvance = pendingItems.reduce((sum: number, i: any) => sum + (i.advance_paid || 0), 0);
+      const dbPendingItems = items.filter((i: any) => i.status !== 'Delivered' && i.status !== 'Cancelled');
+      const availableAdvance = dbPendingItems.reduce((sum: number, i: any) => sum + (i.advance_paid || 0), 0);
+      const availableCashAdvance = dbPendingItems.reduce((sum: number, i: any) => sum + (i.advance_cash_amount || 0), 0);
+      const availableUpiAdvance = dbPendingItems.reduce((sum: number, i: any) => sum + (i.advance_upi_amount || 0), 0);
 
       // 1. Determine total delivery value
       let deliveryValue = 0;
@@ -346,6 +348,8 @@ export default function BookingList({ role, userId, userName }: BookingListProps
 
       newlyProcessedRows.sort((a, b) => (a.status === 'Delivered' ? -1 : 1));
       let remainingAdvance = availableAdvance;
+      let remainingCashAdvance = availableCashAdvance;
+      let remainingUpiAdvance = availableUpiAdvance;
       
       for (const fRow of newlyProcessedRows) {
          let rowAdvance = 0;
@@ -356,9 +360,37 @@ export default function BookingList({ role, userId, userName }: BookingListProps
             rowAdvance = remainingAdvance;
             remainingAdvance = 0;
          }
-         if (fRow.advance_paid !== rowAdvance) {
+
+         let rowCashAdvance = 0;
+         let rowUpiAdvance = 0;
+         if (rowAdvance > 0) {
+             if (remainingCashAdvance >= rowAdvance) {
+                 rowCashAdvance = rowAdvance;
+                 remainingCashAdvance -= rowAdvance;
+             } else {
+                 rowCashAdvance = remainingCashAdvance;
+                 remainingCashAdvance = 0;
+                 rowUpiAdvance = Math.min(rowAdvance - rowCashAdvance, remainingUpiAdvance);
+                 remainingUpiAdvance -= rowUpiAdvance;
+             }
+         }
+
+         if (fRow.advance_paid !== rowAdvance || fRow.advance_cash_amount !== rowCashAdvance || fRow.advance_upi_amount !== rowUpiAdvance) {
             fRow.advance_paid = rowAdvance;
-            await supabase.from('bookings').update({ advance_paid: rowAdvance }).eq('id', fRow.id);
+            fRow.advance_cash_amount = rowCashAdvance > 0 ? rowCashAdvance : null;
+            fRow.advance_upi_amount = rowUpiAdvance > 0 ? rowUpiAdvance : null;
+            if (rowAdvance > 0) {
+                fRow.advance_payment_mode = (rowCashAdvance > 0 && rowUpiAdvance > 0) ? 'Split' : (rowUpiAdvance > 0 ? 'UPI' : 'Cash');
+            } else {
+                fRow.advance_payment_mode = null;
+            }
+
+            await supabase.from('bookings').update({ 
+               advance_paid: fRow.advance_paid,
+               advance_cash_amount: fRow.advance_cash_amount,
+               advance_upi_amount: fRow.advance_upi_amount,
+               advance_payment_mode: fRow.advance_payment_mode
+            }).eq('id', fRow.id);
          }
       }
 

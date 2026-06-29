@@ -158,12 +158,13 @@ export default function OwnerDashboard() {
     { href: '/plants', label: t('plants'), icon: Leaf, color: 'bg-green-600', bg: 'bg-green-50', border: 'border-green-200' },
     { href: '/lots', label: t('lots'), icon: Layers, color: 'bg-amber-500', bg: 'bg-amber-50', border: 'border-amber-200' },
     { href: '/allotments', label: t('allotments'), icon: ClipboardList, color: 'bg-indigo-600', bg: 'bg-indigo-50', border: 'border-indigo-200' },
+    { href: '/fulfillment', label: t('fulfillment'), icon: Package, color: 'bg-pink-600', bg: 'bg-pink-50', border: 'border-pink-200' },
     { href: '/calculator', label: t('calculator'), icon: TrendingUp, color: 'bg-teal-600', bg: 'bg-teal-50', border: 'border-teal-200' },
     { href: '/notebook', label: t('ledger'), icon: BookOpen, color: 'bg-orange-600', bg: 'bg-orange-50', border: 'border-orange-200' },
     { href: '/reports', label: t('reports'), icon: BarChart3, color: 'bg-rose-600', bg: 'bg-rose-50', border: 'border-rose-200' },
     { href: '/analytics', label: t('analytics'), icon: PieChart, color: 'bg-sky-600', bg: 'bg-sky-50', border: 'border-sky-200' },
     { href: '/staff', label: t('manageStaff'), icon: Users, color: 'bg-red-600', bg: 'bg-red-50', border: 'border-red-200' },
-    { href: '/settings/qr', label: 'Manage QRs', icon: Banknote, color: 'bg-pink-600', bg: 'bg-pink-50', border: 'border-pink-200' },
+    { href: '/settings/qr', label: 'Manage QRs', icon: Banknote, color: 'bg-fuchsia-600', bg: 'bg-fuchsia-50', border: 'border-fuchsia-200' },
   ];
 
   return (
