@@ -8,6 +8,7 @@ DROP TABLE IF EXISTS public.attendance CASCADE;
 DROP TABLE IF EXISTS public.direct_sales CASCADE;
 DROP TABLE IF EXISTS public.allotments CASCADE;
 DROP TABLE IF EXISTS public.bookings CASCADE;
+DROP TABLE IF EXISTS public.stock_adjustments CASCADE;
 DROP TABLE IF EXISTS public.lots CASCADE;
 DROP TABLE IF EXISTS public.plants CASCADE;
 DROP TABLE IF EXISTS public.users CASCADE;
@@ -47,14 +48,26 @@ CREATE TABLE public.lots (
   lot_number text UNIQUE NOT NULL,
   lot_name text,
   plant_id uuid REFERENCES public.plants(id) ON DELETE CASCADE NOT NULL,
-  total_quantity integer NOT NULL,
+  total_quantity integer NOT NULL CHECK (total_quantity >= 0),
   initial_quantity integer NOT NULL DEFAULT 0,
-  available_stock integer NOT NULL DEFAULT 0,
   ready_date date NOT NULL,
   status text NOT NULL CHECK (status IN ('Growing', 'Ready', 'Completed')),
   notes text,
   created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL,
   updated_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- STOCK ADJUSTMENTS TABLE
+CREATE TABLE public.stock_adjustments (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  lot_id uuid REFERENCES public.lots(id) ON DELETE CASCADE NOT NULL,
+  quantity_change integer NOT NULL CHECK (quantity_change != 0),
+  previous_quantity integer NOT NULL CHECK (previous_quantity >= 0),
+  new_quantity integer NOT NULL CHECK (new_quantity >= 0),
+  reason text NOT NULL CHECK (reason IN ('MORTALITY', 'RECOUNT_SHORTAGE', 'RECOUNT_SURPLUS', 'DAMAGE', 'OTHER')),
+  remarks text,
+  performed_by uuid REFERENCES public.users(id) ON DELETE SET NULL,
+  created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
 -- BOOKINGS TABLE
@@ -167,6 +180,7 @@ CREATE TABLE public.payment_qrs (
 
 -- INDEXES FOR FOREIGN KEYS
 CREATE INDEX idx_lots_plant_id ON public.lots(plant_id);
+CREATE INDEX idx_stock_adjustments_lot_id ON public.stock_adjustments(lot_id);
 CREATE INDEX idx_bookings_plant_id ON public.bookings(plant_id);
 CREATE INDEX idx_bookings_lot_id ON public.bookings(lot_id);
 CREATE INDEX idx_bookings_worker_id ON public.bookings(worker_id);
@@ -185,6 +199,7 @@ CREATE INDEX idx_audit_logs_user_id ON public.audit_logs(user_id);
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.plants ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.lots ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.stock_adjustments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.bookings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.allotments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.direct_sales ENABLE ROW LEVEL SECURITY;
