@@ -288,7 +288,16 @@ export default function EditBookingPage() {
           refund_date: refundStatus === 'Refunded' ? toLocalDateStr(new Date().toISOString()) : null
         };
 
-        await supabase.from('bookings').update(updates).eq('id', row.id);
+        const { data: updatedRows } = await supabase.from('bookings')
+            .update(updates)
+            .eq('id', row.id)
+            .neq('status', 'Cancelled')
+            .select('id');
+            
+        if (!updatedRows || updatedRows.length === 0) {
+            console.warn("Booking already cancelled or modified. Skipping refund transaction.");
+            return; // Abort entire cancellation to prevent double refund
+        }
       }
 
       const user = currentUser || { id: 'unknown', name: 'Unknown' };

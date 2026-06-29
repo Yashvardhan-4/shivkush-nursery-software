@@ -57,6 +57,7 @@ export default function NewDirectSalePage() {
   const [plantId, setPlantId] = useState('');
   const [selectedLotId, setSelectedLotId] = useState('');
   const [quantity, setQuantity] = useState('');
+  const [autoAllocate, setAutoAllocate] = useState(false);
   
   const [assignedTo, setAssignedTo] = useState('');
   

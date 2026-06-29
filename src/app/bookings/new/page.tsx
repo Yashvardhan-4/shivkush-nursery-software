@@ -301,8 +301,7 @@ export default function NewBookingPage() {
         remarks: 'Created from Cart',
         worker_id: user.id,
         assigned_to: assignedTo || null,
-        created_at: createdAt,
-        remarks: ''
+        created_at: createdAt
       };
     });
 

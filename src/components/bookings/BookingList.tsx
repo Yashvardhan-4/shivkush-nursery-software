@@ -300,11 +300,18 @@ export default function BookingList({ role, userId, userName }: BookingListProps
 
         if (deliverQty === totalQty) {
            const updated = { ...row, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, worker_id: userId };
-           newlyProcessedRows.push(updated);
-           
-           await supabase.from('bookings').update({ status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, worker_id: userId }).eq('id', row.id);
-           
+           const { data: updatedFullRows } = await supabase.from('bookings')
+              .update({ status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, worker_id: userId })
+              .eq('id', row.id)
+              .neq('status', 'Delivered')
+              .select('id');
 
+           if (!updatedFullRows || updatedFullRows.length === 0) {
+               console.warn("Booking already delivered. Skipping.");
+               continue;
+           }
+
+           newlyProcessedRows.push(updated);
            await logAudit(userId, userName, 'DELIVER_BOOKING', 'bookings', row.id, { booking_number: row.booking_number, quantity: totalQty });
         } else {
            const deliveredAmount = deliverQty * unitPrice;
@@ -312,14 +319,25 @@ export default function BookingList({ role, userId, userName }: BookingListProps
            const remainingAmount = row.total_amount - deliveredAmount;
 
            const updatedDelivered = { ...row, quantity: deliverQty, total_amount: deliveredAmount, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, worker_id: userId };
+           
+           const { data: updatedRows, error: updErr } = await supabase.from('bookings')
+              .update({ quantity: deliverQty, total_amount: deliveredAmount, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, worker_id: userId })
+              .eq('id', row.id)
+              .eq('quantity', totalQty)
+              .neq('status', 'Delivered')
+              .select('id');
+
+           if (updErr || !updatedRows || updatedRows.length === 0) {
+               console.warn("Booking already modified or delivered by another process. Skipping.");
+               continue;
+           }
+
            newlyProcessedRows.push(updatedDelivered);
+
            
            const newPendingId = generateId();
            const newPending = { ...row, id: newPendingId, quantity: remainingQty, total_amount: remainingAmount, status: (row.status === 'Ready' || row.status === 'Allocated') ? row.status : 'Pending' };
            newlyProcessedRows.push(newPending);
-
-           await supabase.from('bookings').update({ quantity: deliverQty, total_amount: deliveredAmount, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, worker_id: userId }).eq('id', row.id);
-           
 
            await logAudit(userId, userName, 'DELIVER_BOOKING', 'bookings', row.id, { booking_number: row.booking_number, quantity: deliverQty });
            

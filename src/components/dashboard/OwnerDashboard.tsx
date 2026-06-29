@@ -8,6 +8,7 @@ import { useLanguage } from '@/lib/i18n/LanguageContext';
 import {
   Banknote,
   BookOpen,
+  Package,
   Leaf,
   AlertTriangle,
   ClipboardList,

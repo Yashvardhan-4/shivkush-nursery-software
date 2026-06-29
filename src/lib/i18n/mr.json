@@ -83,6 +83,7 @@
   "manageStaff": "कर्मचारी व्यवस्थापन",
   "allotments": "वाटप",
   "productionAlerts": "उत्पादन अलर्ट",
+  "fulfillment": "ऑर्डर पूर्तता",
   "propagationNeed": "रोपांची त्वरित निर्मिती करणे आवश्यक आहे.",
   "allStockSufficient": "सर्व रोपांचा साठा पुरेसा आहे.",
   "sell": "विक्री",

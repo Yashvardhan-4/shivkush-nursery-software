@@ -37,6 +37,7 @@ export default function RecentTransactions({ workerId }: { workerId?: string }) 
       mode: t.payment_mode,
       cashAmount: t.cash_amount,
       upiAmount: t.upi_amount,
+      worker_id: t.worker_id,
       worker: userMap.get(t.worker_id) || 'Unknown Worker',
       type: t.reference_type === 'DIRECT_SALE' ? 'sale' : t.reference_type === 'BOOKING_ADVANCE' ? 'advance' : 'final'
     };
