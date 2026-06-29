@@ -108,7 +108,7 @@ export default function NewDirectSalePage() {
   };
 
   // Per-lot free stock
-  const computeFreeStockForLot = (lotId: string, pid: string): number => {
+  const getCartAdjustedFreeStock = (lotId: string, pid: string): number => {
     if (!inventory) return 0;
     const inv = inventory.find((i: any) => i.lot_id === lotId);
     if (!inv) return 0;
@@ -117,14 +117,14 @@ export default function NewDirectSalePage() {
   };
 
   // Total free stock across all READY lots for a plant
-  const computeFreeStock = (pid: string): number => {
+  const getTotalCartAdjustedFreeStock = (pid: string): number => {
     if (!lots) return 0;
     return lots
       .filter(l => l.plant_id === pid && l.status === 'Ready')
-      .reduce((sum, l) => sum + computeFreeStockForLot(l.id, pid), 0);
+      .reduce((sum, l) => sum + getCartAdjustedFreeStock(l.id, pid), 0);
   };
 
-  const selectedFreeStock = (plantId && selectedLotId) ? computeFreeStockForLot(selectedLotId, plantId) : null;
+  const selectedFreeStock = (plantId && selectedLotId) ? getCartAdjustedFreeStock(selectedLotId, plantId) : null;
 
   const handleAddToCart = () => {
     if (!selectedPlant || !quantity) return;
@@ -132,7 +132,7 @@ export default function NewDirectSalePage() {
     if (isNaN(qty) || qty <= 0) return;
 
     if (selectedLotId) {
-      const freeStock = computeFreeStockForLot(selectedLotId, selectedPlant.id);
+      const freeStock = getCartAdjustedFreeStock(selectedLotId, selectedPlant.id);
       if (qty > freeStock) {
         const lot = lots?.find(l => l.id === selectedLotId);
         alert(`Only ${freeStock} plants free in lot ${lot?.lot_name || lot?.lot_number || ''}. Some are reserved for bookings.`);
@@ -376,7 +376,7 @@ export default function NewDirectSalePage() {
             <select value={plantId} onChange={e => { setPlantId(e.target.value); setQuantity(''); }} className="w-full p-4 bg-white border border-green-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-bold text-lg text-green-900">
               <option value="">{t('choosePlantPlaceholder')}</option>
               {plants?.filter(p => p.active !== false).map(p => {
-                const fs = computeFreeStock(p.id);
+                const fs = getTotalCartAdjustedFreeStock(p.id);
                 return (
                   <option key={p.id} value={p.id}>
                     {p.variety ? `${p.plant_name} - ${p.variety}` : p.plant_name} — ₹{p.selling_price} ({t('free')}: {fs})
@@ -428,7 +428,7 @@ export default function NewDirectSalePage() {
                           .filter(l => l.plant_id === plantId && l.status === 'Ready')
                           .sort((a, b) => new Date(a.ready_date).getTime() - new Date(b.ready_date).getTime())
                           .map(l => {
-                            const free = computeFreeStockForLot(l.id, plantId);
+                            const free = getCartAdjustedFreeStock(l.id, plantId);
                             return (
                               <option key={l.id} value={l.id}>
                                 {l.lot_name || l.lot_number} — {free} free{free <= 0 ? ' (fully reserved)' : ''}
