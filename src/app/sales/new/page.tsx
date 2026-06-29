@@ -141,7 +141,7 @@ export default function NewDirectSalePage() {
     }
 
     const lot = selectedLotId ? lots?.find(l => l.id === selectedLotId) : null;
-    let price = resolvePlantPrice(selectedPlant, qty);
+    const price = resolvePlantPrice(selectedPlant, qty);
 
     setCart([...cart, {
       id: generateId(),

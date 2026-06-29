@@ -164,7 +164,7 @@ export default function NewBookingPage() {
     const qty = parseInt(quantity);
     if (isNaN(qty) || qty <= 0) return;
 
-    let price = resolvePlantPrice(selectedPlant, qty);
+    const price = resolvePlantPrice(selectedPlant, qty);
     
     setCart([...cart, {
       id: generateId(),

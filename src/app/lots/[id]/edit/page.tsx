@@ -226,6 +226,9 @@ export default function EditLotPage({ params }: Props) {
       queryClient.invalidateQueries({ queryKey: ['lot-details'] });
       queryClient.invalidateQueries({ queryKey: ['lots'] });
       router.push('/lots');
+    } catch (error: any) {
+      console.error(error);
+      alert(error.message || 'Failed to update lot. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -253,11 +256,14 @@ export default function EditLotPage({ params }: Props) {
           action: 'DELETE_LOT',
           entity_type: 'lots',
           entity_id: id,
-          details: { lot_number: lotNumber }
+          details: { lot_number: lotNumber, lot_name: lotName, total_quantity: newQty }
         });
         
         queryClient.invalidateQueries({ queryKey: ['lots'] });
         router.push('/lots');
+      } catch (error: any) {
+        console.error(error);
+        alert(error.message || 'Failed to delete lot. Please try again.');
       } finally {
         setLoading(false);
       }
