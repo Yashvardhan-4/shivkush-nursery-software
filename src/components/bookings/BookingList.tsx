@@ -3,7 +3,8 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabaseClient';
-import { logAudit, generateId, toLocalDateStr } from '@/lib/utils';
+import { serverCancelBooking } from '@/lib/actions/finance';
+import { logAudit } from '@/lib/utils';
 import { Search, Phone, MapPin, Package, Truck, XCircle, CheckCircle2, FileSpreadsheet, FileText, Pencil } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { exportToExcel, exportToPDF } from '@/lib/exportUtils';
@@ -41,19 +42,6 @@ export default function BookingList({ role, userId, userName }: BookingListProps
   const [search, setSearch] = useState('');
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
-  const [deliveryModal, setDeliveryModal] = useState<{
-    bookingNumber: string;
-    customerName: string;
-    balance: number;
-    advance_paid: number;
-    items: any[];
-  } | null>(null);
-  const [deliveryQtys, setDeliveryQtys] = useState<Record<string, number>>({});
-  const [paymentMode, setPaymentMode] = useState<'Cash' | 'UPI' | 'Split'>('Cash');
-  const [splitAmounts, setSplitAmounts] = useState({ cash: '', upi: '' });
-  const [deliveryRemarks, setDeliveryRemarks] = useState('');
-
-
   const queryClient = useQueryClient();
 
   const { data: bookings } = useQuery({ queryKey: ['bookings'], queryFn: async () => { const { data } = await supabase.from('bookings').select('*').is('deleted_at', null).order('created_at', { ascending: false }); return data || []; } });
@@ -61,6 +49,7 @@ export default function BookingList({ role, userId, userName }: BookingListProps
   const { data: lots } = useQuery({ queryKey: ['lots'], queryFn: async () => { const { data } = await supabase.from('lots').select('*').is('deleted_at', null); return data || []; } });
   const { data: allotments } = useQuery({ queryKey: ['allotments'], queryFn: async () => { const { data } = await supabase.from('allotments').select('*').is('deleted_at', null); return data || []; } });
   const { data: direct_sales } = useQuery({ queryKey: ['direct_sales'], queryFn: async () => { const { data } = await supabase.from('direct_sales').select('*').is('deleted_at', null); return data || []; } });
+  const { data: vwBookingStatus } = useQuery({ queryKey: ['vw_booking_status'], queryFn: async () => { const { data } = await supabase.from('vw_booking_status').select('*'); return data || []; } });
 
   const handleExportExcel = () => {
     if (!filtered || filtered.length === 0) return;
@@ -140,10 +129,13 @@ export default function BookingList({ role, userId, userName }: BookingListProps
       };
     }
     acc[curr.booking_number].items.push(curr);
+    
+    const statusRow = vwBookingStatus?.find((v: any) => v.booking_id === curr.id);
+    
     acc[curr.booking_number].total_amount += curr.total_amount;
-    acc[curr.booking_number].advance_paid += curr.advance_paid;
-    acc[curr.booking_number].balance =
-      acc[curr.booking_number].total_amount - acc[curr.booking_number].advance_paid;
+    acc[curr.booking_number].advance_paid += statusRow ? Number(statusRow.advance_paid) : curr.advance_paid;
+    acc[curr.booking_number].balance += statusRow ? Number(statusRow.outstanding_balance) : (curr.total_amount - curr.advance_paid);
+    
     return acc;
   }, {} as any);
 
@@ -194,310 +186,28 @@ export default function BookingList({ role, userId, userName }: BookingListProps
     if (!confirm(t('cancelItemConfirm'))) return;
     setActionLoading(`cancel_${id}`);
     try {
-      const { data: row } = await supabase.from('bookings').select('*').eq('id', id).maybeSingle();
+      const { data: row } = await supabase.from('bookings').select('booking_number').eq('id', id).maybeSingle();
       if (!row) return;
 
-      await supabase.from('bookings').update({ status: 'Cancelled' }).eq('id', row.id);
-
-      const { data: rowAllotments } = await supabase.from('allotments').select('*').eq('booking_id', id).is('deleted_at', null);
-      if (rowAllotments && rowAllotments.length > 0) {
-        const deletedAt = new Date().toISOString();
-        const allotIds = rowAllotments.map(a => a.id);
-        await supabase.from('allotments').update({ deleted_at: deletedAt }).in('id', allotIds);
+      const res = await serverCancelBooking({ bookingNumber: row.booking_number });
+      if (!res?.success) {
+        alert(res?.error || 'Failed to cancel booking');
+        return;
       }
-
-      await logAudit(userId, userName, 'CANCEL_BOOKING', 'bookings', row.id, {
-        booking_number: row.booking_number,
-        customer_name: row.customer_name,
-      });
 
       queryClient.invalidateQueries({ queryKey: ['bookings'] });
       queryClient.invalidateQueries({ queryKey: ['allotments'] });
+      queryClient.invalidateQueries({ queryKey: ['vw_inventory_status'] });
+      queryClient.invalidateQueries({ queryKey: ['vw_booking_status'] });
+      queryClient.invalidateQueries({ queryKey: ['vw_daily_cashbook'] });
+      queryClient.invalidateQueries({ queryKey: ['vw_profit_summary'] });
+    } catch (err: any) {
+      console.error(err);
+      alert('Failed to cancel booking: ' + (err.message || ''));
     } finally {
       setActionLoading(null);
     }
   }
-
-
-  function openDeliveryModal(grp: any) {
-    const pendingItems = grp.items.filter((i: any) => i.status !== 'Delivered' && i.status !== 'Cancelled');
-    const availableAdvance = pendingItems.reduce((sum: number, i: any) => sum + (i.advance_paid || 0), 0);
-    setDeliveryModal({
-      bookingNumber: grp.booking_number,
-      customerName: grp.customer_name,
-      balance: grp.balance,
-      advance_paid: availableAdvance,
-      items: pendingItems,
-    });
-    
-    const initialQtys: Record<string, number> = {};
-    pendingItems.forEach((item: any) => {
-      initialQtys[item.id] = item.quantity;
-    });
-    setDeliveryQtys(initialQtys);
-
-    setPaymentMode('Cash');
-    setSplitAmounts({ cash: '', upi: '' });
-    setDeliveryRemarks('');
-  }
-
-  async function confirmDelivery() {
-    if (!navigator.onLine) { alert('You must be online to save.'); return; }
-    if (!deliveryModal) return;
-    const { bookingNumber, items } = deliveryModal;
-    setActionLoading(`deliver_${bookingNumber}`);
-    setDeliveryModal(null);
-
-    try {
-      const dbPendingItems = items.filter((i: any) => i.status !== 'Delivered' && i.status !== 'Cancelled');
-      const availableAdvance = dbPendingItems.reduce((sum: number, i: any) => sum + (i.advance_paid || 0), 0);
-      const availableCashAdvance = dbPendingItems.reduce((sum: number, i: any) => sum + (i.advance_cash_amount || 0), 0);
-      const availableUpiAdvance = dbPendingItems.reduce((sum: number, i: any) => sum + (i.advance_upi_amount || 0), 0);
-
-      // 1. Determine total delivery value
-      let deliveryValue = 0;
-      items.forEach((item: any) => {
-        const deliverQty = deliveryQtys[item.id] || 0;
-        const unitPrice = item.total_amount / item.quantity;
-        deliveryValue += deliverQty * unitPrice;
-      });
-
-      const advanceToUse = Math.min(availableAdvance, deliveryValue);
-      const targetCollection = deliveryValue - advanceToUse;
-
-      // 2. Compute final payment
-      let finalPaymentMode = paymentMode as string;
-      const splitTotal = (parseFloat(splitAmounts.cash) || 0) + (parseFloat(splitAmounts.upi) || 0);
-      if (paymentMode === 'Split') {
-        finalPaymentMode = `Split (Cash: ₹${splitAmounts.cash || 0}, UPI: ₹${splitAmounts.upi || 0})`;
-      }
-      const amountCollectedNow = paymentMode === 'Split' ? splitTotal : targetCollection;
-
-      const todayStr = toLocalDateStr();
-      const { data: rows } = await supabase.from('bookings').select('*').eq('booking_number', bookingNumber).is('deleted_at', null);
-
-      const newlyProcessedRows: any[] = [];
-      const remarksToAppend = deliveryRemarks.trim();
-
-      for (const row of (rows || [])) {
-        if (row.status === 'Delivered' || row.status === 'Cancelled') {
-           continue; 
-        }
-        
-        const deliverQty = deliveryQtys[row.id] || 0;
-        const totalQty = row.quantity;
-
-        if (deliverQty === 0) {
-           newlyProcessedRows.push(row);
-           continue;
-        }
-
-        const unitPrice = row.total_amount / totalQty;
-        
-        const updatedRemarks = remarksToAppend 
-          ? (row.remarks ? row.remarks + '\\nDelivery Note: ' + remarksToAppend : 'Delivery Note: ' + remarksToAppend)
-          : (row.remarks || null);
-
-        if (deliverQty === totalQty) {
-           const updated = { ...row, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, worker_id: userId };
-           const { data: updatedFullRows } = await supabase.from('bookings')
-              .update({ status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, worker_id: userId })
-              .eq('id', row.id)
-              .neq('status', 'Delivered')
-              .select('id');
-
-           if (!updatedFullRows || updatedFullRows.length === 0) {
-               console.warn("Booking already delivered. Skipping.");
-               continue;
-           }
-
-           newlyProcessedRows.push(updated);
-           await logAudit(userId, userName, 'DELIVER_BOOKING', 'bookings', row.id, { booking_number: row.booking_number, quantity: totalQty });
-        } else {
-           const deliveredAmount = deliverQty * unitPrice;
-           const remainingQty = totalQty - deliverQty;
-           const remainingAmount = row.total_amount - deliveredAmount;
-
-           const updatedDelivered = { ...row, quantity: deliverQty, total_amount: deliveredAmount, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, worker_id: userId };
-           
-           const { data: updatedRows, error: updErr } = await supabase.from('bookings')
-              .update({ quantity: deliverQty, total_amount: deliveredAmount, status: 'Delivered', delivery_date: todayStr, remarks: updatedRemarks, worker_id: userId })
-              .eq('id', row.id)
-              .eq('quantity', totalQty)
-              .neq('status', 'Delivered')
-              .select('id');
-
-           if (updErr || !updatedRows || updatedRows.length === 0) {
-               console.warn("Booking already modified or delivered by another process. Skipping.");
-               continue;
-           }
-
-           newlyProcessedRows.push(updatedDelivered);
-
-           
-           const newPendingId = generateId();
-           const newPending = { ...row, id: newPendingId, quantity: remainingQty, total_amount: remainingAmount, status: (row.status === 'Ready' || row.status === 'Allocated') ? row.status : 'Pending' };
-           newlyProcessedRows.push(newPending);
-
-           await logAudit(userId, userName, 'DELIVER_BOOKING', 'bookings', row.id, { booking_number: row.booking_number, quantity: deliverQty });
-           
-           await supabase.from('bookings').insert(newPending);
-
-           const { data: rowAllotments } = await supabase.from('allotments').select('*').eq('booking_id', row.id).is('deleted_at', null);
-           let qtyToMove = remainingQty;
-           
-           for (const a of (rowAllotments || [])) {
-             if (qtyToMove <= 0) break;
-             if (a.quantity <= qtyToMove) {
-               qtyToMove -= a.quantity;
-               await supabase.from('allotments').update({ booking_id: newPendingId }).eq('id', a.id);
-             } else {
-               const leftoverDeliveredQty = a.quantity - qtyToMove;
-               const movedQty = qtyToMove;
-               qtyToMove = 0;
-               await supabase.from('allotments').update({ quantity: leftoverDeliveredQty }).eq('id', a.id);
-               const newAId = generateId();
-               const newA = { ...a, id: newAId, booking_id: newPendingId, quantity: movedQty };
-               await supabase.from('allotments').insert(newA);
-             }
-           }
-        }
-      }
-
-      newlyProcessedRows.sort((a, b) => (a.status === 'Delivered' ? -1 : 1));
-      let remainingAdvance = availableAdvance;
-      let remainingCashAdvance = availableCashAdvance;
-      let remainingUpiAdvance = availableUpiAdvance;
-      
-      for (const fRow of newlyProcessedRows) {
-         let rowAdvance = 0;
-         if (remainingAdvance >= fRow.total_amount) {
-            rowAdvance = fRow.total_amount;
-            remainingAdvance -= fRow.total_amount;
-         } else {
-            rowAdvance = remainingAdvance;
-            remainingAdvance = 0;
-         }
-
-         let rowCashAdvance = 0;
-         let rowUpiAdvance = 0;
-         if (rowAdvance > 0) {
-             if (remainingCashAdvance >= rowAdvance) {
-                 rowCashAdvance = rowAdvance;
-                 remainingCashAdvance -= rowAdvance;
-             } else {
-                 rowCashAdvance = remainingCashAdvance;
-                 remainingCashAdvance = 0;
-                 rowUpiAdvance = Math.min(rowAdvance - rowCashAdvance, remainingUpiAdvance);
-                 remainingUpiAdvance -= rowUpiAdvance;
-             }
-         }
-
-         if (fRow.advance_paid !== rowAdvance || fRow.advance_cash_amount !== rowCashAdvance || fRow.advance_upi_amount !== rowUpiAdvance) {
-            fRow.advance_paid = rowAdvance;
-            fRow.advance_cash_amount = rowCashAdvance > 0 ? rowCashAdvance : null;
-            fRow.advance_upi_amount = rowUpiAdvance > 0 ? rowUpiAdvance : null;
-            if (rowAdvance > 0) {
-                fRow.advance_payment_mode = (rowCashAdvance > 0 && rowUpiAdvance > 0) ? 'Split' : (rowUpiAdvance > 0 ? 'UPI' : 'Cash');
-            } else {
-                fRow.advance_payment_mode = null;
-            }
-
-            await supabase.from('bookings').update({ 
-               advance_paid: fRow.advance_paid,
-               advance_cash_amount: fRow.advance_cash_amount,
-               advance_upi_amount: fRow.advance_upi_amount,
-               advance_payment_mode: fRow.advance_payment_mode
-            }).eq('id', fRow.id);
-         }
-      }
-
-      const cashPool = paymentMode === 'Cash' ? targetCollection : paymentMode === 'UPI' ? 0 : parseFloat(splitAmounts.cash) || 0;
-      const upiPool = paymentMode === 'UPI' ? targetCollection : paymentMode === 'Cash' ? 0 : parseFloat(splitAmounts.upi) || 0;
-      let remainingCash = cashPool;
-      let remainingUpi = upiPool;
-
-      for (const fRow of newlyProcessedRows) {
-         if (fRow.status === 'Delivered' && fRow.delivery_date === todayStr && !fRow.payment_mode) {
-            const rowBalance = Math.max(0, fRow.total_amount - fRow.advance_paid);
-            let rCash = 0;
-            let rUpi = 0;
-            if (rowBalance > 0) {
-               if (remainingCash >= rowBalance) {
-                  rCash = rowBalance;
-                  remainingCash -= rowBalance;
-               } else {
-                  rCash = remainingCash;
-                  remainingCash = 0;
-                  rUpi = Math.min(rowBalance - rCash, remainingUpi);
-                  remainingUpi -= rUpi;
-               }
-            }
-            const rowPayMode = (rCash > 0 && rUpi > 0) ? 'Split' : (rUpi > 0 ? 'UPI' : 'Cash');
-            
-            fRow.payment_mode = rowPayMode;
-            fRow.cash_amount = rCash;
-            fRow.upi_amount = rUpi;
-            await supabase.from('bookings').update({ payment_mode: rowPayMode, cash_amount: rCash, upi_amount: rUpi }).eq('id', fRow.id);
-         }
-      }
-
-      if (targetCollection > 0 && newlyProcessedRows.length > 0) {
-        await supabase.from('transactions').insert({
-          reference_type: 'BOOKING_DELIVERY',
-          reference_id: newlyProcessedRows[0].id,
-          booking_number: bookingNumber,
-          customer_name: deliveryModal.customerName,
-          plant_names: 'Multiple Plants',
-          amount: targetCollection,
-          payment_mode: paymentMode === 'Split' ? 'Split' : paymentMode,
-          cash_amount: paymentMode === 'Split' ? (parseFloat(splitAmounts.cash) || 0) : (paymentMode === 'Cash' ? targetCollection : 0),
-          upi_amount: paymentMode === 'Split' ? (parseFloat(splitAmounts.upi) || 0) : (paymentMode === 'UPI' ? targetCollection : 0),
-          worker_id: userId,
-          created_at: new Date().toISOString()
-        });
-      }
-
-      if (direct_sales && allotments && lots && bookings) {
-         const deliveredLots = new Set(newlyProcessedRows.filter(r => r.status === 'Delivered' && r.lot_id).map(r => r.lot_id));
-         for (const lId of deliveredLots) {
-             const lot = lots.find((l: any) => l.id === lId);
-             if (lot && lot.status !== 'Completed') {
-                const { data: invData } = await supabase.from('vw_inventory_status').select('current_physical_stock').eq('lot_id', lId).single();
-                if (invData && invData.current_physical_stock <= 0) {
-                   await supabase.from('lots').update({ status: 'Completed' }).eq('id', lId);
-                }
-             }
-         }
-      }
-
-      await logAudit(userId, userName, 'DELIVER_BOOKING', 'bookings', bookingNumber, {
-         customer_name: deliveryModal.customerName,
-         payment_mode: finalPaymentMode,
-         amount_collected: amountCollectedNow
-      });
-
-      queryClient.invalidateQueries({ queryKey: ['bookings'] });
-      queryClient.invalidateQueries({ queryKey: ['lots'] });
-      queryClient.invalidateQueries({ queryKey: ['allotments'] });
-
-    } finally {
-      setActionLoading(null);
-    }
-  }
-
-  // Calculate dynamic modal values
-  const currentDeliveryValue = deliveryModal ? deliveryModal.items.reduce((sum, item) => {
-    const qty = deliveryQtys[item.id] || 0;
-    return sum + (qty * (item.total_amount / item.quantity));
-  }, 0) : 0;
-  
-  const uiAvailableAdvance = deliveryModal ? deliveryModal.items.filter((i: any) => i.status !== 'Delivered' && i.status !== 'Cancelled').reduce((sum: number, i: any) => sum + (i.advance_paid || 0), 0) : 0;
-  const advanceToUse = deliveryModal ? Math.min(uiAvailableAdvance, currentDeliveryValue) : 0;
-  const targetCollection = currentDeliveryValue - advanceToUse;
-
-  const splitTotal = (parseFloat(splitAmounts.cash) || 0) + (parseFloat(splitAmounts.upi) || 0);
-  const isValidSplit = !deliveryModal || paymentMode !== 'Split' || (paymentMode === 'Split' && Math.abs(splitTotal - targetCollection) < 0.01);
 
   return (
     <div className="space-y-5">
@@ -664,14 +374,7 @@ export default function BookingList({ role, userId, userName }: BookingListProps
                     <Pencil className="w-4 h-4 text-gray-600" />
                     {t('editOrder')}
                   </a>
-                  <button
-                    onClick={() => openDeliveryModal(grp)}
-                    disabled={isDelivering}
-                    className="flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl bg-green-600 text-white font-black text-sm shadow-md active:scale-95 transition-all disabled:opacity-60"
-                  >
-                    <Truck className="w-4 h-4" />
-                    {isDelivering ? t('marking') : t('deliverOrder')}
-                  </button>
+                  <a href="/fulfillment" className="flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl bg-green-600 hover:bg-green-700 text-white font-black text-sm shadow-md active:scale-95 transition-all"> <Truck className="w-4 h-4" /> {t('deliverOrder')} </a>
                 </div>
               )}
 
@@ -689,191 +392,6 @@ export default function BookingList({ role, userId, userName }: BookingListProps
           );
         })}
       </div>
-
-      {/* Delivery Modal */}
-      {deliveryModal && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-gray-900/40 backdrop-blur-sm p-4">
-          <div className="bg-white w-full max-w-md rounded-3xl p-6 shadow-2xl animate-in slide-in-from-bottom-4">
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-black text-gray-900">{t('confirmDelivery')}</h3>
-              <button onClick={() => setDeliveryModal(null)} className="p-2 bg-gray-100 rounded-full text-gray-500 hover:text-gray-700">
-                <XCircle className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="mb-6 space-y-4">
-              <div className="bg-blue-50 text-blue-900 p-4 rounded-2xl border border-blue-100 mb-4">
-                <p className="text-sm font-semibold mb-1">{t('customerName')}: {deliveryModal.customerName}</p>
-                <div className="flex justify-between items-end mt-2">
-                  <div>
-                    <p className="text-[10px] font-bold text-blue-500 uppercase tracking-wider">{t('bookingAdvance')}</p>
-                    <p className="text-xl font-black">₹{deliveryModal.advance_paid.toLocaleString('en-IN')}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-[10px] font-bold text-blue-500 uppercase tracking-wider">{t('totalBookingBalance')}</p>
-                    <p className="text-xl font-black">₹{deliveryModal.balance.toLocaleString('en-IN')}</p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="space-y-3 max-h-[30vh] overflow-y-auto pr-2">
-                {deliveryModal.items.map((item: any) => (
-                  <div key={item.id} className="flex justify-between items-center p-3 bg-gray-50 border border-gray-100 rounded-xl">
-                    <div className="flex-1">
-                      <p className="font-bold text-gray-800 text-sm">{getPlantName(item.plant_id)}</p>
-                      <p className="text-xs font-semibold text-gray-500">{t('totalOrdered')} {item.quantity}</p>
-                    </div>
-                    <div className="w-24">
-                      <input
-                        type="number"
-                        min="0"
-                        max={item.quantity}
-                        value={deliveryQtys[item.id] ?? ''}
-                        onChange={(e) => {
-                          const val = parseInt(e.target.value) || 0;
-                          setDeliveryQtys(prev => ({ ...prev, [item.id]: Math.min(item.quantity, Math.max(0, val)) }));
-                        }}
-                        className="w-full p-2 bg-white border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 font-bold text-center"
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="mt-4">
-                <label className="text-xs font-bold text-gray-500 uppercase">{t('deliveryRemarks')}</label>
-                <textarea
-                  value={deliveryRemarks}
-                  onChange={(e) => setDeliveryRemarks(e.target.value)}
-                  className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-medium text-sm mt-1"
-                  rows={2}
-                  placeholder={t('deliveryRemarksPlaceholder')}
-                />
-              </div>
-
-              <div className="bg-gray-50 p-4 rounded-xl border border-gray-200 mt-4 space-y-2">
-                <div className="flex justify-between text-sm font-bold text-gray-600">
-                  <span>{t('deliveryValue')}</span>
-                  <span>₹{currentDeliveryValue.toLocaleString('en-IN')}</span>
-                </div>
-                <div className="flex justify-between text-sm font-bold text-green-600">
-                  <span>{t('advanceUsed')}</span>
-                  <span>- ₹{advanceToUse.toLocaleString('en-IN')}</span>
-                </div>
-                <div className="flex justify-between text-lg font-black text-gray-900 pt-2 border-t border-gray-200">
-                  <span>{t('collectNow')}</span>
-                  <span>₹{targetCollection.toLocaleString('en-IN')}</span>
-                </div>
-              </div>
-
-              {targetCollection > 0 && (
-                <div className="space-y-4">
-                  <div>
-                    <p className="text-sm font-bold text-gray-700 mb-3">{t('selectPaymentMode')}</p>
-                    <div className="grid grid-cols-3 gap-3">
-                      <button
-                        onClick={() => setPaymentMode('Cash')}
-                        className={`py-3 rounded-2xl font-bold border-2 transition-all ${
-                          paymentMode === 'Cash'
-                            ? 'border-green-500 bg-green-50 text-green-700'
-                            : 'border-gray-200 text-gray-500 hover:bg-gray-50'
-                        }`}
-                      >
-                        {t('cash')}
-                      </button>
-                      <button
-                        onClick={() => setPaymentMode('UPI')}
-                        className={`py-3 rounded-2xl font-bold border-2 transition-all ${
-                          paymentMode === 'UPI'
-                            ? 'border-purple-500 bg-purple-50 text-purple-700'
-                            : 'border-gray-200 text-gray-500 hover:bg-gray-50'
-                        }`}
-                      >
-                        {t('upi')}
-                      </button>
-                      <button
-                        onClick={() => setPaymentMode('Split')}
-                        className={`py-3 rounded-2xl font-bold border-2 transition-all ${
-                          paymentMode === 'Split'
-                            ? 'border-blue-500 bg-blue-50 text-blue-700'
-                            : 'border-gray-200 text-gray-500 hover:bg-gray-50'
-                        }`}
-                      >
-                        {t('split')}
-                      </button>
-                    </div>
-                  </div>
-
-                  {paymentMode === 'Split' && (
-                    <div className="bg-gray-50 p-4 rounded-2xl border border-gray-200 space-y-3">
-                      <div className="flex gap-3">
-                        <div className="flex-1">
-                          <label className="text-xs font-bold text-gray-500 uppercase">{t('cashAmount')}</label>
-                          <input
-                            type="number"
-                            min="0"
-                            value={splitAmounts.cash}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              const numVal = parseFloat(val) || 0;
-                              setSplitAmounts({
-                                cash: val,
-                                upi: Math.max(0, targetCollection - numVal).toString()
-                              });
-                            }}
-                            className="w-full p-3 bg-white border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold mt-1"
-                            placeholder="0"
-                          />
-                        </div>
-                        <div className="flex-1">
-                          <label className="text-xs font-bold text-gray-500 uppercase">{t('upiAmount')}</label>
-                          <input
-                            type="number"
-                            min="0"
-                            value={splitAmounts.upi}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              const numVal = parseFloat(val) || 0;
-                              setSplitAmounts({
-                                upi: val,
-                                cash: Math.max(0, targetCollection - numVal).toString()
-                              });
-                            }}
-                            className="w-full p-3 bg-white border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold mt-1"
-                            placeholder="0"
-                          />
-                        </div>
-                      </div>
-                      <div className="flex justify-between items-center text-sm font-bold pt-2 border-t border-gray-200">
-                        <span className="text-gray-500">{t('totalAmount')}:</span>
-                        <span className={Math.abs(splitTotal - targetCollection) < 0.01 ? 'text-green-600' : 'text-red-500'}>
-                          ₹{splitTotal.toLocaleString('en-IN')} / ₹{targetCollection.toLocaleString('en-IN')}
-                        </span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            <div className="flex gap-3 mt-8">
-              <button
-                onClick={() => setDeliveryModal(null)}
-                className="flex-1 py-4 font-bold text-gray-500 bg-gray-100 rounded-2xl hover:bg-gray-200 transition-colors"
-              >
-                {t('cancel')}
-              </button>
-              <button
-                onClick={confirmDelivery}
-                disabled={!isValidSplit}
-                className="flex-[2] py-4 font-black text-white bg-green-600 rounded-2xl shadow-md active:scale-95 transition-transform disabled:opacity-50 disabled:active:scale-100"
-              >
-                {t('markPaidDelivered')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

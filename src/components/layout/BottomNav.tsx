@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Home, Leaf, Layers, BookOpen, User, ShoppingCart, Package, Users, ClipboardList } from 'lucide-react';
+import { Home, Leaf, Layers, BookOpen, User, ShoppingCart, Package, Users, ClipboardList, Receipt, BookOpenCheck } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 
 export function BottomNav() {
@@ -25,6 +25,8 @@ export function BottomNav() {
     { href: '/sales/new',      label: t('directSales'),     icon: ShoppingCart },
     { href: '/bookings',  label: t('bookings'), icon: BookOpen },
     { href: '/customers', label: t('customers'), icon: ClipboardList },
+    { href: '/expenses',  label: 'Expenses',  icon: Receipt },
+    { href: '/transactions', label: 'Cashbook', icon: BookOpenCheck },
     { href: '/lots',      label: t('lots'),     icon: Layers },
     { href: '/attendance', label: t('attendance'), icon: Users },
     { href: '/profile',   label: t('profile'),  icon: User },

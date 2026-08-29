@@ -54,6 +54,21 @@ export default function CustomerDetailPage({ params }: Props) {
     }
   });
 
+  // Fetch centralized booking financial status from the view
+  const { data: vwBookingStatus } = useQuery({
+    queryKey: ['vw_booking_status', customer?.mobile],
+    enabled: !!bookings && bookings.length > 0,
+    queryFn: async () => {
+      const bookingIds = bookings!.map(b => b.id);
+      const { data, error } = await supabase
+        .from('vw_booking_status')
+        .select('booking_id, booking_status, advance_paid, final_paid, total_paid, outstanding_balance')
+        .in('booking_id', bookingIds);
+      if (error) throw error;
+      return data || [];
+    }
+  });
+
   const { data: sales } = useQuery({
     queryKey: ['direct_sales', customer?.mobile],
     enabled: !!customer?.mobile,
@@ -64,7 +79,7 @@ export default function CustomerDetailPage({ params }: Props) {
     }
   });
 
-  if (loadingCustomer || !customer || !plants || !bookings || !sales) {
+  if (loadingCustomer || !customer || !plants || !bookings || (bookings.length > 0 && !vwBookingStatus) || !sales) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin" />
@@ -181,10 +196,16 @@ export default function CustomerDetailPage({ params }: Props) {
                         {booking.status}
                       </span>
                     </div>
-                    <div className="flex justify-between text-xs pt-2 border-t border-gray-50 font-semibold text-gray-500">
-                      <span>Total: ₹{booking.total_amount}</span>
-                      <span className="text-green-600 font-bold">Advance paid: ₹{booking.advance_paid}</span>
-                    </div>
+                    {(() => {
+                      const statusRow = vwBookingStatus?.find((v: any) => v.booking_id === booking.id);
+                      const advancePaid = statusRow ? Number(statusRow.advance_paid) : booking.advance_paid;
+                      return (
+                        <div className="flex justify-between text-xs pt-2 border-t border-gray-50 font-semibold text-gray-500">
+                          <span>Total: ₹{booking.total_amount}</span>
+                          <span className="text-green-600 font-bold">Advance paid: ₹{advancePaid}</span>
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })}
@@ -231,12 +252,18 @@ export default function CustomerDetailPage({ params }: Props) {
                       <p className="font-black text-gray-950">{booking.booking_number}</p>
                       <p className="text-xs font-bold text-gray-400 mt-1">{plant?.plant_name} (Cancelled)</p>
                     </div>
-                    <div className="text-right">
-                      <strong className="text-orange-700 block font-black text-base">₹{booking.advance_paid}</strong>
-                      <span className="text-[10px] text-orange-600 font-bold flex items-center gap-1 justify-end mt-0.5">
-                        <AlertCircle className="w-3 h-3" /> Deposit Forfeited
-                      </span>
-                    </div>
+                    {(() => {
+                      const statusRow = vwBookingStatus?.find((v: any) => v.booking_id === booking.id);
+                      const advancePaid = statusRow ? Number(statusRow.advance_paid) : booking.advance_paid;
+                      return (
+                        <div className="text-right">
+                          <strong className="text-orange-700 block font-black text-base">₹{advancePaid}</strong>
+                          <span className="text-[10px] text-orange-600 font-bold flex items-center gap-1 justify-end mt-0.5">
+                            <AlertCircle className="w-3 h-3" /> Deposit Forfeited
+                          </span>
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })}

@@ -1,10 +1,10 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { generateId, resolvePlantPrice, toLocalDateStr } from '@/lib/utils';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabaseClient';
-import { PlusCircle, Trash2, QrCode, X } from 'lucide-react';
+import { PlusCircle, Trash2, QrCode, X, WifiOff } from 'lucide-react';
 import Link from 'next/link';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 
@@ -23,8 +23,16 @@ export default function NewBookingPage() {
   const { t } = useLanguage();
   const [bookingNumber, setBookingNumber] = useState('BK-...');
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const [isOnline, setIsOnline] = useState(true);
+  const isSubmittingRef = useRef(false);
   
   useEffect(() => {
+    setIsOnline(navigator.onLine);
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
     const d = new Date();
     const yy = d.getFullYear().toString().slice(-2);
     const mm = String(d.getMonth() + 1).padStart(2, '0');
@@ -36,6 +44,11 @@ export default function NewBookingPage() {
     setBookingNumber(`BK-${yy}${mm}${dd}-${hh}${min}${ss}-${random}`);
     const userStr = localStorage.getItem('snms_user');
     if (userStr) setCurrentUser(JSON.parse(userStr));
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
   }, []);
   
   const [customerName, setCustomerName] = useState('');
@@ -230,110 +243,128 @@ export default function NewBookingPage() {
 
   const handleSaveBooking = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!navigator.onLine) { alert('You must be online to save.'); return; }
+    if (!navigator.onLine) {
+      alert('You are currently offline. Please connect to the internet to save bookings.');
+      return;
+    }
+    if (isSubmittingRef.current || loading) return;
     if (cart.length === 0) return alert(t('addAtLeastOneBookingError'));
     if ((parseFloat(advancePaid) || 0) > totalAmount) {
       alert(t('advanceExceedTotalError'));
       return;
     }
     
+    isSubmittingRef.current = true;
     setLoading(true);
 
-    const user = currentUser || { id: 'unknown' };
-    const advance = parseFloat(advancePaid) || 0;
-    const createdAt = new Date().toISOString();
+    try {
+      const user = currentUser || { id: 'unknown' };
+      const advance = parseFloat(advancePaid) || 0;
+      const createdAt = new Date().toISOString();
 
-    const finalCash = paymentMode === 'Cash' ? advance : paymentMode === 'UPI' ? 0 : parseFloat(splitAmounts.cash) || 0;
-    const finalUpi  = paymentMode === 'UPI'  ? advance : paymentMode === 'Cash' ? 0 : parseFloat(splitAmounts.upi) || 0;
+      const finalCash = paymentMode === 'Cash' ? advance : paymentMode === 'UPI' ? 0 : parseFloat(splitAmounts.cash) || 0;
+      const finalUpi  = paymentMode === 'UPI'  ? advance : paymentMode === 'Cash' ? 0 : parseFloat(splitAmounts.upi) || 0;
 
-    let advanceRemaining = advance;
-    let cashRemaining = finalCash;
-    let upiRemaining = finalUpi;
+      let advanceRemaining = advance;
+      let cashRemaining = finalCash;
+      let upiRemaining = finalUpi;
 
-    const newBookings = cart.map((item, index) => {
-      let itemAdvance = 0;
-      let itemCash = 0;
-      let itemUpi = 0;
+      const newBookings = cart.map((item, index) => {
+        let itemAdvance = 0;
+        let itemCash = 0;
+        let itemUpi = 0;
 
-      if (advanceRemaining > 0) {
-        if (advanceRemaining >= item.amount) {
-          itemAdvance = item.amount;
-          advanceRemaining -= item.amount;
-        } else {
-          itemAdvance = advanceRemaining;
-          advanceRemaining = 0;
+        if (advanceRemaining > 0) {
+          if (advanceRemaining >= item.amount) {
+            itemAdvance = item.amount;
+            advanceRemaining -= item.amount;
+          } else {
+            itemAdvance = advanceRemaining;
+            advanceRemaining = 0;
+          }
+
+          if (paymentMode === 'Cash') {
+            itemCash = itemAdvance;
+          } else if (paymentMode === 'UPI') {
+            itemUpi = itemAdvance;
+          } else {
+            if (cashRemaining >= itemAdvance) {
+              itemCash = itemAdvance;
+              cashRemaining -= itemAdvance;
+            } else {
+              itemCash = cashRemaining;
+              itemUpi = itemAdvance - cashRemaining;
+              cashRemaining = 0;
+              upiRemaining -= itemUpi;
+            }
+          }
         }
 
-        if (cashRemaining >= itemAdvance) {
-          itemCash = itemAdvance;
-          cashRemaining -= itemAdvance;
-        } else {
-          itemCash = cashRemaining;
-          cashRemaining = 0;
-          itemUpi = Math.min(itemAdvance - itemCash, upiRemaining);
-          upiRemaining -= itemUpi;
-        }
-      }
-      
-      if (index === cart.length - 1 && advanceRemaining > 0) {
-        itemAdvance += advanceRemaining;
-        itemCash += cashRemaining;
-        itemUpi += upiRemaining;
-      }
+        return {
+          id: generateId(),
+          booking_number: bookingNumber,
+          customer_name: customerName,
+          customer_phone: customerPhone,
+          city: city,
+          plant_id: item.plantId,
+          lot_id: item.lotId || null,
+          quantity: item.quantity,
+          advance_paid: itemAdvance,
+          advance_payment_mode: paymentMode,
+          advance_cash_amount: itemCash,
+          advance_upi_amount: itemUpi,
+          total_amount: item.amount,
+          booking_date: createdAt,
+          delivery_date: deliveryDate,
+          status: item.lotId ? 'Allocated' : 'Pending',
+          remarks: 'Created from Cart',
+          worker_id: user.id,
+          assigned_to: assignedTo || null,
+          created_at: createdAt
+        };
+      });
 
-      return {
-        id: generateId(),
-        booking_number: `${Math.floor(Date.now() / 1000).toString(36).toUpperCase()}-${index + 1}`,
-        customer_name: customerName,
-        customer_phone: customerPhone,
-        city: city,
-        plant_id: item.plantId,
-        lot_id: item.lotId || null,
-        quantity: item.quantity,
-        advance_paid: itemAdvance,
-        advance_payment_mode: paymentMode,
-        advance_cash_amount: itemCash,
-        advance_upi_amount: itemUpi,
-        total_amount: item.amount,
-        booking_date: createdAt,
-        delivery_date: deliveryDate,
-        status: item.lotId ? 'Allocated' : 'Pending',
-        remarks: 'Created from Cart',
-        worker_id: user.id,
-        assigned_to: assignedTo || null,
-        created_at: createdAt
+      const auditPayload = {
+        user_id: user.id || '00000000-0000-0000-0000-000000000000',
+        user_name: user.name || 'Owner',
+        action: 'CREATE_BOOKINGS',
+        details: { items_count: newBookings.length, advance }
       };
-    });
 
-    const auditPayload = {
-      user_id: user.id || '00000000-0000-0000-0000-000000000000',
-      user_name: user.name || 'Owner',
-      action: 'CREATE_BOOKINGS',
-      details: { items_count: newBookings.length, advance }
-    };
+      const customerPayload = {
+        name: customerName,
+        mobile: customerPhone,
+        city: city
+      };
 
-    const customerPayload = {
-      name: customerName,
-      mobile: customerPhone,
-      city: city
-    };
+      const { error } = await supabase.rpc('process_bookings_batch', {
+        p_bookings: newBookings,
+        p_customer: customerPayload,
+        p_audit: auditPayload
+      });
 
-    const { error } = await supabase.rpc('process_bookings_batch', {
-      p_bookings: newBookings,
-      p_customer: customerPayload,
-      p_audit: auditPayload
-    });
+      if (error) {
+        console.error(error);
+        alert('Failed to save bookings: ' + (error.message || ''));
+        return;
+      }
 
-    if (error) {
-      console.error(error);
-      alert('Failed to save bookings');
+      queryClient.invalidateQueries({ queryKey: ['bookings'] });
+      queryClient.invalidateQueries({ queryKey: ['bookings-data'] });
+      queryClient.invalidateQueries({ queryKey: ['customers'] });
+      queryClient.invalidateQueries({ queryKey: ['allotments'] });
+      queryClient.invalidateQueries({ queryKey: ['vw_booking_status'] });
+      queryClient.invalidateQueries({ queryKey: ['vw_daily_cashbook'] });
+      queryClient.invalidateQueries({ queryKey: ['vw_profit_summary'] });
+
+      router.push('/bookings');
+    } catch (err: any) {
+      console.error(err);
+      alert('Unexpected error saving booking: ' + (err.message || ''));
+    } finally {
+      isSubmittingRef.current = false;
       setLoading(false);
-      return;
     }
-
-    queryClient.invalidateQueries({ queryKey: ['bookings-data'] });
-    queryClient.invalidateQueries({ queryKey: ['customers'] });
-    router.push('/bookings');
   };
 
   return (
@@ -569,8 +600,21 @@ export default function NewBookingPage() {
           </div>
         )}
 
-        <button type="submit" disabled={loading || cart.length === 0 || !splitValid} className="w-full bg-gray-900 text-white font-black text-xl p-5 rounded-2xl active:scale-95 transition-transform disabled:opacity-50 shadow-xl">
-          {loading ? t('processing') : t('confirmEntireBooking')}
+        {!isOnline && (
+          <div className="flex items-center gap-2 p-3 bg-amber-50 text-amber-800 border border-amber-200 rounded-xl text-sm font-bold">
+            <WifiOff className="w-5 h-5 shrink-0 text-amber-600" />
+            <span>You are offline. Connect to internet to save booking.</span>
+          </div>
+        )}
+
+        <button
+          type="submit"
+          disabled={!isOnline || loading || cart.length === 0 || !splitValid}
+          className={`w-full font-black text-xl p-5 rounded-2xl active:scale-95 transition-transform disabled:opacity-50 shadow-xl text-white ${
+            !isOnline ? 'bg-gray-400 cursor-not-allowed' : 'bg-gray-900 hover:bg-black'
+          }`}
+        >
+          {!isOnline ? 'Offline - Cannot Save' : loading ? t('processing') : t('confirmEntireBooking')}
         </button>
       </form>
 

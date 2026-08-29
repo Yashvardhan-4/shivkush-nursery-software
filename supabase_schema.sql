@@ -1484,3 +1484,177 @@ GRANT EXECUTE ON FUNCTION public.rpc_add_expense(text, decimal, text, text) TO s
 REVOKE EXECUTE ON FUNCTION public.rpc_collect_final_payment(uuid, decimal, decimal) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.rpc_collect_final_payment(uuid, decimal, decimal) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.rpc_collect_final_payment(uuid, decimal, decimal) TO service_role;
+
+-- UPDATE: process_bookings_batch (Sprint 3B)
+-- 004_update_process_bookings.sql
+-- Sprint 3B: Update process_bookings_batch to insert ADVANCE payment into booking_payments automatically.
+
+CREATE OR REPLACE FUNCTION public.process_bookings_batch(p_bookings jsonb, p_customer jsonb, p_audit jsonb)
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+AS $function$
+DECLARE
+    v_customer_id UUID;
+    v_booking JSONB;
+BEGIN
+    IF p_customer IS NOT NULL AND p_customer->>'mobile' IS NOT NULL AND p_customer->>'mobile' != '' THEN
+        INSERT INTO customers (id, name, mobile, city, created_at) 
+        VALUES (COALESCE((p_customer->>'id')::uuid, gen_random_uuid()), p_customer->>'name', p_customer->>'mobile', p_customer->>'city', now()) 
+        ON CONFLICT (mobile) DO UPDATE SET name = EXCLUDED.name, city = EXCLUDED.city 
+        RETURNING id INTO v_customer_id;
+    END IF;
+
+    FOR v_booking IN SELECT * FROM jsonb_array_elements(p_bookings) LOOP
+        INSERT INTO bookings (id, booking_number, customer_name, customer_phone, city, plant_id, lot_id, quantity, advance_paid, advance_payment_mode, advance_cash_amount, advance_upi_amount, total_amount, booking_date, delivery_date, status, remarks, payment_mode, cash_amount, upi_amount, worker_id, assigned_to, created_at)
+        VALUES ((v_booking->>'id')::uuid, v_booking->>'booking_number', v_booking->>'customer_name', v_booking->>'customer_phone', v_booking->>'city', (v_booking->>'plant_id')::uuid, NULLIF(v_booking->>'lot_id', '')::uuid, (v_booking->>'quantity')::int, (v_booking->>'advance_paid')::numeric, v_booking->>'advance_payment_mode', (v_booking->>'advance_cash_amount')::numeric, (v_booking->>'advance_upi_amount')::numeric, (v_booking->>'total_amount')::numeric, (v_booking->>'booking_date')::date, (v_booking->>'delivery_date')::date, v_booking->>'status', v_booking->>'remarks', v_booking->>'payment_mode', (v_booking->>'cash_amount')::numeric, (v_booking->>'upi_amount')::numeric, (v_booking->>'worker_id')::uuid, (v_booking->>'assigned_to')::uuid, now());
+
+        -- Legacy Insert into transactions if advance is paid
+        IF (v_booking->>'advance_paid')::numeric > 0 THEN
+            INSERT INTO transactions (reference_type, reference_id, booking_number, customer_name, plant_names, amount, payment_mode, cash_amount, upi_amount, worker_id, created_at)
+            VALUES (
+                'BOOKING_ADVANCE', 
+                (v_booking->>'id')::uuid, 
+                v_booking->>'booking_number', 
+                v_booking->>'customer_name', 
+                (SELECT plant_name FROM plants WHERE id = (v_booking->>'plant_id')::uuid), 
+                (v_booking->>'advance_paid')::numeric, 
+                v_booking->>'advance_payment_mode', 
+                (v_booking->>'advance_cash_amount')::numeric, 
+                (v_booking->>'advance_upi_amount')::numeric, 
+                (v_booking->>'worker_id')::uuid, 
+                now()
+            );
+            
+            -- NEW Sprint 3B immutable booking_payments event
+            INSERT INTO booking_payments (
+                booking_id,
+                payment_type,
+                cash_amount,
+                upi_amount,
+                payment_date,
+                created_by
+            ) VALUES (
+                (v_booking->>'id')::uuid,
+                'ADVANCE',
+                (v_booking->>'advance_cash_amount')::numeric,
+                (v_booking->>'advance_upi_amount')::numeric,
+                now(),
+                (v_booking->>'worker_id')::uuid
+            );
+        END IF;
+
+        INSERT INTO audit_logs (id, user_id, user_name, action, table_name, record_id, details, created_at)
+        VALUES (gen_random_uuid(), (p_audit->>'user_id')::uuid, p_audit->>'user_name', p_audit->>'action', 'bookings', v_booking->>'id', p_audit->'details', now());
+    END LOOP;
+END;
+$function$;
+
+
+-- 7. ATOMIC BOOKING CANCELLATION RPC (BKG-004)
+CREATE OR REPLACE FUNCTION public.rpc_cancel_booking(
+    p_booking_number text,
+    p_user_id uuid DEFAULT NULL
+) RETURNS json
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_booking record;
+    v_booking_count int;
+    v_caller_uid uuid;
+    v_caller_name text := 'Staff';
+BEGIN
+    -- Authorization & Identity Hardening:
+    -- 1. If called via authenticated user JWT, always enforce auth.uid() to prevent user impersonation.
+    -- 2. If called via service_role/internal context where auth.uid() is null, use verified p_user_id if valid.
+    IF auth.uid() IS NOT NULL THEN
+        v_caller_uid := auth.uid();
+    ELSIF p_user_id IS NOT NULL AND EXISTS (SELECT 1 FROM public.users WHERE id = p_user_id) THEN
+        v_caller_uid := p_user_id;
+    ELSE
+        -- Fallback to default owner UUID
+        v_caller_uid := '00000000-0000-0000-0000-000000000000'::uuid;
+    END IF;
+    
+    SELECT name INTO v_caller_name FROM public.users WHERE id = v_caller_uid;
+    IF v_caller_name IS NULL THEN
+        v_caller_name := 'Staff';
+    END IF;
+
+    -- 1. Check if booking exists and count rows
+    SELECT COUNT(*) INTO v_booking_count 
+    FROM public.bookings 
+    WHERE booking_number = p_booking_number AND deleted_at IS NULL;
+
+    IF v_booking_count = 0 THEN
+        RETURN json_build_object('success', false, 'error', 'Booking not found');
+    END IF;
+
+    -- 2. Verify booking is cancellable (cannot cancel already Delivered or Cancelled booking)
+    IF EXISTS (
+        SELECT 1 FROM public.bookings 
+        WHERE booking_number = p_booking_number AND status = 'Delivered' AND deleted_at IS NULL
+    ) THEN
+        RETURN json_build_object('success', false, 'error', 'Cannot cancel a booking that has already been delivered');
+    END IF;
+
+    IF EXISTS (
+        SELECT 1 FROM public.bookings 
+        WHERE booking_number = p_booking_number AND status = 'Cancelled' AND deleted_at IS NULL
+    ) THEN
+        RETURN json_build_object('success', false, 'error', 'Booking is already cancelled');
+    END IF;
+
+    -- 3. Release/deactivate all active allotments belonging to this booking
+    UPDATE public.allotments a
+    SET deleted_at = NOW()
+    FROM public.bookings b
+    WHERE a.booking_id = b.id
+      AND b.booking_number = p_booking_number
+      AND a.deleted_at IS NULL;
+
+    -- 4. Mark booking rows as Cancelled (strictly retain advance, NO refund created per BKG-004)
+    UPDATE public.bookings
+    SET status = 'Cancelled',
+        refund_amount = 0,
+        refund_payment_mode = NULL,
+        refund_status = 'Forfeited',
+        updated_at = NOW()
+    WHERE booking_number = p_booking_number AND deleted_at IS NULL;
+
+    -- 5. Write audit log entry
+    INSERT INTO public.audit_logs (
+        id, user_id, user_name, action, table_name, record_id, details, created_at
+    ) VALUES (
+        uuid_generate_v4(),
+        v_caller_uid,
+        v_caller_name,
+        'CANCEL_BOOKING',
+        'bookings',
+        p_booking_number,
+        json_build_object(
+            'note', 'Booking cancelled (advance retained by nursery per policy BKG-004)',
+            'items_count', v_booking_count
+        ),
+        NOW()
+    );
+
+    RETURN json_build_object(
+        'success', true, 
+        'booking_number', p_booking_number, 
+        'items_cancelled', v_booking_count
+    );
+EXCEPTION WHEN OTHERS THEN
+    RETURN json_build_object('success', false, 'error', SQLERRM);
+END;
+$$;
+
+-- Security: Restrict execution strictly to authenticated and service_role. Revoke anon.
+REVOKE EXECUTE ON FUNCTION public.rpc_cancel_booking(text, uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.rpc_cancel_booking(text, uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.rpc_cancel_booking(text, uuid) TO service_role;
+
+
+

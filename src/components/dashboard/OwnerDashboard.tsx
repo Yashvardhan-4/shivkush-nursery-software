@@ -1,9 +1,8 @@
 'use client';
 
-import { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabaseClient';
-import { toLocalDateStr } from '@/lib/utils';
+import { todayIST } from '@/lib/utils';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import {
   Banknote,
@@ -16,6 +15,7 @@ import {
   Layers,
   ShoppingCart,
   TrendingUp,
+  TrendingDown,
   PieChart,
   Users
 } from 'lucide-react';
@@ -25,13 +25,8 @@ import Link from 'next/link';
 function fmt(n: number) {
   return '₹' + n.toLocaleString('en-IN');
 }
-function today() {
-  return toLocalDateStr();
-}
-
 export default function OwnerDashboard() {
   const { t } = useLanguage();
-  const todayStr = today();
 
   const { data: allSales } = useQuery({
     queryKey: ['direct_sales'],
@@ -46,6 +41,20 @@ export default function OwnerDashboard() {
     queryKey: ['bookings'],
     queryFn: async () => {
       const { data, error } = await supabase.from('bookings').select('*').is('deleted_at', null);
+      if (error) throw error;
+      return data;
+    }
+  });
+
+  const todayDate = todayIST();
+  const { data: profitSummary } = useQuery({
+    queryKey: ['vw_profit_summary', todayDate],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('vw_profit_summary')
+        .select('date, revenue, expenses, profit')
+        .eq('date', todayDate)
+        .maybeSingle();
       if (error) throw error;
       return data;
     }
@@ -77,59 +86,7 @@ export default function OwnerDashboard() {
     }
   });
 
-  const [ownerId, setOwnerId] = useState<string | null>(null);
 
-  useEffect(() => {
-    const userStr = localStorage.getItem('snms_user');
-    if (userStr) {
-       const user = JSON.parse(userStr);
-       setOwnerId(user.id);
-    }
-  }, []);
-
-  // Today's total income = direct sales + balance collected at delivery + advances collected today - refunds issued today
-  const todaySalesTotal = (allSales && allBookings)
-    ? (allSales
-        .filter((s) => s.created_at && toLocalDateStr(s.created_at) === todayStr)
-        .reduce((sum, s) => sum + Number(s.amount || 0), 0)
-      + allBookings
-        .filter((b) => b.delivery_date === todayStr && b.status === 'Delivered')
-        .reduce((sum, b) => sum + Math.max(0, Number(b.total_amount || 0) - Number(b.advance_paid || 0)), 0)
-      + allBookings
-        .filter((b) => b.created_at && toLocalDateStr(b.created_at) === todayStr)
-        .reduce((sum, b) => sum + Number(b.advance_paid || 0), 0))
-      - allBookings
-        .filter((b) => b.status === 'Cancelled' && b.refund_status === 'Refunded' && b.refund_date === todayStr)
-        .reduce((sum, b) => sum + Number(b.refund_amount || 0), 0)
-    : null;
-
-  // Owner's sales = income from transactions by the owner user - refunds issued today
-  const ownerSalesTotal = (allSales && allBookings && ownerId)
-    ? (allSales
-        .filter((s) => s.created_at && toLocalDateStr(s.created_at) === todayStr && s.worker_id === ownerId)
-        .reduce((sum, s) => sum + Number(s.amount || 0), 0)
-      + allBookings
-        .filter((b) => b.delivery_date === todayStr && b.status === 'Delivered' && b.worker_id === ownerId)
-        .reduce((sum, b) => sum + Math.max(0, Number(b.total_amount || 0) - Number(b.advance_paid || 0)), 0)
-      + allBookings
-        .filter((b) => b.created_at && toLocalDateStr(b.created_at) === todayStr && b.worker_id === ownerId)
-        .reduce((sum, b) => sum + Number(b.advance_paid || 0), 0))
-      - allBookings
-        .filter((b) => b.status === 'Cancelled' && b.refund_status === 'Refunded' && b.refund_date === todayStr)
-        .reduce((sum, b) => sum + Number(b.refund_amount || 0), 0)
-    : null;
-
-  const pendingBookingsCount = allBookings
-    ? new Set(
-        allBookings
-          .filter((b) => b.status === 'Pending')
-          .map((b) => b.booking_number)
-      ).size
-    : null;
-
-  const readyLotsCount = allLots
-    ? allLots.filter((l) => l.status === 'Ready').length
-    : null;
 
   const productionAlertsCount = (allPlants && allBookings && allLots && inventory)
     ? allPlants.filter((plant) => {
@@ -158,10 +115,14 @@ export default function OwnerDashboard() {
       })
     : [];
 
+  const todayRevenue = profitSummary?.revenue ?? 0;
+  const todayExpenses = profitSummary?.expenses ?? 0;
+  const todayProfit = profitSummary?.profit ?? 0;
+
   const stats = [
-    { label: "Today's Total Income", value: todaySalesTotal !== null ? fmt(todaySalesTotal) : '…', icon: Banknote, color: 'text-green-700 bg-green-100' },
-    { label: "My Sales (Owner)", value: ownerSalesTotal !== null ? fmt(ownerSalesTotal) : (ownerId ? '…' : 'N/A'), icon: Banknote, color: 'text-emerald-700 bg-emerald-100' },
-    { label: t('pending'), value: pendingBookingsCount !== null ? String(pendingBookingsCount) : '…', icon: BookOpen, color: 'text-blue-700 bg-blue-100' },
+    { label: "Today's Revenue", value: fmt(todayRevenue), icon: Banknote, color: 'text-green-700 bg-green-100' },
+    { label: "Today's Expenses", value: fmt(todayExpenses), icon: TrendingDown, color: 'text-red-700 bg-red-100' },
+    { label: "Today's Profit", value: fmt(todayProfit), icon: TrendingUp, color: todayProfit >= 0 ? 'text-emerald-700 bg-emerald-100' : 'text-red-700 bg-red-100' },
   ];
 
   const blocks = [

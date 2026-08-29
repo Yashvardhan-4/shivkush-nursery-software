@@ -383,6 +383,7 @@ function BookingCard({
   allotments,
   plants,
   directSales,
+  vwBookingStatus,
 }: {
   group: GroupedBooking;
   bookings: Booking[];
@@ -390,12 +391,17 @@ function BookingCard({
   allotments: Allotment[];
   plants: Plant[];
   directSales: DirectSale[];
+  vwBookingStatus: any[] | undefined;
 }) {
   const { t } = useLanguage();
   const [autoLoading, setAutoLoading] = useState(false);
   const [autoError, setAutoError] = useState('');
 
-  const balanceDue = group.total_amount - group.total_advance;
+  const totalOutstanding = group.items.reduce((sum: number, item: any) => {
+    const statusRow = vwBookingStatus?.find((v: any) => v.booking_id === item.id);
+    return sum + (statusRow ? Number(statusRow.outstanding_balance) : (item.total_amount - item.advance_paid));
+  }, 0);
+  const balanceDue = totalOutstanding;
   const hasPending = group.items.some((i) => i.status === 'Pending');
 
   // Card accent based on status
@@ -505,6 +511,18 @@ export default function AllotmentManager() {
   });
   const { bookings, lots, plants, allotments, directSales, inventory } = queriesData || {};
 
+  // Fetch centralized booking financial status from vw_booking_status
+  const { data: vwBookingStatus } = useQuery({
+    queryKey: ['vw-booking-status'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('vw_booking_status')
+        .select('booking_id, booking_status, advance_paid, final_paid, total_paid, outstanding_balance');
+      if (error) throw error;
+      return data || [];
+    },
+  });
+
   if (!bookings || !lots || !plants || !allotments || !directSales) {
     return (
       <div className="flex flex-col items-center justify-center py-24 text-gray-600">
@@ -533,7 +551,8 @@ export default function AllotmentManager() {
       }
       acc[curr.booking_number].items.push(curr);
       acc[curr.booking_number].total_amount += curr.total_amount;
-      acc[curr.booking_number].total_advance += curr.advance_paid;
+      const statusRow = vwBookingStatus?.find((v: any) => v.booking_id === curr.id);
+      acc[curr.booking_number].total_advance += statusRow ? Number(statusRow.advance_paid) : curr.advance_paid;
       return acc;
     }, {} as Record<string, GroupedBooking>);
 
@@ -615,6 +634,7 @@ export default function AllotmentManager() {
               plants={plants}
               directSales={directSales}
               inventory={inventory}
+              vwBookingStatus={vwBookingStatus}
             />
           ))}
         </div>

@@ -35,10 +35,7 @@ export default function WorkerDashboard() {
         .reduce((sum, b) => sum + Math.max(0, Number(b.total_amount || 0) - Number(b.advance_paid || 0)), 0)
       + allBookings
         .filter((b) => ((b.created_at && toLocalDateStr(b.created_at) === todayStr) || (!b.created_at && b.booking_date === todayStr)) && b.worker_id === workerId)
-        .reduce((sum, b) => sum + Number(b.advance_paid || 0), 0)
-      - allBookings
-        .filter((b) => b.status === 'Cancelled' && b.refund_status === 'Refunded' && b.refund_date === todayStr && b.worker_id === workerId)
-        .reduce((sum, b) => sum + Number(b.refund_amount || 0), 0);
+        .reduce((sum, b) => sum + Number(b.advance_paid || 0), 0);
   })();
 
   const freeStockData = (() => {

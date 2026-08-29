@@ -104,13 +104,9 @@ export default function EditLotPage({ params }: Props) {
     if (!navigator.onLine) { alert('You must be online to save.'); return; }
     setLoading(true);
     try {
-      const user = JSON.parse(localStorage.getItem('snms_user') || '{}');
+      const user = JSON.parse(localStorage.getItem('snms-user') || localStorage.getItem('snms_user') || '{}');
       
-      const targetUpdates = {
-        notes: `${targetLot.notes || ''}\n[Merge] Received ${freeQty} saplings from lot ${lotNumber}`.trim()
-      };
-      await supabase.from('lots').update(targetUpdates).eq('id', targetLot.id);
-
+      // 1. Adjust Target Lot Quantity
       const { error: targetRpcError } = await supabase.rpc('rpc_adjust_lot_quantity', {
         p_lot_id: targetLot.id,
         p_new_quantity: targetLot.total_quantity + freeQty,
@@ -121,12 +117,13 @@ export default function EditLotPage({ params }: Props) {
       });
       if (targetRpcError) throw new Error('Failed to update target lot quantity: ' + targetRpcError.message);
 
-      const sourceUpdates = {
-        status: usedQty === 0 ? 'Completed' : status,
-        notes: `${notes || ''}\n[Merge] Transferred ${freeQty} free saplings to lot ${targetLot.lot_name || targetLot.lot_number}`.trim()
+      // Target Lot Metadata
+      const targetUpdates = {
+        notes: `${targetLot.notes || ''}\n[Merge] Received ${freeQty} saplings from lot ${lotNumber}`.trim()
       };
-      await supabase.from('lots').update(sourceUpdates).eq('id', id);
+      await supabase.from('lots').update(targetUpdates).eq('id', targetLot.id);
 
+      // 2. Adjust Source Lot Quantity
       const { error: sourceRpcError } = await supabase.rpc('rpc_adjust_lot_quantity', {
         p_lot_id: id,
         p_new_quantity: lot!.total_quantity - freeQty,
@@ -136,6 +133,13 @@ export default function EditLotPage({ params }: Props) {
         p_expected_updated_at: lot!.updated_at || null
       });
       if (sourceRpcError) throw new Error('Failed to update source lot quantity: ' + sourceRpcError.message);
+
+      // Source Lot Metadata
+      const sourceUpdates = {
+        status: usedQty === 0 ? 'Completed' : status,
+        notes: `${notes || ''}\n[Merge] Transferred ${freeQty} free saplings to lot ${targetLot.lot_name || targetLot.lot_number}`.trim()
+      };
+      await supabase.from('lots').update(sourceUpdates).eq('id', id);
 
       await supabase.from('audit_logs').insert({
         id: crypto.randomUUID(),
@@ -180,16 +184,6 @@ export default function EditLotPage({ params }: Props) {
         ? `${notes || ''}\n[Adjustment] Stock changed from ${lot.total_quantity} to ${newQty} because: ${adjustmentReason}`.trim()
         : notes;
 
-      const updates = {
-        lot_number: lotNumber,
-        lot_name: lotName || null,
-        ready_date: readyDate,
-        status,
-        notes: finalNotes,
-      };
-      
-      await supabase.from('lots').update(updates).eq('id', id);
-
       if (isStockAdjusted) {
         const { error: rpcError, data } = await supabase.rpc('rpc_adjust_lot_quantity', {
           p_lot_id: id,
@@ -204,6 +198,16 @@ export default function EditLotPage({ params }: Props) {
           throw new Error('Failed to update quantity: ' + rpcError.message);
         }
       }
+
+      const updates = {
+        lot_number: lotNumber,
+        lot_name: lotName || null,
+        ready_date: readyDate,
+        status,
+        notes: finalNotes,
+      };
+      
+      await supabase.from('lots').update(updates).eq('id', id);
       
       await supabase.from('audit_logs').insert({
         id: crypto.randomUUID(),

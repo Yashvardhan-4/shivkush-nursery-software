@@ -1,7 +1,7 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { ShoppingCart, User, Plus, Trash2, X, QrCode } from 'lucide-react';
+import { ShoppingCart, User, Plus, Trash2, X, QrCode, WifiOff } from 'lucide-react';
 import { generateId, logAudit, resolvePlantPrice } from '@/lib/utils';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabaseClient';
@@ -23,8 +23,16 @@ export default function NewDirectSalePage() {
   const { t } = useLanguage();
   const [saleNumber, setSaleNumber] = useState('SL-...');
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const [isOnline, setIsOnline] = useState(true);
+  const isSubmittingRef = useRef(false);
   
   useEffect(() => {
+    setIsOnline(navigator.onLine);
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
     const d = new Date();
     const yy = d.getFullYear().toString().slice(-2);
     const mm = String(d.getMonth() + 1).padStart(2, '0');
@@ -36,6 +44,11 @@ export default function NewDirectSalePage() {
     setSaleNumber(`SL-${yy}${mm}${dd}-${hh}${min}${ss}-${random}`);
     const userStr = localStorage.getItem('snms_user');
     if (userStr) setCurrentUser(JSON.parse(userStr));
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
   }, []);
   
   const [customerName, setCustomerName] = useState('');
@@ -192,13 +205,20 @@ export default function NewDirectSalePage() {
 
   const handleSaveSale = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!navigator.onLine) { alert('You must be online to save.'); return; }
+    if (!navigator.onLine) {
+      alert('You are currently offline. Please connect to the internet to complete the sale.');
+      return;
+    }
+    if (isSubmittingRef.current || loading) return;
     if (cart.length === 0) return alert(t('addAtLeastOnePlantError'));
     if (!splitValid) return alert(t('splitAmountsMismatchError').replace('{totalAmount}', String(totalAmount)));
+
+    isSubmittingRef.current = true;
     setLoading(true);
 
-    const user = currentUser || { id: 'unknown', name: 'Unknown' };
-    const createdAt = new Date().toISOString();
+    try {
+      const user = currentUser || { id: 'unknown', name: 'Unknown' };
+      const createdAt = new Date().toISOString();
 
     // Determine actual cash/upi amounts saved
     const finalCash = paymentMode === 'Cash' ? totalAmount : paymentMode === 'UPI' ? 0 : cashNum;
@@ -268,17 +288,25 @@ export default function NewDirectSalePage() {
 
     if (error) {
       console.error(error);
-      alert('Failed to save direct sale');
-      setLoading(false);
+      alert('Failed to save direct sale: ' + (error.message || ''));
       return;
     }
 
     queryClient.invalidateQueries({ queryKey: ['customers'] });
     queryClient.invalidateQueries({ queryKey: ['direct_sales'] });
     queryClient.invalidateQueries({ queryKey: ['lots'] });
+    queryClient.invalidateQueries({ queryKey: ['vw_daily_cashbook'] });
+    queryClient.invalidateQueries({ queryKey: ['vw_profit_summary'] });
 
     router.push('/dashboard');
-  };
+  } catch (err: any) {
+    console.error(err);
+    alert('Unexpected error saving direct sale: ' + (err.message || ''));
+  } finally {
+    isSubmittingRef.current = false;
+    setLoading(false);
+  }
+};
 
   return (
     <div className="p-6 mb-24 space-y-6">
@@ -602,16 +630,24 @@ export default function NewDirectSalePage() {
           </div>
         )}
 
+        {!isOnline && (
+          <div className="flex items-center gap-2 p-3 bg-amber-50 text-amber-800 border border-amber-200 rounded-xl text-sm font-bold">
+            <WifiOff className="w-5 h-5 shrink-0 text-amber-600" />
+            <span>You are offline. Connect to internet to complete sale.</span>
+          </div>
+        )}
+
         <button
           type="submit"
-          disabled={loading || cart.length === 0 || !splitValid}
+          disabled={!isOnline || loading || cart.length === 0 || !splitValid}
           className={`w-full font-black text-xl p-5 rounded-2xl active:scale-95 transition-transform disabled:opacity-50 shadow-xl text-white ${
+            !isOnline ? 'bg-gray-400 cursor-not-allowed' :
             paymentMode === 'Cash' ? 'bg-green-700' :
             paymentMode === 'UPI' ? 'bg-blue-700' :
             'bg-purple-700'
           }`}
         >
-          {loading ? t('processing') : `${t('collect')} ₹${totalAmount} · ${
+          {!isOnline ? 'Offline - Cannot Save' : loading ? t('processing') : `${t('collect')} ₹${totalAmount} · ${
             paymentMode === 'Cash' ? t('cash') :
             paymentMode === 'UPI' ? t('upi') :
             `₹${cashNum} ${t('cash')} + ₹${upiNum} ${t('upi')}`

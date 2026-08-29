@@ -1,9 +1,9 @@
-// @ts-nocheck
 'use client';
 import { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabaseClient';
+import { serverCancelBooking } from '@/lib/actions/finance';
 
 function generateId() {
   return crypto.randomUUID();
@@ -82,12 +82,6 @@ export default function EditBookingPage() {
   const [loading, setLoading] = useState(false);
   const [initialLoaded, setInitialLoaded] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
-
-  // Refund States
-  const [showRefundModal, setShowRefundModal] = useState(false);
-  const [refundOption, setRefundOption] = useState<'Refund' | 'Forfeit'>('Refund');
-  const [refundPaymentMode, setRefundPaymentMode] = useState<'Cash' | 'UPI'>('Cash');
-  const [refundAmountInput, setRefundAmountInput] = useState('');
 
   useEffect(() => {
     const userStr = localStorage.getItem('snms_user');
@@ -230,103 +224,40 @@ export default function EditBookingPage() {
   const splitRemaining = advanceNum - splitTotal;
   const splitValid = advanceNum === 0 || paymentMode !== 'Split' || Math.abs(splitRemaining) < 0.01;
 
-  const handleCancelBooking = () => {
-    if (advanceNum > 0) {
-      setRefundAmountInput(String(advanceNum));
-      setRefundOption('Refund');
-      setRefundPaymentMode('Cash');
-      setShowRefundModal(true);
-    } else {
-      if (!confirm("Are you sure you want to CANCEL this booking? The allotted stock will be released. This cannot be undone.")) return;
-      executeCancel(0, null, 'Not Refunded');
+  const handleCancelBooking = async () => {
+    if (!confirm("Are you sure you want to CANCEL this booking?\n\nIMPORTANT: Booking advances are NON-REFUNDABLE and will be retained by the nursery. All allocated stock will be released back to inventory.")) {
+      return;
     }
-  };
 
-  const executeCancel = async (refundAmount: number, paymentMode: 'Cash' | 'UPI' | null, refundStatus: 'Refunded' | 'Forfeited' | 'Not Refunded') => {
     setLoading(true);
     try {
-      if (!navigator.onLine) { alert('You must be online to save.'); setLoading(false); return; }
-      const rows = originalBookingRows || [];
-      const rowIds = rows.map(r => r.id);
-
-      // 1. Release allotments
-      for (const id of rowIds) {
-        await supabase.from('allotments').update({ deleted_at: new Date().toISOString() }).eq('booking_id', id);
+      if (!navigator.onLine) {
+        alert('You must be online to save.');
+        setLoading(false);
+        return;
       }
 
-      // 2. Cancel and update bookings with refund columns
-      let refundRemaining = refundAmount;
-      for (let i = 0; i < rows.length; i++) {
-        const row = rows[i];
-        let itemRefund = 0;
-        if (refundRemaining > 0) {
-          if (refundRemaining >= row.advance_paid) {
-            itemRefund = row.advance_paid;
-            refundRemaining -= row.advance_paid;
-          } else {
-            itemRefund = refundRemaining;
-            refundRemaining = 0;
-          }
-        }
-        if (i === rows.length - 1 && refundRemaining > 0) {
-          itemRefund += refundRemaining;
-        }
-
-        const updates = {
-          status: 'Cancelled' as const,
-          refund_amount: itemRefund,
-          refund_payment_mode: paymentMode,
-          refund_status: refundStatus,
-          refund_date: refundStatus === 'Refunded' ? toLocalDateStr(new Date().toISOString()) : null
-        };
-
-        const { data: updatedRows } = await supabase.from('bookings')
-            .update(updates)
-            .eq('id', row.id)
-            .neq('status', 'Cancelled')
-            .select('id');
-            
-        if (!updatedRows || updatedRows.length === 0) {
-            console.warn("Booking already cancelled or modified. Skipping refund transaction.");
-            return; // Abort entire cancellation to prevent double refund
-        }
-      }
-
-      const user = currentUser || { id: 'unknown', name: 'Unknown' };
-
-      // 3. Update transactions ledger for refund
-      if (refundStatus === 'Refunded' && refundAmount > 0) {
-        await supabase.from('transactions').insert({
-          reference_type: 'BOOKING_REFUND',
-          reference_id: rows[0]?.id || generateId(),
-          booking_number: bookingNumber,
-          customer_name: rows[0]?.customer_name || 'Unknown',
-          plant_names: 'Multiple Plants',
-          amount: -refundAmount,
-          payment_mode: paymentMode,
-          cash_amount: paymentMode === 'Cash' ? -refundAmount : 0,
-          upi_amount: paymentMode === 'UPI' ? -refundAmount : 0,
-          worker_id: user.id,
-          created_at: new Date().toISOString()
-        });
-      }
-
-      await logAudit(user.id, user.name, 'CANCEL_BOOKING', 'bookings', bookingNumber, {
-        refundAmount,
-        paymentMode,
-        refundStatus,
-        note: refundStatus === 'Refunded' ? `Refunded ₹${refundAmount}` : refundStatus === 'Forfeited' ? 'Forfeited advance' : 'Cancelled'
+      const result = await serverCancelBooking({
+        bookingNumber: String(bookingNumber)
       });
 
+      if (!result?.success) {
+        throw new Error(result?.error || 'Failed to cancel booking');
+      }
+
+      // Invalidate all related caches & navigate
       queryClient.invalidateQueries({ queryKey: ['bookings'] });
       queryClient.invalidateQueries({ queryKey: ['allotments'] });
+      queryClient.invalidateQueries({ queryKey: ['vw_inventory_status'] });
+      queryClient.invalidateQueries({ queryKey: ['vw_booking_status'] });
+      queryClient.invalidateQueries({ queryKey: ['vw_daily_cashbook'] });
+      queryClient.invalidateQueries({ queryKey: ['vw_profit_summary'] });
       router.push('/bookings');
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      alert('Failed to cancel booking');
+      alert('Failed to cancel booking: ' + (e.message || ''));
     } finally {
       setLoading(false);
-      setShowRefundModal(false);
     }
   };
 
@@ -768,123 +699,6 @@ export default function EditBookingPage() {
             >
               Delete Booking
             </button>
-          </div>
-        </div>
-      )}
-
-      {/* Refund Modal */}
-      {showRefundModal && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-gray-100 space-y-6 animate-in zoom-in-95 duration-200">
-            <div className="space-y-2">
-              <h3 className="text-2xl font-black text-gray-900">Cancel & Refund Options</h3>
-              <p className="text-sm text-gray-500 font-medium">
-                This booking has an advance payment of <span className="font-bold text-gray-800">₹{advanceNum}</span>. Choose how to handle it.
-              </p>
-            </div>
-
-            <div className="space-y-4">
-              {/* Option Selector */}
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setRefundOption('Refund')}
-                  className={`py-3 rounded-xl font-bold text-sm transition-all border ${
-                    refundOption === 'Refund'
-                      ? 'bg-blue-50 border-blue-200 text-blue-700 shadow-sm'
-                      : 'bg-gray-50 border-gray-200 text-gray-500'
-                  }`}
-                >
-                  Refund Payment
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setRefundOption('Forfeit')}
-                  className={`py-3 rounded-xl font-bold text-sm transition-all border ${
-                    refundOption === 'Forfeit'
-                      ? 'bg-orange-50 border-orange-200 text-orange-700 shadow-sm'
-                      : 'bg-gray-50 border-gray-200 text-gray-500'
-                  }`}
-                >
-                  Forfeit Advance
-                </button>
-              </div>
-
-              {refundOption === 'Refund' && (
-                <div className="space-y-4 animate-in slide-in-from-top-4 duration-200">
-                  {/* Amount Input */}
-                  <div className="space-y-2">
-                    <label className="text-xs font-bold text-gray-500 uppercase">Refund Amount (₹)</label>
-                    <input
-                      type="number"
-                      min="0.01"
-                      max={advanceNum}
-                      step="0.01"
-                      value={refundAmountInput}
-                      onChange={e => setRefundAmountInput(e.target.value)}
-                      className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold text-lg"
-                    />
-                  </div>
-
-                  {/* Payment Mode */}
-                  <div className="space-y-2">
-                    <label className="text-xs font-bold text-gray-500 uppercase">Refund Mode</label>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setRefundPaymentMode('Cash')}
-                        className={`py-3 rounded-xl font-bold text-sm transition-all border ${
-                          refundPaymentMode === 'Cash'
-                            ? 'bg-green-50 border-green-200 text-green-700 shadow-sm'
-                            : 'bg-gray-50 border-gray-200 text-gray-500'
-                        }`}
-                      >
-                        Cash
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setRefundPaymentMode('UPI')}
-                        className={`py-3 rounded-xl font-bold text-sm transition-all border ${
-                          refundPaymentMode === 'UPI'
-                            ? 'bg-blue-50 border-blue-200 text-blue-700 shadow-sm'
-                            : 'bg-gray-50 border-gray-200 text-gray-500'
-                        }`}
-                      >
-                        UPI
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="flex gap-3 pt-2">
-              <button
-                type="button"
-                onClick={() => setShowRefundModal(false)}
-                className="w-1/2 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl active:scale-95 transition-transform"
-              >
-                Close
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const amt = refundOption === 'Refund' ? parseFloat(refundAmountInput) || 0 : 0;
-                  if (refundOption === 'Refund' && (amt <= 0 || amt > advanceNum)) {
-                    alert(`Refund amount must be between 0.01 and ₹${advanceNum}`);
-                    return;
-                  }
-                  executeCancel(
-                    amt,
-                    refundOption === 'Refund' ? refundPaymentMode : null,
-                    refundOption === 'Refund' ? 'Refunded' : 'Forfeited'
-                  );
-                }}
-                className="w-1/2 py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl active:scale-95 transition-transform shadow-md shadow-red-200"
-              >
-                Confirm Cancel
-              </button>
-            </div>
           </div>
         </div>
       )}
