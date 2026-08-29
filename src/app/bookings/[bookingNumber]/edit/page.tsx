@@ -412,9 +412,7 @@ export default function EditBookingPage() {
 
       // 2. Identify inserted & updated items
       for (const b of modifiedBookings) {
-        const payload = { ...b };
-        // @ts-ignore
-        delete payload.sync_status;
+        const { sync_status: _sync, ...payload } = b as any;
 
         if (originalIds.has(b.id)) {
           const original = originalBookingRows?.find(r => r.id === b.id);

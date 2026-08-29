@@ -1,4 +1,3 @@
-// @ts-nocheck
 'use client';
 
 import { useState, useEffect } from 'react';
@@ -23,8 +22,8 @@ import { useLanguage } from '@/lib/i18n/LanguageContext';
 // ──────────────────────────────────────────────
 // Types
 // ──────────────────────────────────────────────
-export interface Booking { id: string; booking_number: string; customer_name: string; customer_phone: string; city: string | null; plant_id: string; lot_id: string | null; quantity: number; advance_paid: number; advance_payment_mode: 'Cash' | 'UPI' | 'Split' | null; advance_cash_amount: number | null; advance_upi_amount: number | null; total_amount: number; booking_date: string; delivery_date: string | null; status: 'Pending' | 'Delivered' | 'Cancelled' | 'Allocated'; worker_id: string; created_at: string; remarks: string; refund_amount?: number; refund_payment_mode?: 'Cash' | 'UPI' | null; refund_status?: 'Refunded' | 'Forfeited' | 'Not Refunded'; refund_date?: string | null; deleted_at?: string; }
-export interface Lot { id: string; lot_number: string; plant_id: string; total_quantity: number; available_stock: number; status: 'Growing' | 'Ready' | 'Sold Out'; active: boolean; }
+export interface Booking { id: string; booking_number: string; customer_name: string; customer_phone: string; city: string | null; plant_id: string; lot_id: string | null; quantity: number; advance_paid: number; advance_payment_mode: 'Cash' | 'UPI' | 'Split' | null; advance_cash_amount: number | null; advance_upi_amount: number | null; total_amount: number; booking_date: string; delivery_date: string | null; status: 'Pending' | 'Delivered' | 'Cancelled' | 'Allocated' | 'Ready'; worker_id: string; created_at: string; remarks: string; refund_amount?: number; refund_payment_mode?: 'Cash' | 'UPI' | null; refund_status?: 'Refunded' | 'Forfeited' | 'Not Refunded'; refund_date?: string | null; deleted_at?: string; }
+export interface Lot { id: string; lot_number: string; lot_name?: string | null; plant_id: string; total_quantity: number; available_stock?: number; status: 'Growing' | 'Ready' | 'Sold Out' | 'Completed'; ready_date: string; active?: boolean; }
 export interface Allotment { id: string; booking_id: string; lot_id: string; quantity: number; allotted_date: string; allotted_by: string; created_at: string; }
 export interface Plant { id: string; plant_name: string; variety: string; category: string; active: boolean; selling_price: number; pricing_tiers: any[]; }
 export interface DirectSale { id: string; customer_name: string; customer_phone: string; city: string | null; items: any[]; total_amount: number; payment_mode: string; sale_date: string; worker_id: string; created_at: string; deleted_at?: string; }
@@ -383,6 +382,7 @@ function BookingCard({
   allotments,
   plants,
   directSales,
+  inventory,
   vwBookingStatus,
 }: {
   group: GroupedBooking;
@@ -391,6 +391,7 @@ function BookingCard({
   allotments: Allotment[];
   plants: Plant[];
   directSales: DirectSale[];
+  inventory: any[];
   vwBookingStatus: any[] | undefined;
 }) {
   const { t } = useLanguage();
@@ -456,6 +457,7 @@ function BookingCard({
             allotments={allotments}
             plants={plants}
             directSales={directSales}
+            inventory={inventory}
           />
         ))}
       </div>
@@ -523,7 +525,7 @@ export default function AllotmentManager() {
     },
   });
 
-  if (!bookings || !lots || !plants || !allotments || !directSales) {
+  if (!bookings || !lots || !plants || !allotments || !directSales || !inventory) {
     return (
       <div className="flex flex-col items-center justify-center py-24 text-gray-600">
         <div className="w-8 h-8 border-2 border-gray-200 border-t-amber-500 rounded-full animate-spin mb-4" />

@@ -1,4 +1,3 @@
-// @ts-nocheck
 'use client';
 
 import { useState } from 'react';
@@ -8,7 +7,6 @@ import { toLocalDateStr } from '@/lib/utils';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import {
   Banknote,
-  Smartphone,
   AlertTriangle,
   CheckCircle2,
   Sprout,
@@ -19,9 +17,81 @@ import {
   BookOpen,
   Truck,
   CalendarDays,
+  Receipt,
 } from 'lucide-react';
 
 type Tab = 'reconciliation' | 'production' | 'lots' | 'workers';
+
+interface CashbookItem {
+  datetime: string;
+  transaction_type: 'BOOKING_PAYMENT' | 'DIRECT_SALE' | 'EXPENSE';
+  cash: number;
+  upi: number;
+  total: number;
+  description: string;
+}
+
+interface PlantItem {
+  id: string;
+  plant_name: string;
+  variety: string;
+  category: string;
+  active: boolean;
+  selling_price: number;
+}
+
+interface LotItem {
+  id: string;
+  lot_number: string;
+  lot_name?: string | null;
+  plant_id: string;
+  initial_quantity?: number;
+  total_quantity: number;
+  status: 'Growing' | 'Ready' | 'Completed';
+  ready_date: string;
+}
+
+interface BookingItem {
+  id: string;
+  booking_number: string;
+  plant_id: string;
+  lot_id?: string | null;
+  quantity: number;
+  status: string;
+}
+
+interface AllotmentItem {
+  id: string;
+  booking_id: string;
+  lot_id: string;
+  quantity: number;
+}
+
+interface DirectSaleItem {
+  id: string;
+  sale_number: string;
+  plant_id?: string | null;
+  lot_id?: string | null;
+  quantity?: number;
+  amount: number;
+}
+
+interface InventoryStatusItem {
+  lot_id: string;
+  produced_quantity: number;
+  survived_quantity: number;
+  allocated_quantity: number;
+  sold_quantity: number;
+  current_physical_stock: number;
+  free_stock: number;
+  status: string;
+}
+
+interface UserItem {
+  id: string;
+  name: string;
+  role: string;
+}
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 function fmt(n: number | null | undefined) {
@@ -30,8 +100,8 @@ function fmt(n: number | null | undefined) {
 function todayIST() {
   return toLocalDateStr();
 }
-function fmtTime(ts: number) {
-  return new Date(ts).toLocaleTimeString('en-IN', {
+function fmtTime(iso: string) {
+  return new Date(iso).toLocaleTimeString('en-IN', {
     timeZone: 'Asia/Kolkata',
     hour: 'numeric',
     minute: '2-digit',
@@ -65,46 +135,47 @@ function TabBtn({
 
 // ─── Payment Badge ────────────────────────────────────────────────────────────
 function PaymentBadge({
-  mode,
   cashAmt,
   upiAmt,
 }: {
-  mode: string;
   cashAmt?: number;
   upiAmt?: number;
 }) {
-  if (mode === 'Split') {
+  const c = Number(cashAmt) || 0;
+  const u = Number(upiAmt) || 0;
+
+  if (c > 0 && u > 0) {
     return (
       <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 whitespace-nowrap">
-        💵 ₹{cashAmt ?? 0} + 📱 ₹{upiAmt ?? 0}
+        💵 ₹{c} + 📱 ₹{u}
       </span>
     );
   }
-  if (mode === 'UPI') {
+  if (u > 0) {
     return (
       <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 whitespace-nowrap">
-        📱 UPI
+        📱 UPI ₹{u}
       </span>
     );
   }
   return (
     <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-green-100 text-green-700 whitespace-nowrap">
-      💵 CASH
+      💵 CASH ₹{c}
     </span>
   );
 }
 
 // ─── Event Type Pill ──────────────────────────────────────────────────────────
-function EventTypePill({ type }: { type: 'Direct Sale' | 'Booking Delivery' | 'Booking Advance' }) {
+function EventTypePill({ type }: { type: 'BOOKING_PAYMENT' | 'DIRECT_SALE' | 'EXPENSE' }) {
   const styles = {
-    'Direct Sale': 'bg-sky-100 text-sky-700',
-    'Booking Delivery': 'bg-emerald-100 text-emerald-700',
-    'Booking Advance': 'bg-violet-100 text-violet-700',
+    DIRECT_SALE: 'bg-sky-100 text-sky-700',
+    BOOKING_PAYMENT: 'bg-violet-100 text-violet-700',
+    EXPENSE: 'bg-red-100 text-red-700',
   };
   const labels = {
-    'Direct Sale': 'SALE',
-    'Booking Delivery': 'DELIVERY',
-    'Booking Advance': 'ADVANCE',
+    DIRECT_SALE: 'SALE',
+    BOOKING_PAYMENT: 'BOOKING',
+    EXPENSE: 'EXPENSE',
   };
   return (
     <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider ${styles[type]}`}>
@@ -114,18 +185,18 @@ function EventTypePill({ type }: { type: 'Direct Sale' | 'Booking Delivery' | 'B
 }
 
 // ─── Event Icon ───────────────────────────────────────────────────────────────
-function EventIcon({ type }: { type: 'Direct Sale' | 'Booking Delivery' | 'Booking Advance' }) {
-  if (type === 'Direct Sale') {
+function EventIcon({ type }: { type: 'BOOKING_PAYMENT' | 'DIRECT_SALE' | 'EXPENSE' }) {
+  if (type === 'DIRECT_SALE') {
     return (
       <div className="w-10 h-10 rounded-2xl bg-sky-100 flex items-center justify-center shrink-0">
         <ShoppingCart className="w-5 h-5 text-sky-600" />
       </div>
     );
   }
-  if (type === 'Booking Delivery') {
+  if (type === 'EXPENSE') {
     return (
-      <div className="w-10 h-10 rounded-2xl bg-emerald-100 flex items-center justify-center shrink-0">
-        <Truck className="w-5 h-5 text-emerald-600" />
+      <div className="w-10 h-10 rounded-2xl bg-red-100 flex items-center justify-center shrink-0">
+        <Receipt className="w-5 h-5 text-red-600" />
       </div>
     );
   }
@@ -136,71 +207,58 @@ function EventIcon({ type }: { type: 'Direct Sale' | 'Booking Delivery' | 'Booki
   );
 }
 
+// ─── Loading ──────────────────────────────────────────────────────────────────
+function LoadingCard() {
+  return (
+    <div className="p-8 text-center text-gray-400 text-sm font-medium animate-pulse">
+      Loading data…
+    </div>
+  );
+}
+
 // ─── RECONCILIATION TAB ───────────────────────────────────────────────────────
 function ReconciliationTab() {
   const { t } = useLanguage();
   const [selectedDate, setSelectedDate] = useState(todayIST());
-  const todayStr = selectedDate;
 
-  const { data: allTransactionsRaw } = useQuery({ queryKey: ['transactions'], queryFn: async () => { const { data } = await supabase.from('transactions').select('*').order('created_at', { ascending: false }); return data || []; } });
-  const { data: usersRaw } = useQuery({ queryKey: ['users'], queryFn: async () => { const { data } = await supabase.from('users').select('id, name'); return data || []; } });
+  const dayStart = `${selectedDate}T00:00:00+05:30`;
+  const dayEnd = `${selectedDate}T23:59:59.999+05:30`;
 
-  if (!allTransactionsRaw || !usersRaw) {
+  const { data: cashbookRows, isLoading } = useQuery<CashbookItem[]>({
+    queryKey: ['vw_daily_cashbook', selectedDate],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('vw_daily_cashbook')
+        .select('datetime, transaction_type, cash, upi, total, description')
+        .gte('datetime', dayStart)
+        .lte('datetime', dayEnd)
+        .order('datetime', { ascending: false });
+      if (error) throw error;
+      return (data as CashbookItem[]) || [];
+    },
+  });
+
+  if (isLoading || !cashbookRows) {
     return <LoadingCard />;
   }
 
-  const allTransactions = allTransactionsRaw.filter(t => toLocalDateStr(t.created_at) === selectedDate);
-  const userMap = new Map(usersRaw.map((u) => [u.id, u.name]));
+  let cashInflow = 0;
+  let upiInflow = 0;
+  let totalRevenue = 0;
 
-  let cashTotal = 0;
-  let upiTotal = 0;
+  let totalExpenses = 0;
 
-  type CollectionEvent = {
-    id: string;
-    type: 'Direct Sale' | 'Booking Delivery' | 'Booking Advance' | 'Booking Refund';
-    plant_name: string;
-    customer_name: string;
-    quantity: number;
-    amount: number;
-    payment_mode: string;
-    cash_amount?: number;
-    upi_amount?: number;
-    timestamp: number;
-    order_number: string;
-    worker_name: string;
-  };
-
-  const collectionEvents: CollectionEvent[] = [];
-
-  for (const t of allTransactions) {
-    if (t.payment_mode === 'Cash') cashTotal += t.amount;
-    else if (t.payment_mode === 'UPI') upiTotal += t.amount;
-    else if (t.payment_mode === 'Split') {
-      cashTotal += t.cash_amount || 0;
-      upiTotal += t.upi_amount || 0;
+  for (const r of cashbookRows) {
+    if (r.transaction_type === 'EXPENSE') {
+      totalExpenses += Math.abs(Number(r.total) || 0);
+    } else {
+      cashInflow += Number(r.cash) || 0;
+      upiInflow += Number(r.upi) || 0;
+      totalRevenue += Number(r.total) || 0;
     }
-
-    let type: CollectionEvent['type'] = 'Direct Sale';
-    if (t.reference_type === 'BOOKING_ADVANCE') type = 'Booking Advance';
-    else if (t.reference_type === 'BOOKING_DELIVERY') type = 'Booking Delivery';
-
-    collectionEvents.push({
-      id: t.id,
-      type,
-      plant_name: t.plant_names || 'Unknown',
-      customer_name: t.customer_name || 'Walk-in',
-      quantity: 0, // Not stored in transactions directly, UI can omit or show -
-      amount: t.amount,
-      payment_mode: t.payment_mode || 'Cash',
-      cash_amount: t.cash_amount || 0,
-      upi_amount: t.upi_amount || 0,
-      timestamp: new Date(t.created_at).getTime(),
-      order_number: t.booking_number || 'N/A',
-      worker_name: userMap.get(t.worker_id) || 'Unknown Worker',
-    });
   }
 
-  const grandTotal = cashTotal + upiTotal;
+  const netCollections = totalRevenue - totalExpenses;
 
   return (
     <div className="space-y-4">
@@ -223,10 +281,10 @@ function ReconciliationTab() {
         <div className="absolute -right-8 -top-8 bg-white opacity-10 w-36 h-36 rounded-full" />
         <div className="absolute -left-6 -bottom-6 bg-white opacity-5 w-28 h-28 rounded-full" />
         <p className="text-xs font-bold uppercase tracking-widest opacity-80 mb-2">
-          {t('grandTotal')}
+          Total Revenue
         </p>
-        <p className="text-5xl font-black tracking-tight">{fmt(grandTotal)}</p>
-        <p className="text-xs opacity-70 mt-2">{t('collections')} · {todayStr}</p>
+        <p className="text-5xl font-black tracking-tight">{fmt(totalRevenue)}</p>
+        <p className="text-xs opacity-70 mt-2">Net Cashbook Balance: {fmt(netCollections)} · {selectedDate}</p>
       </div>
 
       {/* Cash / UPI split */}
@@ -240,18 +298,19 @@ function ReconciliationTab() {
               {t('cash')}
             </span>
           </div>
-          <p className="text-3xl font-black text-green-700">{fmt(cashTotal)}</p>
+          <p className="text-3xl font-black text-green-700">{fmt(cashInflow)}</p>
         </div>
+
         <div className="bg-purple-50 border-2 border-purple-200 rounded-2xl p-5 flex flex-col gap-2">
           <div className="flex items-center gap-2">
             <div className="bg-purple-600 p-2 rounded-xl">
-              <Smartphone className="w-4 h-4 text-white" />
+              <Banknote className="w-4 h-4 text-white" />
             </div>
             <span className="text-xs font-bold text-purple-800 uppercase tracking-wide">
               {t('upi')}
             </span>
           </div>
-          <p className="text-3xl font-black text-purple-700">{fmt(upiTotal)}</p>
+          <p className="text-3xl font-black text-purple-700">{fmt(upiInflow)}</p>
         </div>
       </div>
 
@@ -260,62 +319,45 @@ function ReconciliationTab() {
         <div className="px-5 py-4 border-b border-gray-50 flex items-center gap-2">
           <ClipboardList className="w-4 h-4 text-gray-400" />
           <h3 className="font-bold text-gray-700 text-sm">
-            {t('collections')} ({collectionEvents.length})
+            {t('collections')} ({cashbookRows.length})
           </h3>
         </div>
 
-        {collectionEvents.length === 0 ? (
+        {cashbookRows.length === 0 ? (
           <div className="p-8 text-center text-gray-400 text-sm font-medium">
-            {t('noCollectionsRecorded').replace('{date}', todayStr)}
+            {t('noCollectionsRecorded').replace('{date}', selectedDate)}
           </div>
         ) : (
           <ul className="divide-y divide-gray-50">
-            {collectionEvents.map((ev) => (
-              <li key={ev.id} className="px-4 py-4">
+            {cashbookRows.map((ev, idx) => (
+              <li key={idx} className="px-4 py-4">
                 <div className="flex items-start gap-3">
-                  {/* Icon */}
-                  <EventIcon type={ev.type} />
+                  <EventIcon type={ev.transaction_type} />
 
-                  {/* Content */}
                   <div className="flex-1 min-w-0">
-                    {/* Row 1: Customer name + type pill */}
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="font-black text-gray-900 text-sm truncate">
-                        {ev.customer_name}
+                        {ev.description}
                       </p>
-                      <EventTypePill type={ev.type} />
+                      <EventTypePill type={ev.transaction_type} />
                     </div>
 
-                    {/* Row 2: Plants list */}
-                    <p className="text-xs text-gray-500 mt-0.5 leading-relaxed truncate">
-                      {ev.plant_name}
-                    </p>
-
-                    {/* Row 3: Time + qty + payment badge */}
                     <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                       <span className="text-[10px] font-bold text-gray-400">
-                        {fmtTime(ev.timestamp)}
-                      </span>
-                      <span className="text-gray-300">·</span>
-                      <span className="text-[10px] text-gray-400 font-medium">
-                        {t('qty')}: {ev.quantity}
+                        {fmtTime(ev.datetime)}
                       </span>
                       <span className="text-gray-300">·</span>
                       <PaymentBadge
-                        mode={ev.payment_mode}
-                        cashAmt={ev.cash_amount}
-                        upiAmt={ev.upi_amount}
+                        cashAmt={ev.cash}
+                        upiAmt={ev.upi}
                       />
-                      <span className="text-gray-300">·</span>
-                      <span className="text-[10px] font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-md flex items-center gap-1">
-                        👤 {ev.worker_name}
-                      </span>
                     </div>
                   </div>
 
-                  {/* Amount */}
                   <div className="shrink-0 text-right">
-                    <p className="font-black text-gray-900 text-sm">{fmt(ev.amount)}</p>
+                    <p className={`font-black text-sm ${ev.transaction_type === 'EXPENSE' ? 'text-red-600' : 'text-gray-900'}`}>
+                      {ev.transaction_type === 'EXPENSE' ? `-${fmt(Math.abs(ev.total))}` : fmt(ev.total)}
+                    </p>
                   </div>
                 </div>
               </li>
@@ -330,11 +372,11 @@ function ReconciliationTab() {
 // ─── PRODUCTION DEMAND TAB ────────────────────────────────────────────────────
 function ProductionDemandTab() {
   const { t } = useLanguage();
-  const { data: plants } = useQuery({ queryKey: ['plants'], queryFn: async () => { const { data } = await supabase.from('plants').select('*').is('deleted_at', null).eq('active', true); return data || []; } });
-  const { data: bookings } = useQuery({ queryKey: ['bookings'], queryFn: async () => { const { data } = await supabase.from('bookings').select('*').is('deleted_at', null); return data || []; } });
-  const { data: lots } = useQuery({ queryKey: ['lots'], queryFn: async () => { const { data } = await supabase.from('lots').select('*').is('deleted_at', null); return data || []; } });
-  const { data: allotments } = useQuery({ queryKey: ['allotments'], queryFn: async () => { const { data } = await supabase.from('allotments').select('*').is('deleted_at', null); return data || []; } });
-  const { data: inventory } = useQuery({ queryKey: ['vw_inventory_status'], queryFn: async () => { const { data } = await supabase.from('vw_inventory_status').select('*'); return data || []; } });
+  const { data: plants } = useQuery<PlantItem[]>({ queryKey: ['plants'], queryFn: async () => { const { data } = await supabase.from('plants').select('*').is('deleted_at', null).eq('active', true); return (data as PlantItem[]) || []; } });
+  const { data: bookings } = useQuery<BookingItem[]>({ queryKey: ['bookings'], queryFn: async () => { const { data } = await supabase.from('bookings').select('*').is('deleted_at', null); return (data as BookingItem[]) || []; } });
+  const { data: lots } = useQuery<LotItem[]>({ queryKey: ['lots'], queryFn: async () => { const { data } = await supabase.from('lots').select('*').is('deleted_at', null); return (data as LotItem[]) || []; } });
+  const { data: allotments } = useQuery<AllotmentItem[]>({ queryKey: ['allotments'], queryFn: async () => { const { data } = await supabase.from('allotments').select('*').is('deleted_at', null); return (data as AllotmentItem[]) || []; } });
+  const { data: inventory } = useQuery<InventoryStatusItem[]>({ queryKey: ['vw_inventory_status'], queryFn: async () => { const { data } = await supabase.from('vw_inventory_status').select('*'); return (data as InventoryStatusItem[]) || []; } });
 
   if (!plants || !bookings || !lots || !allotments || !inventory) {
     return <LoadingCard />;
@@ -366,25 +408,15 @@ function ProductionDemandTab() {
 
     const totalBooked = Math.max(0, rawTotalBooked - allottedToBookings);
 
-    const activeLots = new Set(lots.filter(l => l.plant_id === plant.id && l.status !== 'Completed').map(l => l.id));
-
-    const deliveredQty = bookings
-      .filter(b => b.plant_id === plant.id && b.status === 'Delivered' && activeLots.has(b.lot_id))
-      .reduce((sum, b) => sum + b.quantity, 0);
-
-    const soldQty = direct_sales
-      .filter(s => s.plant_id === plant.id && activeLots.has(s.lot_id))
-      .reduce((sum, s) => sum + s.quantity, 0);
-
+    // Sum centralized free_stock from view across active growing/ready lots for this plant
     const totalStock = lots
       .filter((l) => l.plant_id === plant.id && l.status !== 'Completed')
       .reduce((sum, l) => {
-        const inv = inventory.find((i: any) => i.lot_id === l.id);
+        const inv = inventory.find((i) => i.lot_id === l.id);
         return sum + (inv ? inv.free_stock : 0);
       }, 0);
 
     const totalGrowing = Math.max(0, totalStock);
-
     const deficit = Math.max(0, totalBooked - totalGrowing);
 
     return {
@@ -399,7 +431,6 @@ function ProductionDemandTab() {
 
   // Sort: deficit plants first
   const sorted = [...demands].sort((a, b) => b.deficit - a.deficit);
-
   const alertCount = sorted.filter((d) => d.deficit > 0).length;
 
   return (
@@ -495,12 +526,12 @@ function ProductionDemandTab() {
 // ─── LOT REPORT TAB ───────────────────────────────────────────────────────────
 function LotReportTab() {
   const { t } = useLanguage();
-  const { data: lots } = useQuery({ queryKey: ['lots'], queryFn: async () => { const { data } = await supabase.from('lots').select('*').is('deleted_at', null); return data || []; } });
-  const { data: plants } = useQuery({ queryKey: ['plants'], queryFn: async () => { const { data } = await supabase.from('plants').select('*').is('deleted_at', null).eq('active', true); return data || []; } });
-  const { data: allotments } = useQuery({ queryKey: ['allotments'], queryFn: async () => { const { data } = await supabase.from('allotments').select('*').is('deleted_at', null); return data || []; } });
-  const { data: bookings } = useQuery({ queryKey: ['bookings'], queryFn: async () => { const { data } = await supabase.from('bookings').select('*').is('deleted_at', null); return data || []; } });
-  const { data: directSales } = useQuery({ queryKey: ['direct_sales'], queryFn: async () => { const { data } = await supabase.from('direct_sales').select('*').is('deleted_at', null); return data || []; } });
-  const { data: inventory } = useQuery({ queryKey: ['vw_inventory_status'], queryFn: async () => { const { data } = await supabase.from('vw_inventory_status').select('*'); return data || []; } });
+  const { data: lots } = useQuery<LotItem[]>({ queryKey: ['lots'], queryFn: async () => { const { data } = await supabase.from('lots').select('*').is('deleted_at', null); return (data as LotItem[]) || []; } });
+  const { data: plants } = useQuery<PlantItem[]>({ queryKey: ['plants'], queryFn: async () => { const { data } = await supabase.from('plants').select('*').is('deleted_at', null).eq('active', true); return (data as PlantItem[]) || []; } });
+  const { data: allotments } = useQuery<AllotmentItem[]>({ queryKey: ['allotments'], queryFn: async () => { const { data } = await supabase.from('allotments').select('*').is('deleted_at', null); return (data as AllotmentItem[]) || []; } });
+  const { data: bookings } = useQuery<BookingItem[]>({ queryKey: ['bookings'], queryFn: async () => { const { data } = await supabase.from('bookings').select('*').is('deleted_at', null); return (data as BookingItem[]) || []; } });
+  const { data: directSales } = useQuery<DirectSaleItem[]>({ queryKey: ['direct_sales'], queryFn: async () => { const { data } = await supabase.from('direct_sales').select('*').is('deleted_at', null); return (data as DirectSaleItem[]) || []; } });
+  const { data: inventory } = useQuery<InventoryStatusItem[]>({ queryKey: ['vw_inventory_status'], queryFn: async () => { const { data } = await supabase.from('vw_inventory_status').select('*'); return (data as InventoryStatusItem[]) || []; } });
 
   if (!lots || !plants || !allotments || !bookings || !directSales || !inventory) {
     return <LoadingCard />;
@@ -522,7 +553,7 @@ function LotReportTab() {
 
   const statusGroups: Array<{
     status: 'Growing' | 'Ready' | 'Completed';
-    labelKey: keyof ReturnType<typeof useLanguage>['t'] extends never ? string : string;
+    labelKey: string;
     color: string;
     dotColor: string;
   }> = [
@@ -543,7 +574,7 @@ function LotReportTab() {
             <div className="flex items-center gap-2 mb-3 px-1">
               <span className={`w-2.5 h-2.5 rounded-full ${group.dotColor}`} />
               <h3 className={`text-sm font-black uppercase tracking-wider ${group.color}`}>
-                {t(group.labelKey as any)}
+                {t(group.labelKey as any) || group.status}
                 <span className="ml-2 text-gray-400 font-semibold">
                   ({groupLots.length})
                 </span>
@@ -559,10 +590,11 @@ function LotReportTab() {
                   .reduce((sum, b) => sum + b.quantity, 0);
                 const directSoldQty = directSales
                   .filter(s => s.lot_id === lot.id)
-                  .reduce((sum, s) => sum + s.quantity, 0);
+                  .reduce((sum, s) => sum + (s.quantity || 0), 0);
                 const soldQty = deliveredQty + directSoldQty;
                 
-                const inv = inventory.find((i: any) => i.lot_id === lot.id);
+                const inv = inventory.find((i) => i.lot_id === lot.id);
+                const physicalStock = inv ? Math.max(0, inv.current_physical_stock) : Math.max(0, lot.total_quantity - soldQty);
                 const freeStock = inv ? Math.max(0, inv.free_stock) : 0;
 
                 return (
@@ -596,15 +628,15 @@ function LotReportTab() {
                       </span>
                     </div>
 
-                    {/* Stats grid — Responsive layout */}
+                    {/* Stats grid */}
                     <div className="px-4 py-4 grid grid-cols-2 sm:grid-cols-5 gap-2 bg-gray-50 text-center">
                       <div className="bg-white p-2 rounded-lg border border-gray-100 col-span-2 sm:col-span-1">
                         <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">{t('total')}</p>
                         <p className="text-xl font-black text-gray-700 mt-0.5">{lot.initial_quantity ?? lot.total_quantity}</p>
                       </div>
                       <div className="bg-white p-2 rounded-lg border border-gray-100">
-                        <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Available</p>
-                        <p className="text-lg font-black text-gray-800 mt-0.5">{availableStock}</p>
+                        <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Physical</p>
+                        <p className="text-lg font-black text-gray-800 mt-0.5">{physicalStock}</p>
                       </div>
                       <div className="bg-white p-2 rounded-lg border border-gray-100">
                         <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">{t('allotted')}</p>
@@ -646,22 +678,13 @@ function LotReportTab() {
   );
 }
 
-// ─── Loading ──────────────────────────────────────────────────────────────────
-function LoadingCard() {
-  return (
-    <div className="p-8 text-center text-gray-400 text-sm font-medium animate-pulse">
-      Loading data…
-    </div>
-  );
-}
-
 // ─── Workers Report Tab ───────────────────────────────────────────────────────
 function WorkersTab() {
   const [selectedDate, setSelectedDate] = useState(todayIST());
   const [selectedWorker, setSelectedWorker] = useState<string>('all');
 
-  const { data: allTransactionsRaw } = useQuery({ queryKey: ['transactions'], queryFn: async () => { const { data } = await supabase.from('transactions').select('*').order('created_at', { ascending: false }); return data || []; } });
-  const { data: usersRaw } = useQuery({ queryKey: ['users'], queryFn: async () => { const { data } = await supabase.from('users').select('id, name, role'); return data || []; } });
+  const { data: allTransactionsRaw } = useQuery<any[]>({ queryKey: ['transactions'], queryFn: async () => { const { data } = await supabase.from('transactions').select('*').order('created_at', { ascending: false }); return (data as any[]) || []; } });
+  const { data: usersRaw } = useQuery<UserItem[]>({ queryKey: ['users'], queryFn: async () => { const { data } = await supabase.from('users').select('id, name, role'); return (data as UserItem[]) || []; } });
 
   if (!allTransactionsRaw || !usersRaw) return <LoadingCard />;
 
@@ -706,7 +729,7 @@ function WorkersTab() {
     };
   };
 
-  const txList = [];
+  const txList: any[] = [];
   if (selectedWorker !== 'all') {
     const txs = allTransactionsRaw.filter(t => 
       t.worker_id === selectedWorker && 
@@ -834,7 +857,7 @@ function WorkersTab() {
           {/* Summary card */}
           <div className="bg-gradient-to-br from-green-600 to-emerald-800 rounded-2xl p-5 text-white shadow-md">
             <p className="text-xs font-bold uppercase tracking-widest opacity-80 mb-1">
-              {workers.find(w => w.id === selectedWorker)?.name}'s Collection
+              {workers.find(w => w.id === selectedWorker)?.name}&apos;s Collection
             </p>
             <p className="text-4xl font-black">{fmt(overallStats.total)}</p>
             <div className="flex gap-6 mt-3">

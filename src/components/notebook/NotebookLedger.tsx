@@ -1,44 +1,99 @@
-// @ts-nocheck
 'use client';
+
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabaseClient';
 import { Search, Phone } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 
-export default function NotebookLedger({ role, userId }: { role: string, userId: string }) {
+interface BookingRow {
+  id: string;
+  booking_number: string;
+  customer_name: string;
+  customer_phone: string;
+  city?: string | null;
+  plant_id: string;
+  quantity: number;
+  advance_paid: number;
+  total_amount: number;
+  created_at?: string;
+  booking_date: string;
+  worker_id: string;
+}
+
+interface SaleRow {
+  id: string;
+  sale_number: string;
+  customer_name?: string | null;
+  customer_phone?: string | null;
+  plant_id: string;
+  quantity: number;
+  amount: number;
+  payment_mode: string;
+  created_at: string;
+  worker_id: string;
+}
+
+interface PlantRow {
+  id: string;
+  plant_name: string;
+  variety?: string | null;
+}
+
+interface GroupedBooking {
+  booking_number: string;
+  customer_name: string;
+  customer_phone: string;
+  city?: string | null;
+  total_advance: number;
+  total_amount: number;
+  items: BookingRow[];
+  created_at: string;
+}
+
+interface GroupedSale {
+  sale_number: string;
+  customer_name: string;
+  customer_phone: string;
+  payment_mode: string;
+  total_amount: number;
+  items: SaleRow[];
+  created_at: string;
+}
+
+export default function NotebookLedger({ role, userId }: { role: string; userId: string }) {
   const { t } = useLanguage();
   const [tab, setTab] = useState<'Bookings' | 'Sales'>('Bookings');
   const [search, setSearch] = useState('');
 
-  const { data: bookings } = useQuery({
+  const { data: bookings } = useQuery<BookingRow[]>({
     queryKey: ['bookings', role, userId],
     queryFn: async () => {
-      let q = supabase.from('bookings').select('*');
+      let q = supabase.from('bookings').select('*').is('deleted_at', null);
       if (role === 'worker') q = q.eq('worker_id', userId);
       const { data, error } = await q;
       if (error) throw error;
-      return data || [];
+      return (data as BookingRow[]) || [];
     }
   });
 
-  const { data: sales } = useQuery({
+  const { data: sales } = useQuery<SaleRow[]>({
     queryKey: ['direct_sales', role, userId],
     queryFn: async () => {
-      let q = supabase.from('direct_sales').select('*');
+      let q = supabase.from('direct_sales').select('*').is('deleted_at', null);
       if (role === 'worker') q = q.eq('worker_id', userId);
       const { data, error } = await q;
       if (error) throw error;
-      return data || [];
+      return (data as SaleRow[]) || [];
     }
   });
 
-  const { data: plants } = useQuery({
+  const { data: plants } = useQuery<PlantRow[]>({
     queryKey: ['plants'],
     queryFn: async () => {
-      const { data, error } = await supabase.from('plants').select('*');
+      const { data, error } = await supabase.from('plants').select('id, plant_name, variety').is('deleted_at', null);
       if (error) throw error;
-      return data || [];
+      return (data as PlantRow[]) || [];
     }
   });
 
@@ -57,10 +112,10 @@ export default function NotebookLedger({ role, userId }: { role: string, userId:
       };
     }
     acc[curr.booking_number].items.push(curr);
-    acc[curr.booking_number].total_advance += curr.advance_paid;
-    acc[curr.booking_number].total_amount += curr.total_amount;
+    acc[curr.booking_number].total_advance += Number(curr.advance_paid) || 0;
+    acc[curr.booking_number].total_amount += Number(curr.total_amount) || 0;
     return acc;
-  }, {} as Record<string, any>);
+  }, {} as Record<string, GroupedBooking>);
 
   const bookingsList = groupedBookings ? Object.values(groupedBookings).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()) : [];
 
@@ -78,14 +133,14 @@ export default function NotebookLedger({ role, userId }: { role: string, userId:
       };
     }
     acc[curr.sale_number].items.push(curr);
-    acc[curr.sale_number].total_amount += curr.amount;
+    acc[curr.sale_number].total_amount += Number(curr.amount) || 0;
     return acc;
-  }, {} as Record<string, any>);
+  }, {} as Record<string, GroupedSale>);
 
   const salesList = groupedSales ? Object.values(groupedSales).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()) : [];
 
   const getPlantName = (id: string) => {
-    const p = plants?.find(p => p.id === id);
+    const p = plants?.find(plant => plant.id === id);
     return p ? (p.variety ? `${p.plant_name} - ${p.variety}` : p.plant_name) : t('unknown');
   };
 
@@ -135,7 +190,7 @@ export default function NotebookLedger({ role, userId }: { role: string, userId:
             </div>
             
             <div className="space-y-2 mb-4">
-              {b.items.map((item: any, idx: number) => (
+              {b.items.map((item, idx) => (
                 <div key={idx} className="flex justify-between text-sm">
                   <span className="font-semibold text-gray-700">{item.quantity} x {getPlantName(item.plant_id)}</span>
                   <span className="font-bold text-gray-900">₹{item.total_amount}</span>
@@ -175,7 +230,7 @@ export default function NotebookLedger({ role, userId }: { role: string, userId:
             </div>
             
             <div className="space-y-2 mb-4">
-              {s.items.map((item: any, idx: number) => (
+              {s.items.map((item, idx) => (
                 <div key={idx} className="flex justify-between text-sm">
                   <span className="font-semibold text-gray-700">{item.quantity} x {getPlantName(item.plant_id)}</span>
                   <span className="font-bold text-gray-900">₹{item.amount}</span>

@@ -1,5 +1,5 @@
-// @ts-nocheck
 'use client';
+
 import { useState, useEffect, use } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -9,6 +9,16 @@ import { ArrowLeft, ArchiveX, Plus, Trash2, Tag } from 'lucide-react';
 interface PricingTier {
   min_quantity: number;
   price: number;
+}
+
+interface Plant {
+  id: string;
+  plant_name: string;
+  variety?: string | null;
+  category?: string | null;
+  selling_price: number;
+  pricing_tiers?: PricingTier[] | null;
+  active: boolean;
 }
 
 export default function EditPlantPage({ params }: { params: Promise<{ id: string }> }) {
@@ -26,12 +36,12 @@ export default function EditPlantPage({ params }: { params: Promise<{ id: string
   const [loading, setLoading] = useState(false);
   const [archiving, setArchiving] = useState(false);
 
-  const { data: plant, isLoading: initialLoading, isError } = useQuery({
+  const { data: plant, isLoading: initialLoading, isError } = useQuery<Plant>({
     queryKey: ['plant', id],
     queryFn: async () => {
       const { data, error } = await supabase.from('plants').select('*').eq('id', id).single();
       if (error) throw error;
-      return data;
+      return data as Plant;
     }
   });
 

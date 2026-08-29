@@ -1,4 +1,3 @@
-// @ts-nocheck
 'use client';
 
 import { useState } from 'react';
@@ -8,34 +7,50 @@ import { generateId, toLocalDateStr } from '@/lib/utils';
 import { CheckCircle, XCircle, Clock, ChevronDown, ChevronUp, Calendar } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 
-type AttendanceStatus = 'Present' | 'Absent' | 'Half Day';
+export type AttendanceStatus = 'Present' | 'Absent' | 'Half Day';
+
+interface WorkerUser {
+  id: string;
+  name: string;
+  mobile: string;
+  role: string;
+}
+
+interface AttendanceRecord {
+  id: string;
+  worker_id: string;
+  date: string;
+  status: AttendanceStatus;
+  created_at?: string;
+  updated_at?: string;
+}
 
 interface AttendanceManagerProps {
   ownerId: string;
   ownerName: string;
 }
 
-export default function AttendanceManager({ ownerId, ownerName }: AttendanceManagerProps) {
+export default function AttendanceManager({ ownerId }: AttendanceManagerProps) {
   const { t, language } = useLanguage();
   const [loading, setLoading] = useState<Record<string, boolean>>({});
   const [historyOpen, setHistoryOpen] = useState(true);
   const queryClient = useQueryClient();
 
-  const { data: workers } = useQuery({
+  const { data: workers } = useQuery<WorkerUser[]>({
     queryKey: ['workers'],
     queryFn: async () => {
       const { data, error } = await supabase.from('users').select('*').eq('role', 'worker');
       if (error) throw error;
-      return data || [];
+      return (data as WorkerUser[]) || [];
     }
   });
 
-  const { data: attendanceRecords } = useQuery({
+  const { data: attendanceRecords } = useQuery<AttendanceRecord[]>({
     queryKey: ['attendance'],
     queryFn: async () => {
       const { data, error } = await supabase.from('attendance').select('*').order('date', { ascending: false });
       if (error) throw error;
-      return data || [];
+      return (data as AttendanceRecord[]) || [];
     }
   });
 
@@ -43,11 +58,11 @@ export default function AttendanceManager({ ownerId, ownerName }: AttendanceMana
 
   // Map of workerId -> today's status
   const todayMap = attendanceRecords?.reduce((acc, r) => {
-    if (r.date === today) acc[r.worker_id] = r.status as AttendanceStatus;
+    if (r.date === today) acc[r.worker_id] = r.status;
     return acc;
   }, {} as Record<string, AttendanceStatus>) ?? {};
 
-  async function markAttendance(worker_id: string, worker_name: string, status: AttendanceStatus) {
+  async function markAttendance(worker_id: string, _worker_name: string, status: AttendanceStatus) {
     if (!navigator.onLine) {
       alert('You must be online to save.');
       return;
@@ -64,13 +79,12 @@ export default function AttendanceManager({ ownerId, ownerName }: AttendanceMana
         .eq('date', today);
 
       const id = generateId();
+      // Payload matching exact database schema
       const record = {
         id,
         worker_id,
-        worker_name,
         date: today,
-        status,
-        marked_by: ownerId
+        status
       };
 
       const { error } = await supabase.from('attendance').insert(record);
@@ -90,7 +104,7 @@ export default function AttendanceManager({ ownerId, ownerName }: AttendanceMana
     if (!acc[r.date]) acc[r.date] = [];
     acc[r.date].push(r);
     return acc;
-  }, {} as Record<string, typeof attendanceRecords>) ?? {};
+  }, {} as Record<string, AttendanceRecord[]>) ?? {};
 
   const sortedDates = Object.keys(groupedHistory).sort((a, b) => b.localeCompare(a));
 
@@ -226,7 +240,7 @@ export default function AttendanceManager({ ownerId, ownerName }: AttendanceMana
                 <div className="divide-y divide-gray-50">
                   {(groupedHistory[date] ?? []).map(record => {
                     const cfg = statusConfig[record.status];
-                    const workerName = record.worker_name || workers?.find(w => w.id === record.worker_id)?.name || 'Unknown';
+                    const workerName = workers?.find(w => w.id === record.worker_id)?.name || 'Worker';
                     return (
                       <div key={record.id} className="flex items-center justify-between px-5 py-3.5">
                         <div className="flex items-center space-x-3">

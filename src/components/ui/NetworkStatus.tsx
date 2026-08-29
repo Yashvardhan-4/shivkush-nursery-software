@@ -1,4 +1,3 @@
-// @ts-nocheck
 'use client';
 
 import { useState, useEffect } from 'react';
@@ -30,7 +29,7 @@ export function NetworkStatus() {
   return (
     <div className="bg-red-500 text-white px-4 py-2 flex items-center justify-center space-x-2 text-sm font-medium z-50 sticky top-0 shadow-md">
       <WifiOff size={16} />
-      <span>{t('offlineWarning') || 'You are offline. Critical actions are blocked until connection is restored.'}</span>
+      <span>{t('offlineWarning' as any) || 'You are offline. Critical actions are blocked until connection is restored.'}</span>
     </div>
   );
 }

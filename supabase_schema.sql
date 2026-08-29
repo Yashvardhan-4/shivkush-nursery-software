@@ -1028,28 +1028,31 @@ WITH AllocationSums AS (
         SUM(a.quantity) as qty
     FROM public.allotments a
     JOIN public.bookings b ON a.booking_id = b.id
-    WHERE b.status IN ('Pending', 'Allocated', 'Ready')
+    WHERE a.deleted_at IS NULL
+      AND b.deleted_at IS NULL
+      AND b.status IN ('Pending', 'Allocated', 'Ready')
     GROUP BY a.lot_id
 ),
 DeliveredBookingSums AS (
-    -- SPRINT 3 MIGRATION NOTE: This CTE relies on booking status for deliveries.
-    -- In Sprint 3, this must be rewritten to sum `quantity` from the future `delivery_line_items` table.
     SELECT 
         lot_id, 
         SUM(quantity) as qty
     FROM public.bookings
-    WHERE status = 'Delivered' AND lot_id IS NOT NULL
+    WHERE status = 'Delivered' 
+      AND lot_id IS NOT NULL 
+      AND deleted_at IS NULL
     GROUP BY lot_id
 ),
 DeliveredAllotmentSums AS (
-    -- SPRINT 3 MIGRATION NOTE: This CTE relies on booking status for deliveries.
-    -- In Sprint 3, this must be rewritten to sum `quantity` from the future `delivery_line_items` table.
     SELECT 
         a.lot_id, 
         SUM(a.quantity) as qty
     FROM public.allotments a
     JOIN public.bookings b ON a.booking_id = b.id
-    WHERE b.status = 'Delivered' AND b.lot_id IS NULL
+    WHERE a.deleted_at IS NULL 
+      AND b.deleted_at IS NULL
+      AND b.status = 'Delivered' 
+      AND b.lot_id IS NULL
     GROUP BY a.lot_id
 ),
 DirectSaleSums AS (
@@ -1057,6 +1060,7 @@ DirectSaleSums AS (
         lot_id, 
         SUM(quantity) as qty
     FROM public.direct_sales
+    WHERE deleted_at IS NULL
     GROUP BY lot_id
 )
 SELECT 
@@ -1064,11 +1068,7 @@ SELECT
     l.initial_quantity AS produced_quantity,
     l.total_quantity AS survived_quantity,
     COALESCE(als.qty, 0) AS allocated_quantity,
-    
-    -- SPRINT 3 MIGRATION NOTE: Current sold calculation = Direct Sales + Delivered Bookings (via status check).
-    -- Future sold calculation = Direct Sales + Sum of delivery_line_items.
     COALESCE(dbs.qty, 0) + COALESCE(das.qty, 0) + COALESCE(dss.qty, 0) AS sold_quantity,
-    
     (l.total_quantity - (COALESCE(dbs.qty, 0) + COALESCE(das.qty, 0) + COALESCE(dss.qty, 0))) AS current_physical_stock,
     (l.total_quantity - COALESCE(als.qty, 0) - (COALESCE(dbs.qty, 0) + COALESCE(das.qty, 0) + COALESCE(dss.qty, 0))) AS free_stock,
     l.status
@@ -1076,7 +1076,8 @@ FROM public.lots l
 LEFT JOIN AllocationSums als ON l.id = als.lot_id
 LEFT JOIN DeliveredBookingSums dbs ON l.id = dbs.lot_id
 LEFT JOIN DeliveredAllotmentSums das ON l.id = das.lot_id
-LEFT JOIN DirectSaleSums dss ON l.id = dss.lot_id;
+LEFT JOIN DirectSaleSums dss ON l.id = dss.lot_id
+WHERE l.deleted_at IS NULL;
 
 
 -- Drop the old Phase 2 function since we changed its signature
@@ -1322,6 +1323,7 @@ SELECT
     (b.total_amount - COALESCE(SUM(bp.cash_amount + bp.upi_amount), 0)) AS outstanding_balance
 FROM public.bookings b
 LEFT JOIN public.booking_payments bp ON b.id = bp.booking_id
+WHERE b.deleted_at IS NULL
 GROUP BY b.id, b.status, b.total_amount;
 
 
@@ -1374,13 +1376,13 @@ CREATE OR REPLACE FUNCTION public.rpc_add_expense(
 ) RETURNS json 
 SET search_path = public, pg_temp
 SECURITY DEFINER
-AS 
+AS $$
 DECLARE
     v_caller_uid uuid;
     v_expense_id uuid;
 BEGIN
     v_caller_uid := auth.uid();
-    IF v_caller_uid IS NULL AND current_user != 'postgres' THEN
+    IF v_caller_uid IS NULL AND current_user != 'postgres' AND current_setting('role', true) != 'service_role' THEN
         RETURN json_build_object('success', false, 'error', 'Unauthorized');
     END IF;
 
@@ -1397,15 +1399,21 @@ BEGIN
         v_caller_uid
     ) RETURNING id INTO v_expense_id;
 
-    -- Audit log
+    -- Audit log with caller fallback
     INSERT INTO public.audit_logs (user_id, action, table_name, record_id, details)
-    VALUES (v_caller_uid, 'INSERT', 'expenses', v_expense_id::text, 'Expense added: ' || p_category || ' - ' || p_amount);
+    VALUES (
+        COALESCE(v_caller_uid, '00000000-0000-0000-0000-000000000000'::uuid), 
+        'INSERT', 
+        'expenses', 
+        v_expense_id::text, 
+        'Expense added: ' || p_category || ' - ' || p_amount
+    );
 
     RETURN json_build_object('success', true, 'expense_id', v_expense_id);
 EXCEPTION WHEN OTHERS THEN
     RETURN json_build_object('success', false, 'error', SQLERRM);
 END;
- LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 
 CREATE OR REPLACE FUNCTION public.rpc_collect_final_payment(
@@ -1415,67 +1423,131 @@ CREATE OR REPLACE FUNCTION public.rpc_collect_final_payment(
 ) RETURNS json
 SET search_path = public, pg_temp
 SECURITY DEFINER
-AS 
+AS $$
 DECLARE
     v_caller_uid uuid;
-    v_booking record;
     v_status record;
-    v_total_payment decimal(10,2);
-    v_payment_id uuid;
+    v_total_payment decimal;
+    v_new_payment_id uuid;
 BEGIN
     v_caller_uid := auth.uid();
-    IF v_caller_uid IS NULL AND current_user != 'postgres' THEN
+    IF v_caller_uid IS NULL AND current_user != 'postgres' AND current_setting('role', true) != 'service_role' THEN
         RETURN json_build_object('success', false, 'error', 'Unauthorized');
     END IF;
 
     IF p_cash_amount < 0 OR p_upi_amount < 0 THEN
-        RETURN json_build_object('success', false, 'error', 'Negative payments are not permitted');
+        RETURN json_build_object('success', false, 'error', 'Payment amounts cannot be negative');
     END IF;
 
     v_total_payment := p_cash_amount + p_upi_amount;
 
-    IF v_total_payment <= 0 THEN
-        RETURN json_build_object('success', false, 'error', 'Payment amount must be greater than zero');
-    END IF;
+    -- Lock the booking row
+    PERFORM id FROM public.bookings WHERE id = p_booking_id FOR UPDATE;
 
-    -- Lock Booking
-    SELECT * INTO v_booking FROM public.bookings WHERE id = p_booking_id FOR UPDATE;
+    -- Fetch current authoritative balance from view
+    SELECT * INTO v_status FROM public.vw_booking_status WHERE booking_id = p_booking_id;
+
     IF NOT FOUND THEN
         RETURN json_build_object('success', false, 'error', 'Booking not found');
     END IF;
 
-    -- Get strict financial status
-    SELECT * INTO v_status FROM public.vw_booking_status WHERE booking_id = p_booking_id;
-
-    -- Check if already fully paid or delivered
     IF v_status.booking_status = 'Delivered' THEN
-        RETURN json_build_object('success', false, 'error', 'Booking is already delivered');
+        RETURN json_build_object('success', false, 'error', 'Booking already delivered');
     END IF;
 
-    -- Validate exact payment
-    IF v_total_payment != v_status.outstanding_balance THEN
-        RETURN json_build_object('success', false, 'error', 'Payment amount ' || v_total_payment || ' does not match outstanding balance ' || v_status.outstanding_balance);
+    IF v_status.booking_status = 'Cancelled' THEN
+        RETURN json_build_object('success', false, 'error', 'Cannot collect payment for a cancelled booking');
     END IF;
 
-    -- Insert Immutable Row
-    INSERT INTO public.booking_payments (booking_id, payment_type, cash_amount, upi_amount, created_by)
-    VALUES (p_booking_id, 'FINAL', p_cash_amount, p_upi_amount, v_caller_uid)
-    RETURNING id INTO v_payment_id;
+    -- CASE 1: 100% Prepaid Booking (Outstanding Balance = 0)
+    IF v_status.outstanding_balance <= 0 THEN
+        IF v_total_payment > 0 THEN
+            RETURN json_build_object('success', false, 'error', 'Booking is already fully paid. No additional payment required.');
+        END IF;
 
-    -- Transition Booking
-    UPDATE public.bookings 
-    SET status = 'Delivered', updated_at = NOW()
-    WHERE id = p_booking_id;
+        -- Update booking status directly to Delivered without inserting into booking_payments
+        UPDATE public.bookings SET 
+            status = 'Delivered', 
+            delivery_date = CURRENT_DATE,
+            updated_at = timezone('utc'::text, now()) 
+        WHERE id = p_booking_id;
+
+        -- Audit log
+        INSERT INTO public.audit_logs (user_id, action, table_name, record_id, details)
+        VALUES (
+            COALESCE(v_caller_uid, '00000000-0000-0000-0000-000000000000'::uuid), 
+            'DELIVER_PREPAID', 
+            'bookings', 
+            p_booking_id::text, 
+            '100% prepaid order delivered. Outstanding balance was 0.'
+        );
+
+        RETURN json_build_object(
+            'success', true, 
+            'booking_id', p_booking_id, 
+            'status', 'Delivered', 
+            'outstanding_balance', 0,
+            'payment_id', null
+        );
+    END IF;
+
+    -- CASE 2: Outstanding Balance > 0 (Requires Positive Payment)
+    IF v_total_payment <= 0 THEN
+        RETURN json_build_object('success', false, 'error', 'Payment amount must be greater than zero');
+    END IF;
+
+    IF v_total_payment > v_status.outstanding_balance THEN
+        RETURN json_build_object(
+            'success', false, 
+            'error', 'Payment of ₹' || v_total_payment || ' exceeds outstanding balance of ₹' || v_status.outstanding_balance
+        );
+    END IF;
+
+    -- Insert into immutable booking_payments
+    INSERT INTO public.booking_payments (
+        booking_id, 
+        payment_type, 
+        cash_amount, 
+        upi_amount, 
+        created_by
+    ) VALUES (
+        p_booking_id, 
+        'FINAL', 
+        p_cash_amount, 
+        p_upi_amount, 
+        v_caller_uid
+    ) RETURNING id INTO v_new_payment_id;
+
+    -- Update booking status to Delivered if fully paid
+    IF (v_status.outstanding_balance - v_total_payment) = 0 THEN
+        UPDATE public.bookings SET 
+            status = 'Delivered', 
+            delivery_date = CURRENT_DATE,
+            updated_at = timezone('utc'::text, now()) 
+        WHERE id = p_booking_id;
+    END IF;
 
     -- Audit log
     INSERT INTO public.audit_logs (user_id, action, table_name, record_id, details)
-    VALUES (v_caller_uid, 'UPDATE', 'bookings', p_booking_id::text, 'Final payment collected and booking delivered');
+    VALUES (
+        COALESCE(v_caller_uid, '00000000-0000-0000-0000-000000000000'::uuid), 
+        'COLLECT_FINAL_PAYMENT', 
+        'booking_payments', 
+        v_new_payment_id::text, 
+        'Collected final payment of ₹' || v_total_payment || ' for booking ' || p_booking_id::text
+    );
 
-    RETURN json_build_object('success', true, 'payment_id', v_payment_id);
+    RETURN json_build_object(
+        'success', true, 
+        'booking_id', p_booking_id, 
+        'payment_id', v_new_payment_id, 
+        'amount_paid', v_total_payment,
+        'remaining_balance', (v_status.outstanding_balance - v_total_payment)
+    );
 EXCEPTION WHEN OTHERS THEN
     RETURN json_build_object('success', false, 'error', SQLERRM);
 END;
- LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 REVOKE EXECUTE ON FUNCTION public.rpc_add_expense(text, decimal, text, text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.rpc_add_expense(text, decimal, text, text) TO authenticated;
