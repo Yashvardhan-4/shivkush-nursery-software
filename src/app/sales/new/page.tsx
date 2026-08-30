@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { ShoppingCart, User, Plus, Trash2, X, QrCode, WifiOff } from 'lucide-react';
+import { ShoppingCart, User, Plus, Trash2, X, QrCode, WifiOff, Receipt, CheckCircle2, ArrowRight } from 'lucide-react';
 import { generateId, logAudit, resolvePlantPrice } from '@/lib/utils';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabaseClient';
@@ -54,6 +54,7 @@ export default function NewDirectSalePage() {
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [customerCity, setCustomerCity] = useState('');
+  const [completedReceipt, setCompletedReceipt] = useState<any>(null);
   
   const { data: activeQrs } = useQuery({
     queryKey: ['payment_qrs'],
@@ -297,8 +298,21 @@ export default function NewDirectSalePage() {
     queryClient.invalidateQueries({ queryKey: ['lots'] });
     queryClient.invalidateQueries({ queryKey: ['vw_daily_cashbook'] });
     queryClient.invalidateQueries({ queryKey: ['vw_profit_summary'] });
+    queryClient.invalidateQueries({ queryKey: ['vw_inventory_status'] });
 
-    router.push('/dashboard');
+    setCompletedReceipt({
+      saleNumber,
+      customerName: customerName || 'Walk-in Customer',
+      customerPhone: customerPhone || '—',
+      customerCity: customerCity || '—',
+      items: [...cart],
+      totalAmount,
+      paymentMode,
+      cashAmount: finalCash,
+      upiAmount: finalUpi,
+      workerName: currentUser?.name || 'Owner',
+      createdAt: new Date().toISOString()
+    });
   } catch (err: any) {
     console.error(err);
     alert('Unexpected error saving direct sale: ' + (err.message || ''));
@@ -307,6 +321,145 @@ export default function NewDirectSalePage() {
     setLoading(false);
   }
 };
+
+  const resetFormForNewSale = () => {
+    const d = new Date();
+    const yy = d.getFullYear().toString().slice(-2);
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const hh = String(d.getHours()).padStart(2, '0');
+    const min = String(d.getMinutes()).padStart(2, '0');
+    const ss = String(d.getSeconds()).padStart(2, '0');
+    const random = Math.floor(100 + Math.random() * 900).toString();
+    setSaleNumber(`SL-${yy}${mm}${dd}-${hh}${min}${ss}-${random}`);
+    setCustomerName('');
+    setCustomerPhone('');
+    setCustomerCity('');
+    setCart([]);
+    setPlantId('');
+    setSelectedLotId('');
+    setQuantity('');
+    setCashAmount('');
+    setUpiAmount('');
+    setPaymentMode('Cash');
+    setAssignedTo('');
+    setCompletedReceipt(null);
+  };
+
+  if (completedReceipt) {
+    return (
+      <div className="p-6 mb-24 max-w-lg mx-auto space-y-6 animate-in fade-in zoom-in-95 duration-200">
+        {/* Success Badge */}
+        <div className="text-center space-y-2">
+          <div className="w-16 h-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto shadow-inner">
+            <CheckCircle2 className="w-10 h-10" />
+          </div>
+          <h1 className="text-2xl font-black text-gray-900">Sale Confirmed!</h1>
+          <p className="text-sm font-semibold text-gray-500">Transaction recorded successfully</p>
+        </div>
+
+        {/* Printable Receipt Paper */}
+        <div className="bg-white border-2 border-dashed border-gray-200 rounded-3xl p-6 shadow-sm space-y-5">
+          <div className="text-center border-b border-gray-100 pb-4">
+            <h2 className="text-lg font-black text-gray-900 tracking-tight">SHIVKUSH NURSERY</h2>
+            <p className="text-xs text-gray-400 font-bold">Official Sales Receipt</p>
+            <span className="inline-block mt-2 px-3 py-1 bg-purple-50 text-purple-700 rounded-full text-xs font-black">
+              #{completedReceipt.saleNumber}
+            </span>
+          </div>
+
+          {/* Customer & Date Info */}
+          <div className="grid grid-cols-2 gap-3 text-xs">
+            <div>
+              <span className="text-gray-400 font-bold block uppercase">Customer</span>
+              <strong className="text-gray-900 font-bold">{completedReceipt.customerName}</strong>
+              <p className="text-gray-500">{completedReceipt.customerPhone}</p>
+              {completedReceipt.customerCity !== '—' && <p className="text-gray-400">{completedReceipt.customerCity}</p>}
+            </div>
+            <div className="text-right">
+              <span className="text-gray-400 font-bold block uppercase">Date & Time</span>
+              <strong className="text-gray-900 font-bold">
+                {new Date(completedReceipt.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+              </strong>
+              <p className="text-gray-500">
+                {new Date(completedReceipt.createdAt).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true })}
+              </p>
+            </div>
+          </div>
+
+          {/* Purchased Items List */}
+          <div className="border-t border-b border-gray-100 py-3 space-y-2">
+            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Items Purchased</p>
+            {completedReceipt.items.map((it: any, idx: number) => (
+              <div key={idx} className="flex justify-between items-center text-xs">
+                <div>
+                  <p className="font-bold text-gray-800">{it.plantName}</p>
+                  <p className="text-gray-400 text-[11px]">{it.quantity} units @ ₹{it.price}</p>
+                </div>
+                <span className="font-black text-gray-900">₹{it.amount}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Payment Summary */}
+          <div className="space-y-2 text-xs">
+            <div className="flex justify-between items-center text-base">
+              <span className="font-black text-gray-900">Total Paid:</span>
+              <span className="font-black text-green-600 text-xl">₹{completedReceipt.totalAmount.toLocaleString('en-IN')}</span>
+            </div>
+            <div className="flex justify-between text-gray-500 font-medium pt-1 border-t border-gray-50">
+              <span>Payment Mode:</span>
+              <span className="font-bold text-gray-700">{completedReceipt.paymentMode}</span>
+            </div>
+            {completedReceipt.cashAmount > 0 && (
+              <div className="flex justify-between text-gray-500">
+                <span>Cash Paid:</span>
+                <span className="font-bold text-gray-700">₹{completedReceipt.cashAmount}</span>
+              </div>
+            )}
+            {completedReceipt.upiAmount > 0 && (
+              <div className="flex justify-between text-gray-500">
+                <span>UPI Paid:</span>
+                <span className="font-bold text-gray-700">₹{completedReceipt.upiAmount}</span>
+              </div>
+            )}
+            <div className="flex justify-between text-gray-400 pt-2 border-t border-gray-50 text-[11px]">
+              <span>Recorded By:</span>
+              <span className="font-semibold text-gray-600">{completedReceipt.workerName}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Action Buttons */}
+        <div className="space-y-3">
+          <button
+            type="button"
+            onClick={() => window.print()}
+            className="w-full py-4 bg-gray-900 hover:bg-black text-white font-black rounded-2xl flex items-center justify-center gap-2 active:scale-95 transition-all shadow-md"
+          >
+            <Receipt className="w-5 h-5" /> Print / Share Slip
+          </button>
+
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={resetFormForNewSale}
+              className="py-3.5 bg-green-50 hover:bg-green-100 text-green-700 font-black rounded-xl text-center active:scale-95 transition-all border border-green-200"
+            >
+              + New Sale
+            </button>
+            <button
+              type="button"
+              onClick={() => router.push('/dashboard')}
+              className="py-3.5 bg-gray-100 hover:bg-gray-200 text-gray-800 font-black rounded-xl text-center active:scale-95 transition-all"
+            >
+              Dashboard
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 mb-24 space-y-6">
