@@ -2,6 +2,12 @@
 -- Hardens process_direct_sales_batch, allocate_lot, and release_booking_allotments
 -- with SECURITY DEFINER to ensure atomic execution without RLS policy violations.
 
+-- Drop existing functions to allow signature / return type updates cleanly
+DROP FUNCTION IF EXISTS public.process_direct_sales_batch(jsonb, jsonb, jsonb);
+DROP FUNCTION IF EXISTS public.allocate_lot(uuid, uuid, integer, uuid, text, integer, integer);
+DROP FUNCTION IF EXISTS public.allocate_lot(uuid, uuid, integer, uuid, text);
+DROP FUNCTION IF EXISTS public.release_booking_allotments(uuid, uuid, text);
+
 -- 1. PROCESS DIRECT SALES BATCH
 CREATE OR REPLACE FUNCTION public.process_direct_sales_batch(
     p_sales jsonb,
