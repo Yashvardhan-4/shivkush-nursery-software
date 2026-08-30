@@ -4,6 +4,7 @@ import { useState, useEffect, use } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabaseClient';
+import { serverSavePlant, serverDeletePlant } from '@/lib/actions/plants';
 import { ArrowLeft, ArchiveX, Plus, Trash2, Tag } from 'lucide-react';
 
 interface PricingTier {
@@ -83,18 +84,19 @@ export default function EditPlantPage({ params }: { params: Promise<{ id: string
 
     if (!plant) { setLoading(false); return; }
 
-    const updatedPlant = {
+    const result = await serverSavePlant({
+      id,
       plant_name: name,
       variety: variety,
       category: category,
       selling_price: parseFloat(price),
       pricing_tiers: pricingTiers,
-    };
+      active: plant.active
+    });
 
-    const { error } = await supabase.from('plants').update(updatedPlant).eq('id', id);
-    if (error) {
-      console.error(error);
-      alert('Failed to update plant');
+    if (!result.success) {
+      console.error(result.error);
+      alert('Failed to update plant: ' + (result.error || ''));
       setLoading(false);
       return;
     }
@@ -112,10 +114,10 @@ export default function EditPlantPage({ params }: { params: Promise<{ id: string
 
     if (!plant) { setArchiving(false); return; }
 
-    const { error } = await supabase.from('plants').update({ active: false }).eq('id', id);
-    if (error) {
-      console.error(error);
-      alert('Failed to archive plant');
+    const result = await serverDeletePlant(id);
+    if (!result.success) {
+      console.error(result.error);
+      alert('Failed to archive plant: ' + (result.error || ''));
       setArchiving(false);
       return;
     }

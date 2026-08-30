@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { generateId } from '@/lib/utils';
 import type { PricingTier } from '@/lib/utils';
 import { supabase } from '@/lib/supabaseClient';
+import { serverSavePlant } from '@/lib/actions/plants';
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Plus, Trash2, Tag } from 'lucide-react';
 export default function NewPlantPage() {
@@ -48,20 +49,18 @@ export default function NewPlantPage() {
       return;
     }
 
-    const newPlant = {
-      id: generateId(),
+    const result = await serverSavePlant({
       plant_name: name,
       variety: variety,
       category: category,
       selling_price: parseFloat(price),
       active: true,
       pricing_tiers: pricingTiers,
-    };
+    });
 
-    const { error } = await supabase.from('plants').insert(newPlant);
-    if (error) {
-      console.error(error);
-      alert('Failed to save plant');
+    if (!result.success) {
+      console.error(result.error);
+      alert('Failed to save plant: ' + (result.error || ''));
       setLoading(false);
       return;
     }

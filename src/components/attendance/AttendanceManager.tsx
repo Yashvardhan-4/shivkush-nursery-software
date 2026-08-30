@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabaseClient';
+import { serverMarkAttendance } from '@/lib/actions/attendance';
 import { generateId, toLocalDateStr } from '@/lib/utils';
 import { CheckCircle, XCircle, Clock, ChevronDown, ChevronUp, Calendar } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
@@ -72,28 +73,20 @@ export default function AttendanceManager({ ownerId }: AttendanceManagerProps) {
     setLoading(prev => ({ ...prev, [key]: true }));
 
     try {
-      // Remove any existing record for this worker today
-      await supabase.from('attendance')
-        .delete()
-        .eq('worker_id', worker_id)
-        .eq('date', today);
-
-      const id = generateId();
-      // Payload matching exact database schema
-      const record = {
-        id,
+      const result = await serverMarkAttendance({
         worker_id,
-        date: today,
-        status
-      };
+        status,
+        date: today
+      });
 
-      const { error } = await supabase.from('attendance').insert(record);
-      if (error) throw error;
+      if (!result.success) {
+        throw new Error(result.error);
+      }
       
       queryClient.invalidateQueries({ queryKey: ['attendance'] });
     } catch (err: any) {
       console.error('Failed to mark attendance:', err);
-      alert('Failed to mark attendance. Please try again.');
+      alert('Failed to mark attendance: ' + (err.message || ''));
     } finally {
       setLoading(prev => ({ ...prev, [key]: false }));
     }

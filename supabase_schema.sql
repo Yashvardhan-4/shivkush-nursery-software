@@ -1328,31 +1328,47 @@ GROUP BY b.id, b.status, b.total_amount;
 
 
 CREATE OR REPLACE VIEW public.vw_daily_cashbook AS
+-- Booking Payments (Grouped by booking_number and payment event)
 SELECT 
-    bp.payment_date AS datetime,
+    MIN(bp.payment_date) AS datetime,
     'BOOKING_PAYMENT' AS transaction_type,
-    bp.cash_amount AS cash,
-    bp.upi_amount AS upi,
-    (bp.cash_amount + bp.upi_amount) AS total,
-    'Booking ' || bp.payment_type AS description,
+    SUM(bp.cash_amount) AS cash,
+    SUM(bp.upi_amount) AS upi,
+    SUM(bp.cash_amount + bp.upi_amount) AS total,
+    'Booking ' || bp.payment_type || ' #' || b.booking_number || 
+      COALESCE(' (' || NULLIF(MIN(b.customer_name), '') || ')', '') AS description,
     bp.created_by AS worker_id,
-    u.name AS worker_name
+    MIN(u.name) AS worker_name,
+    b.booking_number AS reference_number
 FROM public.booking_payments bp
+JOIN public.bookings b ON bp.booking_id = b.id
 LEFT JOIN public.users u ON bp.created_by = u.id
+WHERE b.deleted_at IS NULL
+GROUP BY b.booking_number, bp.payment_type, bp.payment_date, bp.created_by
+
 UNION ALL
+
+-- Direct Sales (Grouped by sale_number so multi-variety sales are ONE single transaction)
 SELECT 
-    ds.created_at AS datetime,
+    MIN(ds.created_at) AS datetime,
     'DIRECT_SALE' AS transaction_type,
-    COALESCE(ds.cash_amount, CASE WHEN ds.payment_mode = 'Cash' THEN ds.amount ELSE 0 END) AS cash,
-    COALESCE(ds.upi_amount, CASE WHEN ds.payment_mode = 'UPI' THEN ds.amount ELSE 0 END) AS upi,
-    ds.amount AS total,
-    'Direct Sale ' || ds.sale_number AS description,
+    SUM(COALESCE(ds.cash_amount, CASE WHEN ds.payment_mode = 'Cash' THEN ds.amount ELSE 0 END)) AS cash,
+    SUM(COALESCE(ds.upi_amount, CASE WHEN ds.payment_mode = 'UPI' THEN ds.amount ELSE 0 END)) AS upi,
+    SUM(ds.amount) AS total,
+    'Direct Sale #' || ds.sale_number || 
+      COALESCE(' (' || NULLIF(MIN(ds.customer_name), '') || ')', '') || 
+      CASE WHEN COUNT(*) > 1 THEN ' - ' || COUNT(*) || ' items' ELSE '' END AS description,
     ds.worker_id AS worker_id,
-    u.name AS worker_name
+    MIN(u.name) AS worker_name,
+    ds.sale_number AS reference_number
 FROM public.direct_sales ds
 LEFT JOIN public.users u ON ds.worker_id = u.id
 WHERE ds.deleted_at IS NULL
+GROUP BY ds.sale_number, ds.worker_id
+
 UNION ALL
+
+-- Expenses
 SELECT 
     e.expense_date AS datetime,
     'EXPENSE' AS transaction_type,
@@ -1361,7 +1377,8 @@ SELECT
     -e.amount AS total,
     'Expense: ' || e.category || COALESCE(' - ' || e.description, '') AS description,
     e.created_by AS worker_id,
-    u.name AS worker_name
+    u.name AS worker_name,
+    e.id::text AS reference_number
 FROM public.expenses e
 LEFT JOIN public.users u ON e.created_by = u.id;
 

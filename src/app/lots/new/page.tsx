@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
+import { serverSaveLot } from '@/lib/actions/lots';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 export default function NewLotPage() {
@@ -39,28 +40,26 @@ export default function NewLotPage() {
     if (!navigator.onLine) { alert('You must be online to save.'); return; }
     setLoading(true);
 
-    const newLot = {
+    const result = await serverSaveLot({
       lot_number: lotNumber,
       lot_name: lotName || null,
       plant_id: plantId,
       total_quantity: parseInt(quantity),
       initial_quantity: parseInt(quantity),
       ready_date: readyDate,
-      status: 'Growing' as const,
+      status: 'Growing',
       notes: ''
-    };
+    });
 
-    try {
-      const { error } = await supabase.from('lots').insert(newLot);
-      if (error) throw error;
-      
-      queryClient.invalidateQueries({ queryKey: ['lots'] });
-      router.push('/lots');
-    } catch (error) {
-      console.error('Failed to save lot:', error);
-      alert('Failed to save lot. Please try again.');
+    if (!result.success) {
+      console.error('Failed to save lot:', result.error);
+      alert('Failed to save lot: ' + (result.error || ''));
       setLoading(false);
+      return;
     }
+
+    queryClient.invalidateQueries({ queryKey: ['lots'] });
+    router.push('/lots');
   };
 
   return (

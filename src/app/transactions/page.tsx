@@ -17,7 +17,8 @@ import {
   X,
   Printer,
   FileText,
-  Filter
+  Filter,
+  PackageCheck
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -34,6 +35,7 @@ interface CashbookRow {
   description: string;
   worker_id?: string | null;
   worker_name?: string | null;
+  reference_number?: string | null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -96,6 +98,21 @@ export default function DailyCashbookPage() {
   const [activeTxDetail, setActiveTxDetail] = useState<CashbookRow | null>(null);
   const [workerFilter, setWorkerFilter] = useState<string>('ALL');
 
+  /* ---- Query: Plants for mapping names ---- */
+  const { data: plants = [] } = useQuery({
+    queryKey: ['plants'],
+    queryFn: async () => {
+      const { data } = await supabase.from('plants').select('*');
+      return data || [];
+    }
+  });
+
+  const plantMap = useMemo(() => {
+    const map = new Map<string, any>();
+    plants.forEach((p: any) => map.set(p.id, p));
+    return map;
+  }, [plants]);
+
   /* ---- Query: Users for worker mapping ---- */
   const { data: users = [] } = useQuery({
     queryKey: ['users'],
@@ -111,6 +128,37 @@ export default function DailyCashbookPage() {
     users.forEach((u: any) => map.set(u.id, { name: u.name, role: u.role }));
     return map;
   }, [users]);
+
+  /* ---- Query: Itemized lines for active modal transaction ---- */
+  const { data: txLineItems = [], isLoading: isItemsLoading } = useQuery({
+    queryKey: ['tx_items', activeTxDetail?.reference_number, activeTxDetail?.transaction_type],
+    queryFn: async () => {
+      if (!activeTxDetail?.reference_number) return [];
+
+      if (activeTxDetail.transaction_type === 'DIRECT_SALE') {
+        const { data, error } = await supabase
+          .from('direct_sales')
+          .select('*')
+          .eq('sale_number', activeTxDetail.reference_number)
+          .is('deleted_at', null);
+        if (error) return [];
+        return data || [];
+      }
+
+      if (activeTxDetail.transaction_type === 'BOOKING_PAYMENT') {
+        const { data, error } = await supabase
+          .from('bookings')
+          .select('*')
+          .eq('booking_number', activeTxDetail.reference_number)
+          .is('deleted_at', null);
+        if (error) return [];
+        return data || [];
+      }
+
+      return [];
+    },
+    enabled: !!activeTxDetail?.reference_number
+  });
 
   /* ---- Query: vw_daily_cashbook for selected date ---- */
   const { data: rawRows, isLoading } = useQuery<CashbookRow[]>({
@@ -250,7 +298,7 @@ export default function DailyCashbookPage() {
               Daily Cashbook & Transactions
             </h1>
             <p className="text-xs font-semibold text-gray-500">
-              {dateLabel} &middot; {filteredRows?.length ?? 0} entries
+              {dateLabel} &middot; {filteredRows?.length ?? 0} transactions
             </p>
           </div>
         </div>
@@ -357,7 +405,7 @@ export default function DailyCashbookPage() {
         <div className="space-y-2">
           <div className="flex justify-between items-center px-1">
             <h2 className="text-sm font-black text-gray-900">Transactions List</h2>
-            <span className="text-xs text-gray-400 font-bold">{filteredRows?.length ?? 0} entries &middot; Tap to view slip</span>
+            <span className="text-xs text-gray-400 font-bold">{filteredRows?.length ?? 0} transactions &middot; Tap to view slip</span>
           </div>
 
           {isLoading ? (
@@ -441,14 +489,14 @@ export default function DailyCashbookPage() {
         </div>
       </div>
 
-      {/* Transaction Details Slip Modal */}
+      {/* Transaction Details Slip Modal with Line Items */}
       {activeTxDetail && (
         <div 
           className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200"
           onClick={() => setActiveTxDetail(null)}
         >
           <div 
-            className="bg-white rounded-3xl w-full max-w-sm overflow-hidden shadow-2xl space-y-4 p-6 animate-in zoom-in-95 duration-200"
+            className="bg-white rounded-3xl w-full max-w-sm overflow-hidden shadow-2xl space-y-4 p-6 animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex justify-between items-start border-b border-gray-100 pb-3">
@@ -472,6 +520,31 @@ export default function DailyCashbookPage() {
                 <span className="text-[10px] text-gray-400 font-bold uppercase block">Description</span>
                 <p className="font-bold text-gray-800 text-sm">{activeTxDetail.description}</p>
               </div>
+
+              {/* Itemized Line Items for Sales/Bookings */}
+              {txLineItems.length > 0 && (
+                <div className="pt-2 border-t border-gray-200/60 space-y-2">
+                  <span className="text-[10px] text-gray-400 font-bold uppercase block">Plant Items Breakdown</span>
+                  <div className="space-y-1.5 bg-white p-2.5 rounded-xl border border-gray-200/70">
+                    {txLineItems.map((item: any, i: number) => {
+                      const plant = plantMap.get(item.plant_id);
+                      const plantName = plant ? `${plant.plant_name}${plant.variety ? ` (${plant.variety})` : ''}` : 'Plant';
+                      const rate = item.rate_per_unit || (item.amount ? Math.round(item.amount / item.quantity) : 0);
+                      const amt = item.amount || item.total_amount;
+
+                      return (
+                        <div key={item.id || i} className="flex justify-between items-center text-[11px] pb-1 border-b border-gray-100 last:border-0 last:pb-0">
+                          <div>
+                            <p className="font-black text-gray-800">{plantName}</p>
+                            <p className="text-[10px] text-gray-500 font-semibold">{item.quantity} units @ ₹{rate}</p>
+                          </div>
+                          <span className="font-black text-gray-900">{fmt(amt)}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-2 pt-1 border-t border-gray-200/60">
                 <div>

@@ -3,6 +3,7 @@
 import { useState, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabaseClient';
+import { serverSaveQr, serverDeleteQr, serverToggleQr } from '@/lib/actions/qrs';
 import { generateId } from '@/lib/utils';
 import { QrCode, Upload, Trash2, Plus, ChevronLeft, Check } from 'lucide-react';
 import Link from 'next/link';
@@ -44,17 +45,14 @@ export default function QRManagementPage() {
     
     setLoading(true);
     try {
-      const qrId = generateId();
-      const qrData = {
-        id: qrId,
+      const result = await serverSaveQr({
         name,
         upi_id: upiId,
         image_data: imageData,
         active: true
-      };
+      });
       
-      const { error } = await supabase.from('payment_qrs').insert(qrData);
-      if (error) throw error;
+      if (!result.success) throw new Error(result.error);
       
       queryClient.invalidateQueries({ queryKey: ['payment_qrs'] });
       
@@ -62,9 +60,9 @@ export default function QRManagementPage() {
       setUpiId('');
       setImageData(null);
       setShowAdd(false);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      alert('Failed to save QR code.');
+      alert('Failed to save QR code: ' + (err.message || ''));
     } finally {
       setLoading(false);
     }
@@ -74,26 +72,26 @@ export default function QRManagementPage() {
     if (!confirm('Are you sure you want to delete this QR code?')) return;
     if (!navigator.onLine) { alert('You must be online to save.'); return; }
     try {
-      const deletedAt = new Date().toISOString();
-      const { error } = await supabase.from('payment_qrs').update({ deleted_at: deletedAt }).eq('id', id);
-      if (error) throw error;
+      const result = await serverDeleteQr(id);
+      if (!result.success) throw new Error(result.error);
       
       queryClient.invalidateQueries({ queryKey: ['payment_qrs'] });
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      alert('Failed to delete QR code: ' + (err.message || ''));
     }
   };
 
   const toggleActive = async (id: string, currentStatus: boolean) => {
     if (!navigator.onLine) { alert('You must be online to save.'); return; }
     try {
-      const updates = { active: !currentStatus };
-      const { error } = await supabase.from('payment_qrs').update(updates).eq('id', id);
-      if (error) throw error;
+      const result = await serverToggleQr(id, !currentStatus);
+      if (!result.success) throw new Error(result.error);
       
       queryClient.invalidateQueries({ queryKey: ['payment_qrs'] });
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      alert('Failed to update QR status: ' + (err.message || ''));
     }
   };
 
