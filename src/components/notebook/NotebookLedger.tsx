@@ -97,6 +97,15 @@ export default function NotebookLedger({ role, userId }: { role: string; userId:
     }
   });
 
+  const { data: vwBookingStatus } = useQuery({
+    queryKey: ['vw_booking_status'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('vw_booking_status').select('*');
+      if (error) return [];
+      return data || [];
+    }
+  });
+
   // Group bookings by booking_number to show cart items together
   const groupedBookings = bookings?.reduce((acc, curr) => {
     if (!acc[curr.booking_number]) {
@@ -112,7 +121,8 @@ export default function NotebookLedger({ role, userId }: { role: string; userId:
       };
     }
     acc[curr.booking_number].items.push(curr);
-    acc[curr.booking_number].total_advance += Number(curr.advance_paid) || 0;
+    const statusRow = vwBookingStatus?.find((v: any) => v.booking_id === curr.id);
+    acc[curr.booking_number].total_advance += statusRow ? Number(statusRow.total_paid) : (Number(curr.advance_paid) || 0);
     acc[curr.booking_number].total_amount += Number(curr.total_amount) || 0;
     return acc;
   }, {} as Record<string, GroupedBooking>);
@@ -198,9 +208,10 @@ export default function NotebookLedger({ role, userId }: { role: string; userId:
               ))}
             </div>
 
-            <div className="bg-blue-50 p-3 rounded-xl flex justify-between items-center border border-blue-100">
-              <div className="text-xs font-bold text-blue-800 uppercase">{t('bookingAdvance')}: ₹{b.total_advance}</div>
-              <div className="text-sm font-black text-blue-900">Total: ₹{b.total_amount}</div>
+            <div className="bg-blue-50 p-3 rounded-xl flex justify-between items-center border border-blue-100 text-xs">
+              <span className="font-bold text-green-700">Paid: ₹{b.total_advance}</span>
+              <span className="font-bold text-gray-600">Total: ₹{b.total_amount}</span>
+              <span className="font-black text-blue-900">Balance: ₹{Math.max(0, b.total_amount - b.total_advance)}</span>
             </div>
           </div>
         ))}

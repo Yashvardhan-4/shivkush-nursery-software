@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useState, useEffect } from 'react';
+import { use, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabaseClient';
@@ -34,32 +34,38 @@ export default function CustomerDetailPage({ params }: Props) {
     }
   });
 
-  const { data: plants } = useQuery({
+  const { data: plants = [] } = useQuery({
     queryKey: ['plants'],
     queryFn: async () => {
-      const { data, error } = await supabase.from('plants').select('*').eq('active', true);
+      const { data, error } = await supabase.from('plants').select('*');
       if (error) throw error;
       return data || [];
     }
   });
 
+  const plantMap = useMemo(() => {
+    const map = new Map<string, any>();
+    plants.forEach((p: any) => map.set(p.id, p));
+    return map;
+  }, [plants]);
+
   // Retrieve transactions using customer phone number
-  const { data: bookings } = useQuery({
+  const { data: bookings = [] } = useQuery({
     queryKey: ['bookings', customer?.mobile],
     enabled: !!customer?.mobile,
     queryFn: async () => {
-      const { data, error } = await supabase.from('bookings').select('*').eq('customer_phone', customer.mobile);
+      const { data, error } = await supabase.from('bookings').select('*').eq('customer_phone', customer.mobile).is('deleted_at', null);
       if (error) throw error;
       return data || [];
     }
   });
 
   // Fetch centralized booking financial status from the view
-  const { data: vwBookingStatus } = useQuery({
+  const { data: vwBookingStatus = [] } = useQuery({
     queryKey: ['vw_booking_status', customer?.mobile],
-    enabled: !!bookings && bookings.length > 0,
+    enabled: bookings.length > 0,
     queryFn: async () => {
-      const bookingIds = bookings!.map(b => b.id);
+      const bookingIds = bookings.map(b => b.id);
       const { data, error } = await supabase
         .from('vw_booking_status')
         .select('booking_id, booking_status, advance_paid, final_paid, total_paid, outstanding_balance')
@@ -69,17 +75,65 @@ export default function CustomerDetailPage({ params }: Props) {
     }
   });
 
-  const { data: sales } = useQuery({
+  const { data: rawSales = [] } = useQuery({
     queryKey: ['direct_sales', customer?.mobile],
     enabled: !!customer?.mobile,
     queryFn: async () => {
-      const { data, error } = await supabase.from('direct_sales').select('*').eq('customer_phone', customer.mobile);
+      const { data, error } = await supabase.from('direct_sales').select('*').eq('customer_phone', customer.mobile).is('deleted_at', null);
       if (error) throw error;
       return data || [];
     }
   });
 
-  if (loadingCustomer || !customer || !plants || !bookings || (bookings.length > 0 && !vwBookingStatus) || !sales) {
+  // Group direct sales by sale_number
+  const groupedSales = useMemo(() => {
+    const map = new Map<string, { sale_number: string; created_at: string; total_amount: number; payment_mode: string; items: any[] }>();
+    rawSales.forEach((s: any) => {
+      if (!map.has(s.sale_number)) {
+        map.set(s.sale_number, {
+          sale_number: s.sale_number,
+          created_at: s.created_at,
+          total_amount: 0,
+          payment_mode: s.payment_mode,
+          items: []
+        });
+      }
+      const group = map.get(s.sale_number)!;
+      group.total_amount += Number(s.amount) || 0;
+      group.items.push(s);
+    });
+    return Array.from(map.values()).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  }, [rawSales]);
+
+  // Group bookings by booking_number
+  const groupedBookings = useMemo(() => {
+    const map = new Map<string, { booking_number: string; booking_date: string; status: string; total_amount: number; total_paid: number; outstanding_balance: number; items: any[] }>();
+    bookings.forEach((b: any) => {
+      if (!map.has(b.booking_number)) {
+        map.set(b.booking_number, {
+          booking_number: b.booking_number,
+          booking_date: b.booking_date,
+          status: b.status,
+          total_amount: 0,
+          total_paid: 0,
+          outstanding_balance: 0,
+          items: []
+        });
+      }
+      const group = map.get(b.booking_number)!;
+      const statusRow = vwBookingStatus.find((v: any) => v.booking_id === b.id);
+      group.total_amount += Number(b.total_amount) || 0;
+      group.total_paid += statusRow ? Number(statusRow.total_paid) : (Number(b.advance_paid) || 0);
+      group.outstanding_balance += statusRow ? Number(statusRow.outstanding_balance) : Math.max(0, b.total_amount - (b.advance_paid || 0));
+      group.items.push(b);
+      // Status rollup
+      if (b.status === 'Cancelled') group.status = 'Cancelled';
+      else if (group.status !== 'Cancelled' && b.status === 'Delivered') group.status = 'Delivered';
+    });
+    return Array.from(map.values()).sort((a, b) => new Date(b.booking_date).getTime() - new Date(a.booking_date).getTime());
+  }, [bookings, vwBookingStatus]);
+
+  if (loadingCustomer || !customer) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin" />
@@ -88,191 +142,213 @@ export default function CustomerDetailPage({ params }: Props) {
   }
 
   // Financial aggregates
-  const totalSalesSpend = sales.reduce((sum, s) => sum + s.amount, 0);
+  const totalSalesSpend = rawSales.reduce((sum: number, s: any) => sum + Number(s.amount || 0), 0);
   const totalBookingsSpend = bookings
-    .filter(b => b.status !== 'Cancelled')
-    .reduce((sum, b) => sum + b.total_amount, 0);
+    .filter((b: any) => b.status !== 'Cancelled')
+    .reduce((sum: number, b: any) => sum + Number(b.total_amount || 0), 0);
   
   const lifetimeSpend = totalSalesSpend + totalBookingsSpend;
 
-  const activeBookings = bookings.filter(b => ['Pending', 'Allocated', 'Ready'].includes(b.status));
-  const completedBookings = bookings.filter(b => b.status === 'Delivered');
-  const cancelledBookings = bookings.filter(b => b.status === 'Cancelled');
+  const activeBookings = groupedBookings.filter(b => ['Pending', 'Allocated', 'Ready'].includes(b.status));
+  const completedBookings = groupedBookings.filter(b => b.status === 'Delivered');
+  const cancelledBookings = groupedBookings.filter(b => b.status === 'Cancelled');
 
   return (
-    <div className="p-6 mb-24 max-w-2xl mx-auto space-y-6">
+    <div className="p-4 space-y-5 max-w-2xl mx-auto pb-24">
+      {/* Header */}
       <header className="flex items-center gap-3">
-        <button onClick={() => router.back()} className="p-2 rounded-xl bg-white border border-gray-100 shadow-sm active:scale-95 transition-transform text-gray-500">
+        <button
+          onClick={() => router.back()}
+          className="p-2 -ml-2 rounded-xl text-gray-500 bg-gray-100 active:scale-95 transition-transform"
+        >
           <ArrowLeft className="w-5 h-5" />
         </button>
         <div>
-          <h1 className="text-2xl font-black text-gray-900">Customer Ledger</h1>
-          <p className="text-sm font-semibold text-gray-400">Detailed transactions and profile history</p>
+          <h1 className="text-xl font-black text-gray-900 tracking-tight">{customer.name}</h1>
+          <p className="text-xs font-semibold text-gray-400">Customer Profile & Purchase Ledger</p>
         </div>
       </header>
 
-      {/* Profile Card */}
-      <div className="bg-gradient-to-br from-indigo-600 to-indigo-900 rounded-3xl p-6 text-white shadow-xl space-y-6 relative overflow-hidden">
-        <div className="absolute right-0 top-0 translate-x-1/4 -translate-y-1/4 bg-white/5 w-44 h-44 rounded-full" />
-        <div className="flex items-start gap-4">
-          <div className="bg-white/10 p-4 rounded-2xl">
-            <User className="w-8 h-8 text-indigo-250" />
-          </div>
-          <div>
-            <h2 className="text-2xl font-black">{customer.name}</h2>
-            <div className="flex items-center gap-4 text-xs font-semibold text-indigo-200 mt-2">
-              <span className="flex items-center gap-1"><Phone className="w-3.5 h-3.5" /> {customer.mobile}</span>
-              {customer.city && <span className="flex items-center gap-1"><MapPin className="w-3.5 h-3.5" /> {customer.city}</span>}
+      {/* Customer Snapshot Card */}
+      <div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm space-y-4">
+        <div className="flex justify-between items-start">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 text-gray-700 text-sm font-black">
+              <Phone className="w-4 h-4 text-green-600" />
+              <span>{customer.mobile}</span>
             </div>
+            {customer.city && (
+              <div className="flex items-center gap-2 text-gray-500 text-xs font-semibold">
+                <MapPin className="w-3.5 h-3.5 text-gray-400" />
+                <span>{customer.city}</span>
+              </div>
+            )}
           </div>
+          <span className="text-[10px] font-black uppercase tracking-wider bg-gray-100 text-gray-600 px-2.5 py-1 rounded-full">
+            Active Buyer
+          </span>
         </div>
 
-        <div className="border-t border-white/10 pt-4 flex justify-between items-center">
-          <div>
-            <p className="text-[10px] uppercase tracking-widest text-indigo-200 font-bold">Lifetime Value</p>
-            <p className="text-3xl font-black mt-1">₹{lifetimeSpend.toLocaleString('en-IN')}</p>
+        {/* Financial Highlights */}
+        <div className="grid grid-cols-2 gap-3 pt-3 border-t border-gray-100">
+          <div className="bg-emerald-50 rounded-2xl p-3.5 border border-emerald-100">
+            <p className="text-[10px] font-black uppercase tracking-wider text-emerald-800">Lifetime Spend</p>
+            <p className="text-xl font-black text-emerald-950 mt-1">₹{lifetimeSpend.toLocaleString('en-IN')}</p>
           </div>
-          <div className="bg-white/10 px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 border border-white/5">
-            <TrendingUp className="w-4 h-4 text-emerald-300" /> VIP Status
+          <div className="bg-blue-50 rounded-2xl p-3.5 border border-blue-100">
+            <p className="text-[10px] font-black uppercase tracking-wider text-blue-800">Total Orders</p>
+            <p className="text-xl font-black text-blue-950 mt-1">{groupedSales.length + groupedBookings.length}</p>
           </div>
         </div>
       </div>
 
       {/* Direct Sales history */}
       <div className="space-y-3">
-        <h3 className="font-black text-gray-800 text-lg flex items-center gap-2">
-          <ShoppingBag className="w-5 h-5 text-purple-600" /> Direct Sales ({sales.length})
+        <h3 className="font-black text-gray-800 text-base flex items-center gap-2">
+          <ShoppingBag className="w-4 h-4 text-purple-600" /> Direct Sales ({groupedSales.length})
         </h3>
-        {sales.length === 0 ? (
-          <p className="text-sm font-semibold text-gray-400 bg-white p-4 rounded-2xl border border-gray-100 text-center">
+        {groupedSales.length === 0 ? (
+          <p className="text-xs font-semibold text-gray-400 bg-white p-4 rounded-2xl border border-gray-100 text-center">
             No direct purchases recorded.
           </p>
         ) : (
-          <div className="grid gap-3">
-            {sales.map(sale => {
-              const plant = plants.find(p => p.id === sale.plant_id);
-              return (
-                <div key={sale.id} className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex justify-between items-center text-sm">
+          <div className="grid gap-2.5">
+            {groupedSales.map(sale => (
+              <div key={sale.sale_number} className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm space-y-2 text-xs">
+                <div className="flex justify-between items-start">
                   <div>
-                    <p className="font-black text-gray-900">{sale.sale_number}</p>
-                    <p className="text-xs font-bold text-gray-500 mt-1">
-                      {plant?.plant_name} × {sale.quantity}
-                    </p>
-                    <span className="text-[10px] text-gray-400 mt-0.5 block">
+                    <p className="font-black text-gray-900 text-sm">#{sale.sale_number}</p>
+                    <span className="text-[10px] text-gray-400 font-semibold mt-0.5 block">
                       {new Date(sale.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
                     </span>
                   </div>
-                  <strong className="text-gray-900 font-black text-base">₹{sale.amount}</strong>
+                  <strong className="text-gray-900 font-black text-base">₹{sale.total_amount.toLocaleString('en-IN')}</strong>
                 </div>
-              );
-            })}
+                <div className="space-y-1 pt-1.5 border-t border-gray-50">
+                  {sale.items.map((item: any, i: number) => {
+                    const plant = plantMap.get(item.plant_id);
+                    return (
+                      <div key={item.id || i} className="flex justify-between text-gray-600 text-[11px]">
+                        <span>{plant ? `${plant.plant_name}${plant.variety ? ` (${plant.variety})` : ''}` : 'Plant'} × {item.quantity}</span>
+                        <span className="font-bold text-gray-800">₹{item.amount}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </div>
 
       {/* Booking history */}
       <div className="space-y-4 pt-2">
-        <h3 className="font-black text-gray-800 text-lg flex items-center gap-2">
-          <CalendarDays className="w-5 h-5 text-blue-600" /> Bookings & Deposits ({bookings.length})
+        <h3 className="font-black text-gray-800 text-base flex items-center gap-2">
+          <CalendarDays className="w-4 h-4 text-blue-600" /> Bookings & Deposits ({groupedBookings.length})
         </h3>
 
         {/* Active Bookings */}
         {activeBookings.length > 0 && (
-          <div className="space-y-3">
+          <div className="space-y-2.5">
             <h4 className="text-xs font-black text-blue-700 uppercase tracking-wider">Active Bookings</h4>
-            <div className="grid gap-3">
-              {activeBookings.map(booking => {
-                const plant = plants.find(p => p.id === booking.plant_id);
-                return (
-                  <div key={booking.id} className="bg-white p-4 rounded-2xl border border-blue-100 shadow-sm space-y-3 text-sm">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <p className="font-black text-gray-900">{booking.booking_number}</p>
-                        <p className="text-xs font-bold text-gray-500 mt-1">
-                          {plant?.plant_name} × {booking.quantity}
-                        </p>
-                      </div>
-                      <span className="bg-blue-100 text-blue-800 text-[10px] font-black uppercase px-2.5 py-1 rounded-full">
-                        {booking.status}
+            <div className="grid gap-2.5">
+              {activeBookings.map(b => (
+                <div key={b.booking_number} className="bg-white p-4 rounded-2xl border border-blue-100 shadow-sm space-y-2.5 text-xs">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <p className="font-black text-gray-900 text-sm">#{b.booking_number}</p>
+                      <span className="text-[10px] text-gray-400 font-semibold mt-0.5 block">
+                        {new Date(b.booking_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
                       </span>
                     </div>
-                    {(() => {
-                      const statusRow = vwBookingStatus?.find((v: any) => v.booking_id === booking.id);
-                      const advancePaid = statusRow ? Number(statusRow.advance_paid) : booking.advance_paid;
+                    <span className="bg-blue-100 text-blue-800 text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full">
+                      {b.status}
+                    </span>
+                  </div>
+
+                  <div className="space-y-1 pt-1.5 border-t border-gray-50">
+                    {b.items.map((item: any, i: number) => {
+                      const plant = plantMap.get(item.plant_id);
                       return (
-                        <div className="flex justify-between text-xs pt-2 border-t border-gray-50 font-semibold text-gray-500">
-                          <span>Total: ₹{booking.total_amount}</span>
-                          <span className="text-green-600 font-bold">Advance paid: ₹{advancePaid}</span>
+                        <div key={item.id || i} className="flex justify-between text-gray-600 text-[11px]">
+                          <span>{plant ? `${plant.plant_name}${plant.variety ? ` (${plant.variety})` : ''}` : 'Plant'} × {item.quantity}</span>
+                          <span className="font-bold text-gray-800">₹{item.total_amount}</span>
                         </div>
                       );
-                    })()}
+                    })}
                   </div>
-                );
-              })}
+
+                  <div className="flex justify-between text-xs pt-2 border-t border-gray-100 font-semibold">
+                    <span className="text-gray-500">Total: ₹{b.total_amount}</span>
+                    <span className="text-green-700 font-bold">Paid: ₹{b.total_paid}</span>
+                    <span className="text-blue-900 font-black">Balance: ₹{b.outstanding_balance}</span>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         )}
 
         {/* Completed Bookings */}
         {completedBookings.length > 0 && (
-          <div className="space-y-3">
+          <div className="space-y-2.5">
             <h4 className="text-xs font-black text-green-700 uppercase tracking-wider">Delivered Orders</h4>
-            <div className="grid gap-3">
-              {completedBookings.map(booking => {
-                const plant = plants.find(p => p.id === booking.plant_id);
-                return (
-                  <div key={booking.id} className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex justify-between items-center text-sm">
+            <div className="grid gap-2.5">
+              {completedBookings.map(b => (
+                <div key={b.booking_number} className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm space-y-2 text-xs">
+                  <div className="flex justify-between items-start">
                     <div>
-                      <p className="font-black text-gray-900">{booking.booking_number}</p>
-                      <p className="text-xs font-bold text-gray-500 mt-1">{plant?.plant_name} × {booking.quantity}</p>
-                    </div>
-                    <div className="text-right">
-                      <strong className="text-gray-900 block font-black text-base">₹{booking.total_amount}</strong>
-                      <span className="text-[10px] text-green-600 font-bold flex items-center gap-1 justify-end mt-0.5">
+                      <p className="font-black text-gray-900 text-sm">#{b.booking_number}</p>
+                      <span className="text-[10px] text-green-600 font-bold flex items-center gap-1 mt-0.5">
                         <FileCheck className="w-3 h-3" /> Fully Delivered
                       </span>
                     </div>
+                    <strong className="text-gray-900 font-black text-base">₹{b.total_amount}</strong>
                   </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Cancelled Bookings (Revenue Forfeited) */}
-        {cancelledBookings.length > 0 && (
-          <div className="space-y-3">
-            <h4 className="text-xs font-black text-orange-700 uppercase tracking-wider">Forfeited Deposits (Cancelled)</h4>
-            <div className="grid gap-3">
-              {cancelledBookings.map(booking => {
-                const plant = plants.find(p => p.id === booking.plant_id);
-                return (
-                  <div key={booking.id} className="bg-white p-4 rounded-2xl border border-orange-100 shadow-sm flex justify-between items-center text-sm">
-                    <div>
-                      <p className="font-black text-gray-950">{booking.booking_number}</p>
-                      <p className="text-xs font-bold text-gray-400 mt-1">{plant?.plant_name} (Cancelled)</p>
-                    </div>
-                    {(() => {
-                      const statusRow = vwBookingStatus?.find((v: any) => v.booking_id === booking.id);
-                      const advancePaid = statusRow ? Number(statusRow.advance_paid) : booking.advance_paid;
+                  <div className="space-y-1 pt-1.5 border-t border-gray-50">
+                    {b.items.map((item: any, i: number) => {
+                      const plant = plantMap.get(item.plant_id);
                       return (
-                        <div className="text-right">
-                          <strong className="text-orange-700 block font-black text-base">₹{advancePaid}</strong>
-                          <span className="text-[10px] text-orange-600 font-bold flex items-center gap-1 justify-end mt-0.5">
-                            <AlertCircle className="w-3 h-3" /> Deposit Forfeited
-                          </span>
+                        <div key={item.id || i} className="flex justify-between text-gray-600 text-[11px]">
+                          <span>{plant ? `${plant.plant_name}${plant.variety ? ` (${plant.variety})` : ''}` : 'Plant'} × {item.quantity}</span>
+                          <span className="font-bold text-gray-800">₹{item.total_amount}</span>
                         </div>
                       );
-                    })()}
+                    })}
                   </div>
-                );
-              })}
+                </div>
+              ))}
             </div>
           </div>
         )}
 
-        {bookings.length === 0 && (
-          <p className="text-sm font-semibold text-gray-400 bg-white p-4 rounded-2xl border border-gray-100 text-center">
+        {/* Cancelled Bookings */}
+        {cancelledBookings.length > 0 && (
+          <div className="space-y-2.5">
+            <h4 className="text-xs font-black text-orange-700 uppercase tracking-wider">Forfeited Deposits (Cancelled)</h4>
+            <div className="grid gap-2.5">
+              {cancelledBookings.map(b => (
+                <div key={b.booking_number} className="bg-white p-4 rounded-2xl border border-orange-100 shadow-sm space-y-2 text-xs">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <p className="font-black text-gray-950 text-sm">#{b.booking_number}</p>
+                      <span className="text-[10px] text-orange-600 font-bold flex items-center gap-1 mt-0.5">
+                        <AlertCircle className="w-3 h-3" /> Booking Cancelled
+                      </span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-[10px] text-gray-400 uppercase font-bold block">Forfeited Advance</span>
+                      <strong className="text-orange-700 font-black text-sm">₹{b.total_paid}</strong>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {groupedBookings.length === 0 && (
+          <p className="text-xs font-semibold text-gray-400 bg-white p-4 rounded-2xl border border-gray-100 text-center">
             No booking deposits recorded.
           </p>
         )}
@@ -280,4 +356,3 @@ export default function CustomerDetailPage({ params }: Props) {
     </div>
   );
 }
-

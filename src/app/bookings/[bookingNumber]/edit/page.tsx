@@ -4,6 +4,7 @@ import { useRouter, useParams } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabaseClient';
 import { serverCancelBooking } from '@/lib/actions/finance';
+import { serverUpdateBooking } from '@/lib/actions/bookings';
 
 function generateId() {
   return crypto.randomUUID();
@@ -401,77 +402,50 @@ export default function EditBookingPage() {
     try {
       const originalIds = new Set(originalBookingRows?.map(r => r.id));
       const modifiedIds = new Set(modifiedBookings.map(b => b.id));
+      const deletedIds = Array.from(originalIds).filter((id) => !modifiedIds.has(id as string)) as string[];
 
-      // 1. Identify deleted items
-      const deletedIds = Array.from(originalIds).filter((id) => !modifiedIds.has(id as string));
-      for (const id of deletedIds) {
-        const deletedAt = new Date().toISOString();
-        await supabase.from('bookings').update({ deleted_at: deletedAt }).eq('id', id);
-        await supabase.from('allotments').update({ deleted_at: deletedAt }).eq('booking_id', id);
-      }
-
-      // 2. Identify inserted & updated items
-      for (const b of modifiedBookings) {
-        const { sync_status: _sync, ...payload } = b as any;
-
-        if (originalIds.has(b.id)) {
-          const original = originalBookingRows?.find(r => r.id === b.id);
-          const isModified = original ? (original.plant_id !== b.plant_id || original.quantity !== b.quantity) : false;
-
-          if (isModified) {
-            await supabase.from('allotments').update({ deleted_at: new Date().toISOString() }).eq('booking_id', b.id);
-          }
-
-          await supabase.from('bookings').update(payload).eq('id', b.id);
-        } else {
-          await supabase.from('bookings').insert(payload);
-        }
-      }
-
-      // 3. Update transactions ledger if advance changed
-      const oldTotalAdvance = originalBookingRows?.reduce((sum, r) => sum + (r.advance_paid || 0), 0) || 0;
-      if (advanceNum !== oldTotalAdvance) {
-        const diff = advanceNum - oldTotalAdvance;
-        await supabase.from('transactions').insert({
-          reference_type: 'BOOKING_ADVANCE_ADJUSTMENT',
-          reference_id: modifiedBookings[0]?.id || generateId(),
-          booking_number: bookingNumber,
-          customer_name: customerName,
-          plant_names: 'Multiple Plants',
-          amount: diff,
-          payment_mode: paymentMode === 'Split' ? 'Split' : paymentMode,
-          cash_amount: paymentMode === 'Split' ? (diff > 0 ? (parseFloat(splitAmounts.cash) || 0) : diff) : (paymentMode === 'Cash' ? diff : 0),
-          upi_amount: paymentMode === 'Split' ? (diff > 0 ? (parseFloat(splitAmounts.upi) || 0) : diff) : (paymentMode === 'UPI' ? diff : 0),
-          worker_id: user.id,
-          created_at: new Date().toISOString()
-        });
-      }
-
-      // 4. Customer logic
-      if (customerPhone && customerName) {
-        const { data: custData } = await supabase.from('customers').select('*').eq('mobile', customerPhone).is('deleted_at', null).maybeSingle();
-        if (!custData) {
-          const cust = { id: generateId(), name: customerName, mobile: customerPhone, city: city || null };
-          await supabase.from('customers').insert(cust);
-        } else {
-          await supabase.from('customers').update({ name: customerName, city: city || custData.city }).eq('id', custData.id);
-        }
-      }
-
-      // 4. Audit Log
-      await logAudit(user.id, user.name, 'EDIT_BOOKING', 'bookings', bookingNumber, {
-        totalAmount,
-        itemCount: modifiedBookings.length,
-        deletedCount: deletedIds.length
+      const result = await serverUpdateBooking({
+        bookingNumber: String(bookingNumber),
+        items: modifiedBookings.map(b => ({
+          id: b.id,
+          booking_number: b.booking_number,
+          customer_name: b.customer_name,
+          customer_phone: b.customer_phone,
+          city: b.city,
+          plant_id: b.plant_id,
+          lot_id: b.lot_id,
+          quantity: b.quantity,
+          advance_paid: b.advance_paid,
+          advance_payment_mode: b.advance_payment_mode,
+          advance_cash_amount: b.advance_cash_amount,
+          advance_upi_amount: b.advance_upi_amount,
+          total_amount: b.total_amount,
+          booking_date: b.booking_date,
+          delivery_date: b.delivery_date,
+          status: b.status,
+          worker_id: b.worker_id,
+          remarks: b.remarks
+        })),
+        deletedItemIds: deletedIds,
+        userId: user.id,
+        userName: user.name
       });
+
+      if (!result.success) {
+        throw new Error(result.error);
+      }
 
       queryClient.invalidateQueries({ queryKey: ['bookings'] });
       queryClient.invalidateQueries({ queryKey: ['allotments'] });
-      queryClient.invalidateQueries({ queryKey: ['customers'] });
+      queryClient.invalidateQueries({ queryKey: ['vw_inventory_status'] });
+      queryClient.invalidateQueries({ queryKey: ['vw_booking_status'] });
+      queryClient.invalidateQueries({ queryKey: ['vw_daily_cashbook'] });
+      queryClient.invalidateQueries({ queryKey: ['vw_profit_summary'] });
+
       router.push('/bookings');
-    } catch (err) {
-      console.error(err);
-      alert('Failed to save booking details');
+    } catch (e: any) {
+      console.error(e);
+      alert('Failed to update booking: ' + (e.message || ''));
     } finally {
       setLoading(false);
     }
