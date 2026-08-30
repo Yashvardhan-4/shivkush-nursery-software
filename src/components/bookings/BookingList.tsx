@@ -374,7 +374,13 @@ export default function BookingList({ role, userId, userName }: BookingListProps
                     <Pencil className="w-4 h-4 text-gray-600" />
                     {t('editOrder')}
                   </a>
-                  <a href="/fulfillment" className="flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl bg-green-600 hover:bg-green-700 text-white font-black text-sm shadow-md active:scale-95 transition-all"> <Truck className="w-4 h-4" /> {t('deliverOrder')} </a>
+                  <a
+                    href={`/fulfillment?bookingNumber=${grp.booking_number}`}
+                    className="flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl bg-green-600 hover:bg-green-700 text-white font-black text-sm shadow-md active:scale-95 transition-all"
+                  >
+                    <Truck className="w-4 h-4" />
+                    {t('deliverOrder')}
+                  </a>
                 </div>
               )}
 

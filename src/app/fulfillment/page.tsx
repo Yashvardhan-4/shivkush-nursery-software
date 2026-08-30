@@ -1,20 +1,39 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 import { serverCollectFinalPayment } from '@/lib/actions/finance';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { PackageOpen, CheckCircle, X, Banknote, Smartphone, AlertCircle, Phone, User, ShieldCheck } from 'lucide-react';
+import {
+  PackageOpen,
+  CheckCircle,
+  X,
+  Banknote,
+  Smartphone,
+  AlertCircle,
+  Phone,
+  User,
+  ShieldCheck,
+  Layers,
+  ArrowRight
+} from 'lucide-react';
+import Link from 'next/link';
 
 interface DeliveryModalState {
   booking: any;
   statusRow: any;
 }
 
-export default function FulfillmentPage() {
+function FulfillmentContent() {
+  const searchParams = useSearchParams();
+  const targetBookingNumber = searchParams.get('bookingNumber');
+  const targetBookingId = searchParams.get('bookingId');
+
   const [userId, setUserId] = useState('');
   const [userRole, setUserRole] = useState('');
   const [deliveryModal, setDeliveryModal] = useState<DeliveryModalState | null>(null);
+  const [selectedLotId, setSelectedLotId] = useState<string>('');
   
   // Payment Form States
   const [paymentMode, setPaymentMode] = useState<'Cash' | 'UPI' | 'Split'>('Cash');
@@ -50,17 +69,19 @@ export default function FulfillmentPage() {
         .is('deleted_at', null)
         .order('created_at', { ascending: false });
 
+      // Workers can see unassigned orders, orders assigned to them, and orders created by them
       if (userRole !== 'owner') {
-        bookingsQuery = bookingsQuery.eq('assigned_to', userId);
-        salesQuery = salesQuery.eq('assigned_to', userId);
+        bookingsQuery = bookingsQuery.or(`assigned_to.eq.${userId},assigned_to.is.null,worker_id.eq.${userId}`);
+        salesQuery = salesQuery.or(`assigned_to.eq.${userId},assigned_to.is.null,worker_id.eq.${userId}`);
       }
 
-      const [bRes, sRes, pRes, lRes, vwbRes] = await Promise.all([
+      const [bRes, sRes, pRes, lRes, vwbRes, invRes] = await Promise.all([
         bookingsQuery,
         salesQuery,
         supabase.from('plants').select('*').is('deleted_at', null),
         supabase.from('lots').select('*').is('deleted_at', null),
         supabase.from('vw_booking_status').select('*'),
+        supabase.from('vw_inventory_status').select('*')
       ]);
 
       return {
@@ -69,15 +90,30 @@ export default function FulfillmentPage() {
         plants: pRes.data || [],
         lots: lRes.data || [],
         vwBookingStatus: vwbRes.data || [],
+        inventoryStatus: invRes.data || []
       };
     },
     enabled: !!userId,
   });
 
-  const { bookings, sales, plants, lots, vwBookingStatus } = queriesData || {};
+  const { bookings, sales, plants, lots, vwBookingStatus, inventoryStatus } = queriesData || {};
 
   const pendingSales = sales || [];
   const pendingBookings = bookings || [];
+
+  // Auto-open modal if URL has matching booking
+  useEffect(() => {
+    if (pendingBookings.length > 0 && (targetBookingNumber || targetBookingId) && !deliveryModal) {
+      const match = pendingBookings.find(
+        (b: any) =>
+          (targetBookingNumber && b.booking_number === targetBookingNumber) ||
+          (targetBookingId && b.id === targetBookingId)
+      );
+      if (match) {
+        openDeliveryModal(match);
+      }
+    }
+  }, [pendingBookings, targetBookingNumber, targetBookingId]);
 
   const checkSoldOutLot = async (lotId: string | null | undefined) => {
     if (!lotId || !lots) return;
@@ -137,6 +173,7 @@ export default function FulfillmentPage() {
     const outstanding = statusRow ? Number(statusRow.outstanding_balance) : (booking.total_amount - (booking.advance_paid || 0));
     
     setDeliveryModal({ booking, statusRow });
+    setSelectedLotId(booking.lot_id || '');
     setActionError('');
     
     if (outstanding > 0) {
@@ -180,6 +217,11 @@ export default function FulfillmentPage() {
     return deliveryModal.booking.total_amount - (deliveryModal.booking.advance_paid || 0);
   }, [deliveryModal]);
 
+  const availableLotsForPlant = useMemo(() => {
+    if (!deliveryModal || !lots) return [];
+    return lots.filter((l: any) => l.plant_id === deliveryModal.booking.plant_id && l.status !== 'Completed');
+  }, [deliveryModal, lots]);
+
   const cashVal = parseFloat(cashInput) || 0;
   const upiVal = parseFloat(upiInput) || 0;
   const totalEntered = cashVal + upiVal;
@@ -206,6 +248,23 @@ export default function FulfillmentPage() {
       const pCash = paymentMode === 'Cash' ? outstandingBalance : paymentMode === 'UPI' ? 0 : cashVal;
       const pUpi = paymentMode === 'UPI' ? outstandingBalance : paymentMode === 'Cash' ? 0 : upiVal;
 
+      // If booking was unallotted and user chose a lot in modal, allocate lot first
+      const activeLotId = deliveryModal.booking.lot_id || selectedLotId;
+      if (!deliveryModal.booking.lot_id && selectedLotId) {
+        const { error: allocErr } = await supabase.rpc('allocate_lot', {
+          p_booking_id: deliveryModal.booking.id,
+          p_lot_id: selectedLotId,
+          p_quantity: deliveryModal.booking.quantity,
+          p_user_id: userId || '00000000-0000-0000-0000-000000000000',
+          p_user_name: 'Staff',
+          p_booking_quantity: deliveryModal.booking.quantity,
+          p_total_allotted: 0
+        });
+        if (allocErr) {
+          console.warn('Lot allocation warning:', allocErr);
+        }
+      }
+
       const result = await serverCollectFinalPayment({
         p_booking_id: deliveryModal.booking.id,
         p_cash_amount: outstandingBalance > 0 ? pCash : 0,
@@ -216,15 +275,19 @@ export default function FulfillmentPage() {
         throw new Error(result?.error || 'Failed to record delivery');
       }
 
-      await checkSoldOutLot(deliveryModal.booking.lot_id);
+      if (activeLotId) {
+        await checkSoldOutLot(activeLotId);
+      }
 
       // Invalidate all related caches
       queryClient.invalidateQueries({ queryKey: ['fulfillment-data'] });
       queryClient.invalidateQueries({ queryKey: ['bookings'] });
+      queryClient.invalidateQueries({ queryKey: ['bookings-data'] });
       queryClient.invalidateQueries({ queryKey: ['vw_booking_status'] });
       queryClient.invalidateQueries({ queryKey: ['vw_daily_cashbook'] });
       queryClient.invalidateQueries({ queryKey: ['vw_profit_summary'] });
       queryClient.invalidateQueries({ queryKey: ['vw_inventory_status'] });
+      queryClient.invalidateQueries({ queryKey: ['allotments-data'] });
 
       setDeliveryModal(null);
     } catch (err: any) {
@@ -252,7 +315,7 @@ export default function FulfillmentPage() {
           <PackageOpen className="w-8 h-8 text-blue-600" /> Fulfillment & Handover
         </h1>
         <p className="text-gray-500 font-medium text-sm mt-1">
-          {userRole === 'owner' ? 'All active orders ready for handover' : 'Orders assigned to you for handover'}
+          {userRole === 'owner' ? 'All active orders ready for handover' : 'Open orders and orders assigned to you'}
         </p>
       </header>
 
@@ -330,6 +393,7 @@ export default function FulfillmentPage() {
 
               const isReady = booking.status === 'Ready';
               const isAllocated = booking.status === 'Allocated';
+              const isPending = booking.status === 'Pending';
 
               return (
                 <div
@@ -384,7 +448,7 @@ export default function FulfillmentPage() {
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-between pt-1">
+                  <div className="flex items-center justify-between pt-1 gap-2 flex-wrap">
                     <p className="text-xs text-gray-500 font-medium">
                       {balance === 0 ? (
                         <span className="text-green-600 font-bold flex items-center gap-1">
@@ -392,28 +456,32 @@ export default function FulfillmentPage() {
                         </span>
                       ) : (
                         <span className="text-orange-600 font-bold flex items-center gap-1">
-                          <AlertCircle className="w-3.5 h-3.5" /> Collect ₹{balance.toLocaleString('en-IN')} before handover
+                          <AlertCircle className="w-3.5 h-3.5" /> Collect ₹{balance.toLocaleString('en-IN')}
                         </span>
                       )}
                     </p>
 
-                    <button
-                      onClick={() => openDeliveryModal(booking)}
-                      disabled={booking.status === 'Pending' || actionLoading}
-                      className={`font-black py-2.5 px-5 rounded-xl text-sm whitespace-nowrap active:scale-95 transition-all shadow-sm ${
-                        booking.status === 'Pending'
-                          ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                          : balance > 0
-                          ? 'bg-orange-600 hover:bg-orange-700 text-white'
-                          : 'bg-green-600 hover:bg-green-700 text-white'
-                      }`}
-                    >
-                      {booking.status === 'Pending'
-                        ? 'Not Ready'
-                        : balance > 0
-                        ? 'Collect & Deliver'
-                        : 'Deliver'}
-                    </button>
+                    <div className="flex items-center gap-2">
+                      {isPending && !booking.lot_id && (
+                        <Link
+                          href="/allotments"
+                          className="text-xs font-bold text-blue-600 hover:text-blue-700 underline py-2 px-1 flex items-center gap-1"
+                        >
+                          Allotments <ArrowRight className="w-3 h-3" />
+                        </Link>
+                      )}
+                      <button
+                        onClick={() => openDeliveryModal(booking)}
+                        disabled={actionLoading}
+                        className={`font-black py-2.5 px-5 rounded-xl text-sm whitespace-nowrap active:scale-95 transition-all shadow-sm ${
+                          balance > 0
+                            ? 'bg-orange-600 hover:bg-orange-700 text-white'
+                            : 'bg-green-600 hover:bg-green-700 text-white'
+                        }`}
+                      >
+                        {balance > 0 ? 'Collect & Deliver' : 'Deliver Order'}
+                      </button>
+                    </div>
                   </div>
                 </div>
               );
@@ -429,7 +497,7 @@ export default function FulfillmentPage() {
             <div className="flex justify-between items-start">
               <div>
                 <h3 className="text-xl font-black text-gray-900">
-                  {outstandingBalance > 0 ? 'Collect Final Payment' : 'Confirm Handover'}
+                  {outstandingBalance > 0 ? 'Collect Payment & Deliver' : 'Confirm Handover'}
                 </h3>
                 <p className="text-xs font-bold text-gray-400 mt-0.5">
                   Order {deliveryModal.booking.booking_number} • {deliveryModal.booking.customer_name}
@@ -442,6 +510,33 @@ export default function FulfillmentPage() {
                 <X className="w-4 h-4" />
               </button>
             </div>
+
+            {/* If booking is unallotted, allow picking a lot */}
+            {!deliveryModal.booking.lot_id && (
+              <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3.5 space-y-2">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-amber-800">
+                  <Layers className="w-4 h-4" /> Stock Allotment (Optional / Direct Selection)
+                </div>
+                {availableLotsForPlant.length > 0 ? (
+                  <select
+                    value={selectedLotId}
+                    onChange={(e) => setSelectedLotId(e.target.value)}
+                    className="w-full p-2.5 bg-white border border-amber-300 rounded-xl text-xs font-bold text-gray-800 outline-none"
+                  >
+                    <option value="">-- Auto / Deliver without pre-allotment --</option>
+                    {availableLotsForPlant.map((l: any) => (
+                      <option key={l.id} value={l.id}>
+                        Lot {l.lot_number} (Avail: {l.available_stock ?? l.total_quantity})
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <p className="text-[11px] text-amber-700">
+                    No active lots found for this plant. Order will be marked Delivered directly.
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* Financial Ledger Breakdown */}
             <div className="bg-blue-50/70 border border-blue-100 rounded-2xl p-4 space-y-2 text-sm">
@@ -599,5 +694,17 @@ export default function FulfillmentPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function FulfillmentPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+      </div>
+    }>
+      <FulfillmentContent />
+    </Suspense>
   );
 }
