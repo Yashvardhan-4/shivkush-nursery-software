@@ -26,16 +26,67 @@ export default function QRManagementPage() {
   const [upiId, setUpiId] = useState('');
   const [imageData, setImageData] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
+  const [compressing, setCompressing] = useState(false);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const compressImage = (file: File, maxWidth = 800, quality = 0.85): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const rawResult = event.target?.result as string;
+        const img = new Image();
+        img.onload = () => {
+          try {
+            const canvas = document.createElement('canvas');
+            let width = img.width;
+            let height = img.height;
+
+            if (width > maxWidth) {
+              height = Math.round((height * maxWidth) / width);
+              width = maxWidth;
+            }
+
+            canvas.width = width;
+            canvas.height = height;
+
+            const ctx = canvas.getContext('2d');
+            if (!ctx) {
+              resolve(rawResult);
+              return;
+            }
+
+            ctx.drawImage(img, 0, 0, width, height);
+            const dataUrl = canvas.toDataURL('image/jpeg', quality);
+            resolve(dataUrl);
+          } catch {
+            resolve(rawResult);
+          }
+        };
+        img.onerror = () => resolve(rawResult);
+        img.src = rawResult;
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      setImageData(event.target?.result as string);
-    };
-    reader.readAsDataURL(file);
+    setCompressing(true);
+    try {
+      const compressed = await compressImage(file, 800, 0.85);
+      setImageData(compressed);
+    } catch (err) {
+      console.error('Failed to compress image, using fallback', err);
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        setImageData(event.target?.result as string);
+      };
+      reader.readAsDataURL(file);
+    } finally {
+      setCompressing(false);
+    }
   };
 
   const handleSave = async (e: React.FormEvent) => {
@@ -45,6 +96,7 @@ export default function QRManagementPage() {
     
     setLoading(true);
     try {
+      // 1. Primary: Server Action
       const result = await serverSaveQr({
         name,
         upi_id: upiId,
@@ -52,7 +104,19 @@ export default function QRManagementPage() {
         active: true
       });
       
-      if (!result.success) throw new Error(result.error);
+      if (!result.success) {
+        // Fallback: Direct Database Client
+        const fallbackQr = {
+          id: generateId(),
+          name: name.trim(),
+          upi_id: upiId.trim(),
+          image_data: imageData,
+          active: true,
+          updated_at: new Date().toISOString()
+        };
+        const { error: dbErr } = await supabase.from('payment_qrs').upsert(fallbackQr);
+        if (dbErr) throw new Error(dbErr.message || result.error);
+      }
       
       queryClient.invalidateQueries({ queryKey: ['payment_qrs'] });
       
@@ -140,7 +204,12 @@ export default function QRManagementPage() {
             <div>
               <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Upload QR Image</label>
               <label className="border-2 border-dashed border-purple-300 bg-purple-50 rounded-2xl h-32 flex flex-col items-center justify-center cursor-pointer active:scale-[0.98] transition-transform overflow-hidden relative block">
-                {imageData ? (
+                {compressing ? (
+                  <div className="flex flex-col items-center gap-2">
+                    <div className="w-6 h-6 border-2 border-purple-600 border-t-transparent rounded-full animate-spin" />
+                    <span className="text-xs font-bold text-purple-600">Optimizing QR...</span>
+                  </div>
+                ) : imageData ? (
                   <img src={imageData} alt="QR Preview" className="h-full object-contain" />
                 ) : (
                   <>
