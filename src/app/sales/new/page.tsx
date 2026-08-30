@@ -201,7 +201,11 @@ export default function NewDirectSalePage() {
     setPaymentMode(mode);
     if (mode === 'Cash') { setCashAmount(String(totalAmount)); setUpiAmount('0'); }
     else if (mode === 'UPI') { setUpiAmount(String(totalAmount)); setCashAmount('0'); }
-    else { setCashAmount(''); setUpiAmount(''); }
+    else { 
+      const half = Math.floor(totalAmount / 2);
+      setCashAmount(String(half)); 
+      setUpiAmount(String(totalAmount - half)); 
+    }
   };
 
   const handleSaveSale = async (e: React.FormEvent) => {
@@ -747,6 +751,42 @@ export default function NewDirectSalePage() {
                       />
                     </div>
                   </div>
+
+                  {/* Quick Preset Buttons */}
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const half = Math.floor(totalAmount / 2);
+                        setCashAmount(String(half));
+                        setUpiAmount(String(totalAmount - half));
+                      }}
+                      className="flex-1 py-1.5 px-2 bg-purple-100 hover:bg-purple-200 text-purple-800 text-xs font-bold rounded-xl transition-all active:scale-95"
+                    >
+                      50% / 50%
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCashAmount(String(totalAmount));
+                        setUpiAmount('0');
+                      }}
+                      className="flex-1 py-1.5 px-2 bg-green-100 hover:bg-green-200 text-green-800 text-xs font-bold rounded-xl transition-all active:scale-95"
+                    >
+                      All Cash
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCashAmount('0');
+                        setUpiAmount(String(totalAmount));
+                      }}
+                      className="flex-1 py-1.5 px-2 bg-blue-100 hover:bg-blue-200 text-blue-800 text-xs font-bold rounded-xl transition-all active:scale-95"
+                    >
+                      All UPI
+                    </button>
+                  </div>
+
                   {/* Live balance indicator */}
                   <div className={`flex justify-between items-center px-4 py-3 rounded-xl font-black text-sm ${
                     splitValid ? 'bg-green-100 text-green-800 border border-green-200' :

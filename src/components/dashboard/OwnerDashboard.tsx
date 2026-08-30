@@ -17,23 +17,26 @@ import {
   TrendingUp,
   TrendingDown,
   PieChart,
-  Users
+  Users,
+  User,
+  ArrowRight
 } from 'lucide-react';
 import Link from 'next/link';
 
-
 function fmt(n: number) {
-  return '₹' + n.toLocaleString('en-IN');
+  return '₹' + (n || 0).toLocaleString('en-IN');
 }
+
 export default function OwnerDashboard() {
   const { t } = useLanguage();
+  const todayDate = todayIST();
 
   const { data: allSales } = useQuery({
     queryKey: ['direct_sales'],
     queryFn: async () => {
       const { data, error } = await supabase.from('direct_sales').select('*').is('deleted_at', null);
       if (error) throw error;
-      return data;
+      return data || [];
     }
   });
 
@@ -42,11 +45,19 @@ export default function OwnerDashboard() {
     queryFn: async () => {
       const { data, error } = await supabase.from('bookings').select('*').is('deleted_at', null);
       if (error) throw error;
-      return data;
+      return data || [];
     }
   });
 
-  const todayDate = todayIST();
+  const { data: users = [] } = useQuery({
+    queryKey: ['users'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('users').select('*').is('deleted_at', null);
+      if (error) return [];
+      return data || [];
+    }
+  });
+
   const { data: profitSummary } = useQuery({
     queryKey: ['vw_profit_summary', todayDate],
     queryFn: async () => {
@@ -65,7 +76,7 @@ export default function OwnerDashboard() {
     queryFn: async () => {
       const { data, error } = await supabase.from('lots').select('*').is('deleted_at', null);
       if (error) throw error;
-      return data;
+      return data || [];
     }
   });
 
@@ -74,19 +85,71 @@ export default function OwnerDashboard() {
     queryFn: async () => {
       const { data, error } = await supabase.from('plants').select('*').is('deleted_at', null).eq('active', true);
       if (error) throw error;
-      return data;
+      return data || [];
     }
   });
+
   const { data: inventory } = useQuery({
     queryKey: ['vw_inventory_status'],
     queryFn: async () => {
       const { data, error } = await supabase.from('vw_inventory_status').select('*');
       if (error) throw error;
-      return data;
+      return data || [];
     }
   });
 
+  /* ---- Today's Worker Collections Query ---- */
+  const { data: todayWorkerCollections = [] } = useQuery({
+    queryKey: ['today_worker_collections', todayDate],
+    queryFn: async () => {
+      const dayStart = `${todayDate}T00:00:00+05:30`;
+      const dayEnd = `${todayDate}T23:59:59.999+05:30`;
 
+      const [salesRes, paymentsRes] = await Promise.all([
+        supabase.from('direct_sales').select('*').is('deleted_at', null).gte('created_at', dayStart).lte('created_at', dayEnd),
+        supabase.from('booking_payments').select('*').gte('payment_date', dayStart).lte('payment_date', dayEnd)
+      ]);
+
+      const sales = salesRes.data || [];
+      const payments = paymentsRes.data || [];
+
+      const collectionMap: Record<string, { id: string; name: string; role: string; total: number; cash: number; upi: number; count: number }> = {};
+
+      users.forEach((u: any) => {
+        collectionMap[u.id] = { id: u.id, name: u.name, role: u.role, total: 0, cash: 0, upi: 0, count: 0 };
+      });
+
+      sales.forEach((s: any) => {
+        const wId = s.worker_id;
+        if (wId && collectionMap[wId]) {
+          const amt = Number(s.amount) || 0;
+          collectionMap[wId].total += amt;
+          collectionMap[wId].count += 1;
+          if (s.payment_mode === 'Cash') collectionMap[wId].cash += amt;
+          else if (s.payment_mode === 'UPI') collectionMap[wId].upi += amt;
+          else {
+            collectionMap[wId].cash += Number(s.cash_amount) || 0;
+            collectionMap[wId].upi += Number(s.upi_amount) || 0;
+          }
+        }
+      });
+
+      payments.forEach((p: any) => {
+        const wId = p.created_by;
+        if (wId && collectionMap[wId]) {
+          const c = Number(p.cash_amount) || 0;
+          const u = Number(p.upi_amount) || 0;
+          collectionMap[wId].cash += c;
+          collectionMap[wId].upi += u;
+          collectionMap[wId].total += (c + u);
+          collectionMap[wId].count += 1;
+        }
+      });
+
+      return Object.values(collectionMap).filter(w => w.total > 0);
+    },
+    enabled: users.length > 0
+  });
 
   const productionAlertsCount = (allPlants && allBookings && allLots && inventory)
     ? allPlants.filter((plant) => {
@@ -141,7 +204,7 @@ export default function OwnerDashboard() {
   ];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-20">
       <header className="flex justify-between items-center mb-2">
         <h1 className="text-2xl font-black text-gray-900 tracking-tight">{t('Owner Dashboard')}</h1>
       </header>
@@ -176,6 +239,42 @@ export default function OwnerDashboard() {
           </Link>
         ))}
       </div>
+
+      {/* ── Today's Worker Sales & Collections (Owner Visibility) ───────── */}
+      {todayWorkerCollections.length > 0 && (
+        <div className="bg-white rounded-3xl p-5 border border-gray-100 shadow-sm space-y-3">
+          <div className="flex justify-between items-center">
+            <div className="flex items-center gap-2">
+              <User className="w-4 h-4 text-purple-600" />
+              <h2 className="text-sm font-black text-gray-900">Today&apos;s Worker Collections</h2>
+            </div>
+            <Link href="/transactions" className="text-xs font-bold text-purple-600 hover:text-purple-700 flex items-center gap-1">
+              View All <ArrowRight className="w-3 h-3" />
+            </Link>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            {todayWorkerCollections.map((w) => (
+              <Link
+                key={w.id}
+                href="/transactions"
+                className="p-3.5 bg-gray-50/90 rounded-2xl border border-gray-150 hover:bg-gray-100 transition-all flex items-center justify-between"
+              >
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <p className="font-black text-gray-900 text-xs">{w.name}</p>
+                    <span className="text-[9px] font-bold text-gray-400 bg-gray-200/80 px-1.5 py-0.2 rounded">{w.role}</span>
+                  </div>
+                  <p className="text-[10px] font-semibold text-gray-500 mt-1">
+                    {w.count} txns &middot; 💵 {fmt(w.cash)} &middot; 📱 {fmt(w.upi)}
+                  </p>
+                </div>
+                <strong className="text-sm font-black text-green-700">{fmt(w.total)}</strong>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Production Alerts Block ────────────────────────────────────── */}
       {productionAlertsCount !== null && productionAlertsCount > 0 ? (

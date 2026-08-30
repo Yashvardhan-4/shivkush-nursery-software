@@ -1329,31 +1329,41 @@ GROUP BY b.id, b.status, b.total_amount;
 
 CREATE OR REPLACE VIEW public.vw_daily_cashbook AS
 SELECT 
-    payment_date AS datetime,
+    bp.payment_date AS datetime,
     'BOOKING_PAYMENT' AS transaction_type,
-    cash_amount AS cash,
-    upi_amount AS upi,
-    (cash_amount + upi_amount) AS total,
-    'Booking ' || payment_type AS description
-FROM public.booking_payments
+    bp.cash_amount AS cash,
+    bp.upi_amount AS upi,
+    (bp.cash_amount + bp.upi_amount) AS total,
+    'Booking ' || bp.payment_type AS description,
+    bp.created_by AS worker_id,
+    u.name AS worker_name
+FROM public.booking_payments bp
+LEFT JOIN public.users u ON bp.created_by = u.id
 UNION ALL
 SELECT 
-    created_at AS datetime,
+    ds.created_at AS datetime,
     'DIRECT_SALE' AS transaction_type,
-    COALESCE(cash_amount, CASE WHEN payment_mode = 'Cash' THEN amount ELSE 0 END) AS cash,
-    COALESCE(upi_amount, CASE WHEN payment_mode = 'UPI' THEN amount ELSE 0 END) AS upi,
-    amount AS total,
-    'Direct Sale ' || sale_number AS description
-FROM public.direct_sales
+    COALESCE(ds.cash_amount, CASE WHEN ds.payment_mode = 'Cash' THEN ds.amount ELSE 0 END) AS cash,
+    COALESCE(ds.upi_amount, CASE WHEN ds.payment_mode = 'UPI' THEN ds.amount ELSE 0 END) AS upi,
+    ds.amount AS total,
+    'Direct Sale ' || ds.sale_number AS description,
+    ds.worker_id AS worker_id,
+    u.name AS worker_name
+FROM public.direct_sales ds
+LEFT JOIN public.users u ON ds.worker_id = u.id
+WHERE ds.deleted_at IS NULL
 UNION ALL
 SELECT 
-    expense_date AS datetime,
+    e.expense_date AS datetime,
     'EXPENSE' AS transaction_type,
-    CASE WHEN payment_mode = 'Cash' THEN -amount ELSE 0 END AS cash,
-    CASE WHEN payment_mode = 'UPI' THEN -amount ELSE 0 END AS upi,
-    -amount AS total,
-    'Expense: ' || category || COALESCE(' - ' || description, '') AS description
-FROM public.expenses;
+    CASE WHEN e.payment_mode = 'Cash' THEN -e.amount ELSE 0 END AS cash,
+    CASE WHEN e.payment_mode = 'UPI' THEN -e.amount ELSE 0 END AS upi,
+    -e.amount AS total,
+    'Expense: ' || e.category || COALESCE(' - ' || e.description, '') AS description,
+    e.created_by AS worker_id,
+    u.name AS worker_name
+FROM public.expenses e
+LEFT JOIN public.users u ON e.created_by = u.id;
 
 
 CREATE OR REPLACE VIEW public.vw_profit_summary AS

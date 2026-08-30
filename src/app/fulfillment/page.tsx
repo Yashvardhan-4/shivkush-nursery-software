@@ -187,6 +187,31 @@ function FulfillmentContent() {
     }
   };
 
+  // Balance calculation & validation
+  const outstandingBalance = useMemo(() => {
+    if (!deliveryModal) return 0;
+    if (deliveryModal.statusRow) {
+      return Number(deliveryModal.statusRow.outstanding_balance);
+    }
+    return deliveryModal.booking.total_amount - (deliveryModal.booking.advance_paid || 0);
+  }, [deliveryModal]);
+
+  const handleCashChange = (val: string) => {
+    setCashInput(val);
+    const c = parseFloat(val) || 0;
+    if (c <= outstandingBalance) {
+      setUpiInput(String(Math.round((outstandingBalance - c) * 100) / 100));
+    }
+  };
+
+  const handleUpiChange = (val: string) => {
+    setUpiInput(val);
+    const u = parseFloat(val) || 0;
+    if (u <= outstandingBalance) {
+      setCashInput(String(Math.round((outstandingBalance - u) * 100) / 100));
+    }
+  };
+
   const handleModeSelect = (mode: 'Cash' | 'UPI' | 'Split') => {
     setPaymentMode(mode);
     setActionError('');
@@ -198,24 +223,16 @@ function FulfillmentContent() {
 
     if (mode === 'Cash') {
       setCashInput(String(outstanding));
-      setUpiInput('');
+      setUpiInput('0');
     } else if (mode === 'UPI') {
-      setCashInput('');
+      setCashInput('0');
       setUpiInput(String(outstanding));
     } else {
-      setCashInput('');
-      setUpiInput('');
+      const half = Math.floor(outstanding / 2);
+      setCashInput(String(half));
+      setUpiInput(String(outstanding - half));
     }
   };
-
-  // Balance calculation & validation
-  const outstandingBalance = useMemo(() => {
-    if (!deliveryModal) return 0;
-    if (deliveryModal.statusRow) {
-      return Number(deliveryModal.statusRow.outstanding_balance);
-    }
-    return deliveryModal.booking.total_amount - (deliveryModal.booking.advance_paid || 0);
-  }, [deliveryModal]);
 
   const availableLotsForPlant = useMemo(() => {
     if (!deliveryModal || !lots) return [];
@@ -269,6 +286,7 @@ function FulfillmentContent() {
         p_booking_id: deliveryModal.booking.id,
         p_cash_amount: outstandingBalance > 0 ? pCash : 0,
         p_upi_amount: outstandingBalance > 0 ? pUpi : 0,
+        p_worker_id: userId || undefined
       });
 
       if (!result?.success) {
@@ -598,34 +616,71 @@ function FulfillmentContent() {
                 </div>
 
                 {paymentMode === 'Split' ? (
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-xs font-bold text-gray-500 uppercase flex items-center gap-1">
-                        <Banknote className="w-3 h-3 text-green-600" /> Cash (₹)
-                      </label>
-                      <input
-                        type="number"
-                        min="0"
-                        max={outstandingBalance}
-                        value={cashInput}
-                        onChange={(e) => setCashInput(e.target.value)}
-                        placeholder="0"
-                        className="w-full mt-1 p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-purple-500 font-black text-lg text-gray-900"
-                      />
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-xs font-bold text-gray-500 uppercase flex items-center gap-1">
+                          <Banknote className="w-3 h-3 text-green-600" /> Cash (₹)
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          max={outstandingBalance}
+                          value={cashInput}
+                          onChange={(e) => handleCashChange(e.target.value)}
+                          placeholder="0"
+                          className="w-full mt-1 p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-purple-500 font-black text-lg text-gray-900"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs font-bold text-gray-500 uppercase flex items-center gap-1">
+                          <Smartphone className="w-3 h-3 text-blue-600" /> UPI (₹)
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          max={outstandingBalance}
+                          value={upiInput}
+                          onChange={(e) => handleUpiChange(e.target.value)}
+                          placeholder="0"
+                          className="w-full mt-1 p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-purple-500 font-black text-lg text-gray-900"
+                        />
+                      </div>
                     </div>
-                    <div>
-                      <label className="text-xs font-bold text-gray-500 uppercase flex items-center gap-1">
-                        <Smartphone className="w-3 h-3 text-blue-600" /> UPI (₹)
-                      </label>
-                      <input
-                        type="number"
-                        min="0"
-                        max={outstandingBalance}
-                        value={upiInput}
-                        onChange={(e) => setUpiInput(e.target.value)}
-                        placeholder="0"
-                        className="w-full mt-1 p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-purple-500 font-black text-lg text-gray-900"
-                      />
+
+                    {/* Quick Preset Buttons */}
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const half = Math.floor(outstandingBalance / 2);
+                          setCashInput(String(half));
+                          setUpiInput(String(outstandingBalance - half));
+                        }}
+                        className="flex-1 py-1.5 px-2 bg-purple-50 hover:bg-purple-100 text-purple-700 text-[11px] font-bold rounded-lg border border-purple-200 transition-all active:scale-95"
+                      >
+                        50% / 50%
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCashInput(String(outstandingBalance));
+                          setUpiInput('0');
+                        }}
+                        className="flex-1 py-1.5 px-2 bg-green-50 hover:bg-green-100 text-green-700 text-[11px] font-bold rounded-lg border border-green-200 transition-all active:scale-95"
+                      >
+                        All Cash
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCashInput('0');
+                          setUpiInput(String(outstandingBalance));
+                        }}
+                        className="flex-1 py-1.5 px-2 bg-blue-50 hover:bg-blue-100 text-blue-700 text-[11px] font-bold rounded-lg border border-blue-200 transition-all active:scale-95"
+                      >
+                        All UPI
+                      </button>
                     </div>
                   </div>
                 ) : (

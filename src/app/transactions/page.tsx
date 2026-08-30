@@ -16,7 +16,8 @@ import {
   User,
   X,
   Printer,
-  FileText
+  FileText,
+  Filter
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -31,6 +32,8 @@ interface CashbookRow {
   upi: number;
   total: number;
   description: string;
+  worker_id?: string | null;
+  worker_name?: string | null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -91,9 +94,26 @@ function formatDateTime(iso: string): string {
 export default function DailyCashbookPage() {
   const [selectedDate, setSelectedDate] = useState<string>(todayIST());
   const [activeTxDetail, setActiveTxDetail] = useState<CashbookRow | null>(null);
+  const [workerFilter, setWorkerFilter] = useState<string>('ALL');
+
+  /* ---- Query: Users for worker mapping ---- */
+  const { data: users = [] } = useQuery({
+    queryKey: ['users'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('users').select('id, name, role').is('deleted_at', null);
+      if (error) return [];
+      return data || [];
+    }
+  });
+
+  const userMap = useMemo(() => {
+    const map = new Map<string, { name: string; role: string }>();
+    users.forEach((u: any) => map.set(u.id, { name: u.name, role: u.role }));
+    return map;
+  }, [users]);
 
   /* ---- Query: vw_daily_cashbook for selected date ---- */
-  const { data: rows, isLoading } = useQuery<CashbookRow[]>({
+  const { data: rawRows, isLoading } = useQuery<CashbookRow[]>({
     queryKey: ['daily_cashbook', selectedDate],
     queryFn: async () => {
       const dayStart = `${selectedDate}T00:00:00+05:30`;
@@ -101,7 +121,7 @@ export default function DailyCashbookPage() {
 
       const { data, error } = await supabase
         .from('vw_daily_cashbook')
-        .select('datetime, transaction_type, cash, upi, total, description')
+        .select('*')
         .gte('datetime', dayStart)
         .lte('datetime', dayEnd)
         .order('datetime', { ascending: false });
@@ -111,30 +131,28 @@ export default function DailyCashbookPage() {
     },
   });
 
-  /* ---- Query: Users and Sales for Worker Collections ---- */
-  const { data: workerData } = useQuery({
+  /* ---- Query: Direct Sales and Payments for robust worker breakdown ---- */
+  const { data: workerData = [] } = useQuery({
     queryKey: ['worker_collections', selectedDate],
     queryFn: async () => {
       const dayStart = `${selectedDate}T00:00:00+05:30`;
       const dayEnd = `${selectedDate}T23:59:59.999+05:30`;
 
-      const [usersRes, salesRes, paymentsRes] = await Promise.all([
-        supabase.from('users').select('*').is('deleted_at', null),
+      const [salesRes, paymentsRes] = await Promise.all([
         supabase.from('direct_sales').select('*').is('deleted_at', null).gte('created_at', dayStart).lte('created_at', dayEnd),
         supabase.from('booking_payments').select('*').gte('payment_date', dayStart).lte('payment_date', dayEnd)
       ]);
 
-      const users = usersRes.data || [];
       const sales = salesRes.data || [];
       const payments = paymentsRes.data || [];
 
-      const collectionMap: Record<string, { name: string; role: string; total: number; cash: number; upi: number; count: number }> = {};
+      const collectionMap: Record<string, { id: string; name: string; role: string; total: number; cash: number; upi: number; count: number }> = {};
 
-      users.forEach(u => {
-        collectionMap[u.id] = { name: u.name, role: u.role, total: 0, cash: 0, upi: 0, count: 0 };
+      users.forEach((u: any) => {
+        collectionMap[u.id] = { id: u.id, name: u.name, role: u.role, total: 0, cash: 0, upi: 0, count: 0 };
       });
 
-      sales.forEach(s => {
+      sales.forEach((s: any) => {
         const wId = s.worker_id;
         if (wId && collectionMap[wId]) {
           const amt = Number(s.amount) || 0;
@@ -149,7 +167,7 @@ export default function DailyCashbookPage() {
         }
       });
 
-      payments.forEach(p => {
+      payments.forEach((p: any) => {
         const wId = p.created_by;
         if (wId && collectionMap[wId]) {
           const c = Number(p.cash_amount) || 0;
@@ -161,24 +179,43 @@ export default function DailyCashbookPage() {
         }
       });
 
-      return Object.values(collectionMap).filter(w => w.total > 0);
-    }
+      return Object.values(collectionMap).filter(w => w.total > 0 || w.count > 0);
+    },
+    enabled: users.length > 0
   });
 
-  /* ---- Display-only summation of returned rows ---- */
+  // Attach resolved worker name to each row
+  const rows = useMemo(() => {
+    if (!rawRows) return [];
+    return rawRows.map(r => {
+      const u = r.worker_id ? userMap.get(r.worker_id) : null;
+      return {
+        ...r,
+        worker_name: r.worker_name || u?.name || 'Staff'
+      };
+    });
+  }, [rawRows, userMap]);
+
+  // Filtered rows by selected worker
+  const filteredRows = useMemo(() => {
+    if (workerFilter === 'ALL') return rows;
+    return rows.filter(r => r.worker_id === workerFilter || r.worker_name === workerFilter);
+  }, [rows, workerFilter]);
+
+  /* ---- Display-only summation of filtered rows ---- */
   const summary = useMemo(() => {
-    if (!rows || rows.length === 0) return { cash: 0, upi: 0, total: 0 };
+    if (!filteredRows || filteredRows.length === 0) return { cash: 0, upi: 0, total: 0 };
 
     let cash = 0;
     let upi = 0;
     let total = 0;
-    for (const r of rows) {
+    for (const r of filteredRows) {
       cash += Number(r.cash) || 0;
       upi += Number(r.upi) || 0;
       total += Number(r.total) || 0;
     }
     return { cash, upi, total };
-  }, [rows]);
+  }, [filteredRows]);
 
   /* ---- Date label ---- */
   const dateLabel = useMemo(() => {
@@ -200,33 +237,51 @@ export default function DailyCashbookPage() {
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
       {/* ---- Sticky header ---- */}
-      <div className="bg-white border-b border-gray-200 px-4 py-4 sticky top-0 z-10 flex items-center gap-3 shadow-sm">
-        <Link
-          href="/"
-          className="p-2 -ml-2 rounded-xl text-gray-500 bg-gray-100 active:scale-95 transition-transform"
-        >
-          <ChevronLeft className="w-5 h-5" />
-        </Link>
-        <div>
-          <h1 className="text-xl font-black tracking-tight text-gray-900">
-            Daily Cashbook & Transactions
-          </h1>
-          <p className="text-xs font-semibold text-gray-500">
-            {dateLabel} &middot; {rows?.length ?? 0} entries
-          </p>
+      <div className="bg-white border-b border-gray-200 px-4 py-4 sticky top-0 z-10 flex items-center justify-between shadow-sm">
+        <div className="flex items-center gap-3">
+          <Link
+            href="/"
+            className="p-2 -ml-2 rounded-xl text-gray-500 bg-gray-100 active:scale-95 transition-transform"
+          >
+            <ChevronLeft className="w-5 h-5" />
+          </Link>
+          <div>
+            <h1 className="text-xl font-black tracking-tight text-gray-900">
+              Daily Cashbook & Transactions
+            </h1>
+            <p className="text-xs font-semibold text-gray-500">
+              {dateLabel} &middot; {filteredRows?.length ?? 0} entries
+            </p>
+          </div>
         </div>
       </div>
 
       <div className="p-4 space-y-4 max-w-2xl mx-auto">
-        {/* ---- Date picker ---- */}
-        <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex items-center gap-3">
-          <CalendarDays className="w-5 h-5 text-gray-400 shrink-0" />
-          <input
-            type="date"
-            value={selectedDate}
-            onChange={(e) => setSelectedDate(e.target.value)}
-            className="flex-1 bg-gray-50 border border-gray-200 rounded-xl py-2.5 px-3 text-sm font-bold text-gray-900 focus:ring-2 focus:ring-green-500 focus:outline-none"
-          />
+        {/* ---- Date picker & Worker Filter ---- */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="bg-white p-3.5 rounded-2xl border border-gray-100 shadow-sm flex items-center gap-2.5">
+            <CalendarDays className="w-4 h-4 text-gray-400 shrink-0" />
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.target.value)}
+              className="flex-1 bg-gray-50 border border-gray-200 rounded-xl py-2 px-3 text-xs font-bold text-gray-900 focus:ring-2 focus:ring-green-500 focus:outline-none"
+            />
+          </div>
+
+          <div className="bg-white p-3.5 rounded-2xl border border-gray-100 shadow-sm flex items-center gap-2.5">
+            <User className="w-4 h-4 text-purple-600 shrink-0" />
+            <select
+              value={workerFilter}
+              onChange={(e) => setWorkerFilter(e.target.value)}
+              className="flex-1 bg-gray-50 border border-gray-200 rounded-xl py-2 px-3 text-xs font-bold text-gray-900 focus:ring-2 focus:ring-purple-500 focus:outline-none"
+            >
+              <option value="ALL">All Staff Members</option>
+              {users.map((u: any) => (
+                <option key={u.id} value={u.id}>{u.name} ({u.role})</option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {/* ---- Summary card ---- */}
@@ -234,7 +289,7 @@ export default function DailyCashbookPage() {
           <div className="absolute -right-8 -top-8 bg-white opacity-10 w-32 h-32 rounded-full" />
 
           <p className="text-xs font-bold uppercase tracking-widest opacity-80 mb-1">
-            Day Total Collection
+            {workerFilter !== 'ALL' ? `${userMap.get(workerFilter)?.name || 'Staff'} Collection` : 'Day Total Collection'}
           </p>
           <p className="text-4xl font-black">{fmt(summary.total)}</p>
 
@@ -260,19 +315,34 @@ export default function DailyCashbookPage() {
           </div>
         </div>
 
-        {/* ---- Worker Collections Breakdown ---- */}
+        {/* ---- Worker Collections Breakdown Cards ---- */}
         {workerData && workerData.length > 0 && (
           <div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm space-y-3">
-            <div className="flex items-center gap-2">
-              <User className="w-4 h-4 text-purple-600" />
-              <h2 className="text-sm font-black text-gray-900">Worker Collections ({dateLabel})</h2>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <User className="w-4 h-4 text-purple-600" />
+                <h2 className="text-sm font-black text-gray-900">Worker Collections ({dateLabel})</h2>
+              </div>
+              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Tap card to filter</span>
             </div>
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               {workerData.map((w, idx) => (
-                <div key={idx} className="p-3 bg-gray-50 rounded-2xl border border-gray-100 flex items-center justify-between">
+                <div 
+                  key={idx} 
+                  onClick={() => setWorkerFilter(workerFilter === w.id ? 'ALL' : w.id)}
+                  className={`p-3.5 rounded-2xl border transition-all cursor-pointer flex items-center justify-between ${
+                    workerFilter === w.id
+                      ? 'bg-purple-50 border-purple-300 ring-2 ring-purple-500 shadow-sm'
+                      : 'bg-gray-50/90 border-gray-150 hover:bg-gray-100'
+                  }`}
+                >
                   <div>
-                    <p className="font-black text-gray-900 text-xs">{w.name}</p>
-                    <p className="text-[10px] font-semibold text-gray-400">
+                    <div className="flex items-center gap-1.5">
+                      <p className="font-black text-gray-900 text-xs">{w.name}</p>
+                      <span className="text-[9px] font-bold text-gray-400 bg-gray-200/80 px-1.5 py-0.2 rounded">{w.role}</span>
+                    </div>
+                    <p className="text-[10px] font-semibold text-gray-500 mt-1">
                       {w.count} txns &middot; 💵 {fmt(w.cash)} &middot; 📱 {fmt(w.upi)}
                     </p>
                   </div>
@@ -287,20 +357,20 @@ export default function DailyCashbookPage() {
         <div className="space-y-2">
           <div className="flex justify-between items-center px-1">
             <h2 className="text-sm font-black text-gray-900">Transactions List</h2>
-            <span className="text-xs text-gray-400 font-bold">{rows?.length ?? 0} entries &middot; Tap to view slip</span>
+            <span className="text-xs text-gray-400 font-bold">{filteredRows?.length ?? 0} entries &middot; Tap to view slip</span>
           </div>
 
           {isLoading ? (
             <div className="flex justify-center py-16">
               <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-green-600" />
             </div>
-          ) : !rows || rows.length === 0 ? (
+          ) : !filteredRows || filteredRows.length === 0 ? (
             <div className="bg-white rounded-3xl border border-gray-100 p-10 text-center text-gray-400 font-medium text-sm shadow-sm">
-              No transactions recorded for {dateLabel.toLowerCase()}
+              No transactions recorded for {dateLabel.toLowerCase()}{workerFilter !== 'ALL' ? ` by selected staff` : ''}
             </div>
           ) : (
             <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden divide-y divide-gray-50">
-              {rows.map((row, idx) => {
+              {filteredRows.map((row, idx) => {
                 const config = TYPE_CONFIG[row.transaction_type] ?? TYPE_CONFIG.DIRECT_SALE;
                 const Icon = config.icon;
 
@@ -329,13 +399,19 @@ export default function DailyCashbookPage() {
                         </p>
                       </div>
 
-                      <div className="flex items-center justify-between mt-2">
+                      <div className="flex items-center justify-between mt-2 flex-wrap gap-2">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           {/* Type badge */}
                           <span
                             className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md ${config.bg} ${config.text}`}
                           >
                             {config.label}
+                          </span>
+
+                          {/* Worker attribution pill */}
+                          <span className="text-[10px] font-bold text-gray-700 bg-gray-100 px-2 py-0.5 rounded-md flex items-center gap-1 border border-gray-200">
+                            <User className="w-2.5 h-2.5 text-purple-600" />
+                            {row.worker_name}
                           </span>
 
                           {/* Cash / UPI breakdown */}
@@ -418,6 +494,13 @@ export default function DailyCashbookPage() {
                   <span>📱 UPI:</span>
                   <span className="font-bold">{fmt(activeTxDetail.upi)}</span>
                 </div>
+              </div>
+
+              <div className="pt-2 border-t border-gray-200/60 flex justify-between items-center text-gray-600">
+                <span className="text-[10px] font-bold text-gray-400 uppercase">Recorded By:</span>
+                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-200">
+                  👤 {activeTxDetail.worker_name}
+                </span>
               </div>
             </div>
 

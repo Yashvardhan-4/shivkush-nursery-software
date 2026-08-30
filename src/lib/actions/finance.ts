@@ -46,19 +46,18 @@ export async function serverCollectFinalPayment(params: {
   p_booking_id: string;
   p_cash_amount: number;
   p_upi_amount: number;
+  p_worker_id?: string;
 }) {
   try {
-    const token = await getAuthClient();
-    const res = await fetch(`${supabaseUrl}/rest/v1/rpc/rpc_collect_final_payment`, {
-      method: 'POST',
-      headers: {
-        'apikey': anonKey,
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(params)
+    const { data, error } = await supabaseAdmin.rpc('rpc_collect_final_payment', {
+      p_booking_id: params.p_booking_id,
+      p_cash_amount: params.p_cash_amount,
+      p_upi_amount: params.p_upi_amount,
+      p_worker_id: params.p_worker_id || null
     });
-    const data = await res.json();
+    if (error) {
+      return { success: false, error: error.message };
+    }
     return data;
   } catch (error: any) {
     return { success: false, error: error.message || 'Server error' };
@@ -70,19 +69,18 @@ export async function serverAddExpense(params: {
   p_amount: number;
   p_payment_mode: string;
   p_description: string | null;
+  p_worker_id?: string;
 }) {
   try {
-    const token = await getAuthClient();
-    const res = await fetch(`${supabaseUrl}/rest/v1/rpc/rpc_add_expense`, {
-      method: 'POST',
-      headers: {
-        'apikey': anonKey,
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(params)
+    const { data, error } = await supabaseAdmin.rpc('rpc_add_expense', {
+      p_category: params.p_category,
+      p_amount: params.p_amount,
+      p_payment_mode: params.p_payment_mode,
+      p_description: params.p_description || null
     });
-    const data = await res.json();
+    if (error) {
+      return { success: false, error: error.message };
+    }
     return data;
   } catch (error: any) {
     return { success: false, error: error.message || 'Server error' };
