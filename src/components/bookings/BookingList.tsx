@@ -46,9 +46,6 @@ export default function BookingList({ role, userId, userName }: BookingListProps
 
   const { data: bookings } = useQuery({ queryKey: ['bookings'], queryFn: async () => { const { data } = await supabase.from('bookings').select('*').is('deleted_at', null).order('created_at', { ascending: false }); return data || []; } });
   const { data: plants } = useQuery({ queryKey: ['plants'], queryFn: async () => { const { data } = await supabase.from('plants').select('*').is('deleted_at', null); return data || []; } });
-  const { data: lots } = useQuery({ queryKey: ['lots'], queryFn: async () => { const { data } = await supabase.from('lots').select('*').is('deleted_at', null); return data || []; } });
-  const { data: allotments } = useQuery({ queryKey: ['allotments'], queryFn: async () => { const { data } = await supabase.from('allotments').select('*').is('deleted_at', null); return data || []; } });
-  const { data: direct_sales } = useQuery({ queryKey: ['direct_sales'], queryFn: async () => { const { data } = await supabase.from('direct_sales').select('*').is('deleted_at', null); return data || []; } });
   const { data: vwBookingStatus } = useQuery({ queryKey: ['vw_booking_status'], queryFn: async () => { const { data } = await supabase.from('vw_booking_status').select('*'); return data || []; } });
 
   const handleExportExcel = () => {
@@ -91,7 +88,7 @@ export default function BookingList({ role, userId, userName }: BookingListProps
     exportToPDF(data, 'Bookings_Export', 'Bookings Report', columns);
   };
 
-  if (!bookings || !plants || !lots) {
+  if (!bookings || !plants) {
     return (
       <div className="flex flex-col items-center justify-center py-20 space-y-3">
         <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
@@ -103,12 +100,6 @@ export default function BookingList({ role, userId, userName }: BookingListProps
   const getPlantName = (id: string) => {
     const p = plants.find(p => p.id === id);
     return p ? (p.variety ? `${p.plant_name} - ${p.variety}` : p.plant_name) : t('unknown');
-  };
-
-  const getLotNumber = (lotId: string | null) => {
-    if (!lotId) return t('noLotAssigned');
-    const lot = lots?.find(l => l.id === lotId);
-    return lot ? (lot.lot_name || lot.lot_number) : t('noLotAssigned');
   };
 
   // Group bookings by booking_number
@@ -196,7 +187,6 @@ export default function BookingList({ role, userId, userName }: BookingListProps
       }
 
       queryClient.invalidateQueries({ queryKey: ['bookings'] });
-      queryClient.invalidateQueries({ queryKey: ['allotments'] });
       queryClient.invalidateQueries({ queryKey: ['vw_inventory_status'] });
       queryClient.invalidateQueries({ queryKey: ['vw_booking_status'] });
       queryClient.invalidateQueries({ queryKey: ['vw_daily_cashbook'] });
@@ -317,9 +307,6 @@ export default function BookingList({ role, userId, userName }: BookingListProps
                   <div key={item.id} className="flex justify-between items-center text-sm">
                     <span className="font-semibold text-gray-700 flex flex-wrap items-center gap-2">
                       <span>{item.quantity} × {getPlantName(item.plant_id)}</span>
-                      <span className="text-xs font-bold text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">
-                        {getLotNumber(item.lot_id)}
-                      </span>
                       {item.status === 'Delivered' && (
                         <span className="text-[9px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded-md font-bold uppercase tracking-wide">{t('delivered')}</span>
                       )}

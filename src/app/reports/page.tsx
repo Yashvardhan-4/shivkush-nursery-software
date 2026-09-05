@@ -25,7 +25,7 @@ export default async function ReportsPage() {
         <div>
           <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Reports</h1>
           <p className="text-sm font-medium text-gray-500 mt-1">
-            Reconciliation · Production Demand · Lots
+            Reconciliation · Production Demand · Workers
           </p>
         </div>
         <Link 

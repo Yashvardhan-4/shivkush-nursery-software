@@ -40,7 +40,7 @@ export default function AttendanceManager({ ownerId }: AttendanceManagerProps) {
   const { data: workers } = useQuery<WorkerUser[]>({
     queryKey: ['workers'],
     queryFn: async () => {
-      const { data, error } = await supabase.from('users').select('*').eq('role', 'worker');
+      const { data, error } = await supabase.from('vw_active_workers').select('id, name, mobile, role').eq('role', 'worker');
       if (error) throw error;
       return (data as WorkerUser[]) || [];
     }

@@ -12,7 +12,6 @@ import {
   Sprout,
   ClipboardList,
   BarChart3,
-  Layers,
   ShoppingCart,
   BookOpen,
   Truck,
@@ -20,7 +19,7 @@ import {
   Receipt,
 } from 'lucide-react';
 
-type Tab = 'reconciliation' | 'production' | 'lots' | 'workers';
+type Tab = 'reconciliation' | 'production' | 'workers';
 
 interface CashbookItem {
   datetime: string;
@@ -31,60 +30,16 @@ interface CashbookItem {
   description: string;
 }
 
-interface PlantItem {
-  id: string;
+interface InventoryStatusRow {
+  plant_id: string;
   plant_name: string;
   variety: string;
   category: string;
-  active: boolean;
-  selling_price: number;
-}
-
-interface LotItem {
-  id: string;
-  lot_number: string;
-  lot_name?: string | null;
-  plant_id: string;
-  initial_quantity?: number;
-  total_quantity: number;
-  status: 'Growing' | 'Ready' | 'Completed';
-  ready_date: string;
-}
-
-interface BookingItem {
-  id: string;
-  booking_number: string;
-  plant_id: string;
-  lot_id?: string | null;
-  quantity: number;
-  status: string;
-}
-
-interface AllotmentItem {
-  id: string;
-  booking_id: string;
-  lot_id: string;
-  quantity: number;
-}
-
-interface DirectSaleItem {
-  id: string;
-  sale_number: string;
-  plant_id?: string | null;
-  lot_id?: string | null;
-  quantity?: number;
-  amount: number;
-}
-
-interface InventoryStatusItem {
-  lot_id: string;
-  produced_quantity: number;
-  survived_quantity: number;
-  allocated_quantity: number;
-  sold_quantity: number;
   current_physical_stock: number;
+  allocated_quantity: number;
   free_stock: number;
-  status: string;
+  selling_price: number;
+  active: boolean;
 }
 
 interface UserItem {
@@ -372,13 +327,19 @@ function ReconciliationTab() {
 // ─── PRODUCTION DEMAND TAB ────────────────────────────────────────────────────
 function ProductionDemandTab() {
   const { t } = useLanguage();
-  const { data: plants } = useQuery<PlantItem[]>({ queryKey: ['plants'], queryFn: async () => { const { data } = await supabase.from('plants').select('*').is('deleted_at', null).eq('active', true); return (data as PlantItem[]) || []; } });
-  const { data: bookings } = useQuery<BookingItem[]>({ queryKey: ['bookings'], queryFn: async () => { const { data } = await supabase.from('bookings').select('*').is('deleted_at', null); return (data as BookingItem[]) || []; } });
-  const { data: lots } = useQuery<LotItem[]>({ queryKey: ['lots'], queryFn: async () => { const { data } = await supabase.from('lots').select('*').is('deleted_at', null); return (data as LotItem[]) || []; } });
-  const { data: allotments } = useQuery<AllotmentItem[]>({ queryKey: ['allotments'], queryFn: async () => { const { data } = await supabase.from('allotments').select('*').is('deleted_at', null); return (data as AllotmentItem[]) || []; } });
-  const { data: inventory } = useQuery<InventoryStatusItem[]>({ queryKey: ['vw_inventory_status'], queryFn: async () => { const { data } = await supabase.from('vw_inventory_status').select('*'); return (data as InventoryStatusItem[]) || []; } });
+  const { data: inventory, isLoading } = useQuery<InventoryStatusRow[]>({
+    queryKey: ['vw_inventory_status'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('vw_inventory_status')
+        .select('*')
+        .eq('active', true);
+      if (error) throw error;
+      return (data as InventoryStatusRow[]) || [];
+    },
+  });
 
-  if (!plants || !bookings || !lots || !allotments || !inventory) {
+  if (isLoading || !inventory) {
     return <LoadingCard />;
   }
 
@@ -387,44 +348,24 @@ function ProductionDemandTab() {
     name: string;
     variety: string;
     totalBooked: number;
-    totalGrowing: number;
+    physicalStock: number;
+    freeStock: number;
     deficit: number;
   };
 
-  const demands: PlantDemand[] = plants.map((plant) => {
-    const activeBookings = bookings.filter(
-      (b) =>
-        b.plant_id === plant.id &&
-        b.status !== 'Cancelled' &&
-        b.status !== 'Delivered'
-    );
-
-    const rawTotalBooked = activeBookings.reduce((sum, b) => sum + b.quantity, 0);
-
-    const activeBookingIds = new Set(activeBookings.map(b => b.id));
-    const allottedToBookings = allotments
-      .filter(a => activeBookingIds.has(a.booking_id))
-      .reduce((sum, a) => sum + a.quantity, 0);
-
-    const totalBooked = Math.max(0, rawTotalBooked - allottedToBookings);
-
-    // Sum centralized free_stock from view across active growing/ready lots for this plant
-    const totalStock = lots
-      .filter((l) => l.plant_id === plant.id && l.status !== 'Completed')
-      .reduce((sum, l) => {
-        const inv = inventory.find((i) => i.lot_id === l.id);
-        return sum + (inv ? inv.free_stock : 0);
-      }, 0);
-
-    const totalGrowing = Math.max(0, totalStock);
-    const deficit = Math.max(0, totalBooked - totalGrowing);
+  const demands: PlantDemand[] = inventory.map((plant) => {
+    const totalBooked = Number(plant.allocated_quantity) || 0;
+    const physicalStock = Number(plant.current_physical_stock) || 0;
+    const freeStock = Number(plant.free_stock) || 0;
+    const deficit = Math.max(0, totalBooked - physicalStock);
 
     return {
-      id: plant.id,
+      id: plant.plant_id,
       name: plant.plant_name,
       variety: plant.variety,
       totalBooked,
-      totalGrowing,
+      physicalStock,
+      freeStock,
       deficit,
     };
   });
@@ -478,7 +419,16 @@ function ProductionDemandTab() {
               <div className="flex gap-4 mt-3">
                 <div className="text-center">
                   <p className="text-xs text-gray-400 font-semibold uppercase tracking-wide">
-                    {t('bookedUnallotted')}
+                    Physical Stock
+                  </p>
+                  <p className="text-2xl font-black text-gray-800">
+                    {d.physicalStock}
+                  </p>
+                </div>
+                <div className="text-gray-200 self-stretch border-l" />
+                <div className="text-center">
+                  <p className="text-xs text-gray-400 font-semibold uppercase tracking-wide">
+                    Booked
                   </p>
                   <p className="text-2xl font-black text-blue-600">
                     {d.totalBooked}
@@ -487,10 +437,10 @@ function ProductionDemandTab() {
                 <div className="text-gray-200 self-stretch border-l" />
                 <div className="text-center">
                   <p className="text-xs text-gray-400 font-semibold uppercase tracking-wide">
-                    {t('stockFree')}
+                    Free to Sell
                   </p>
-                  <p className="text-2xl font-black text-emerald-600">
-                    {d.totalGrowing}
+                  <p className={`text-2xl font-black ${d.freeStock >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                    {d.freeStock}
                   </p>
                 </div>
               </div>
@@ -514,164 +464,9 @@ function ProductionDemandTab() {
         </div>
       ))}
 
-      {plants.length === 0 && (
+      {inventory.length === 0 && (
         <div className="p-8 text-center text-gray-400 text-sm font-medium bg-white rounded-2xl border border-gray-100">
           {t('noActivePlants')}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── LOT REPORT TAB ───────────────────────────────────────────────────────────
-function LotReportTab() {
-  const { t } = useLanguage();
-  const { data: lots } = useQuery<LotItem[]>({ queryKey: ['lots'], queryFn: async () => { const { data } = await supabase.from('lots').select('*').is('deleted_at', null); return (data as LotItem[]) || []; } });
-  const { data: plants } = useQuery<PlantItem[]>({ queryKey: ['plants'], queryFn: async () => { const { data } = await supabase.from('plants').select('*').is('deleted_at', null).eq('active', true); return (data as PlantItem[]) || []; } });
-  const { data: allotments } = useQuery<AllotmentItem[]>({ queryKey: ['allotments'], queryFn: async () => { const { data } = await supabase.from('allotments').select('*').is('deleted_at', null); return (data as AllotmentItem[]) || []; } });
-  const { data: bookings } = useQuery<BookingItem[]>({ queryKey: ['bookings'], queryFn: async () => { const { data } = await supabase.from('bookings').select('*').is('deleted_at', null); return (data as BookingItem[]) || []; } });
-  const { data: directSales } = useQuery<DirectSaleItem[]>({ queryKey: ['direct_sales'], queryFn: async () => { const { data } = await supabase.from('direct_sales').select('*').is('deleted_at', null); return (data as DirectSaleItem[]) || []; } });
-  const { data: inventory } = useQuery<InventoryStatusItem[]>({ queryKey: ['vw_inventory_status'], queryFn: async () => { const { data } = await supabase.from('vw_inventory_status').select('*'); return (data as InventoryStatusItem[]) || []; } });
-
-  if (!lots || !plants || !allotments || !bookings || !directSales || !inventory) {
-    return <LoadingCard />;
-  }
-
-  const plantMap = new Map(plants.map((p) => [p.id, p]));
-
-  const activeBookingIds = new Set(
-    bookings.filter(b => b.status !== 'Delivered' && b.status !== 'Cancelled').map(b => b.id)
-  );
-
-  // Build allotted qty per lot
-  const allottedPerLot = new Map<string, number>();
-  for (const a of allotments) {
-    if (activeBookingIds.has(a.booking_id)) {
-      allottedPerLot.set(a.lot_id, (allottedPerLot.get(a.lot_id) ?? 0) + a.quantity);
-    }
-  }
-
-  const statusGroups: Array<{
-    status: 'Growing' | 'Ready' | 'Completed';
-    labelKey: string;
-    color: string;
-    dotColor: string;
-  }> = [
-    { status: 'Ready', labelKey: 'readyToDeliver', color: 'text-emerald-700', dotColor: 'bg-emerald-500' },
-    { status: 'Growing', labelKey: 'currentlyGrowing', color: 'text-blue-700', dotColor: 'bg-blue-500' },
-    { status: 'Completed', labelKey: 'completed', color: 'text-gray-500', dotColor: 'bg-gray-400' },
-  ];
-
-  return (
-    <div className="space-y-6">
-      {statusGroups.map((group) => {
-        const groupLots = lots.filter((l) => l.status === group.status);
-        if (groupLots.length === 0) return null;
-
-        return (
-          <div key={group.status}>
-            {/* Group heading */}
-            <div className="flex items-center gap-2 mb-3 px-1">
-              <span className={`w-2.5 h-2.5 rounded-full ${group.dotColor}`} />
-              <h3 className={`text-sm font-black uppercase tracking-wider ${group.color}`}>
-                {t(group.labelKey as any) || group.status}
-                <span className="ml-2 text-gray-400 font-semibold">
-                  ({groupLots.length})
-                </span>
-              </h3>
-            </div>
-
-            <div className="space-y-3">
-              {groupLots.map((lot) => {
-                const plant = plantMap.get(lot.plant_id);
-                const allottedQty = allottedPerLot.get(lot.id) ?? 0;
-                const deliveredQty = bookings
-                  .filter(b => b.lot_id === lot.id && b.status === 'Delivered')
-                  .reduce((sum, b) => sum + b.quantity, 0);
-                const directSoldQty = directSales
-                  .filter(s => s.lot_id === lot.id)
-                  .reduce((sum, s) => sum + (s.quantity || 0), 0);
-                const soldQty = deliveredQty + directSoldQty;
-                
-                const inv = inventory.find((i) => i.lot_id === lot.id);
-                const physicalStock = inv ? Math.max(0, inv.current_physical_stock) : Math.max(0, lot.total_quantity - soldQty);
-                const freeStock = inv ? Math.max(0, inv.free_stock) : 0;
-
-                return (
-                  <div
-                    key={lot.id}
-                    className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden"
-                  >
-                    {/* Header */}
-                    <div className="px-5 py-3 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
-                      <div>
-                        <p className="font-black text-gray-900 text-sm">
-                          {plant?.plant_name ?? 'Unknown Plant'}
-                          {plant?.variety ? (
-                            <span className="text-gray-400 font-medium"> · {plant.variety}</span>
-                          ) : null}
-                        </p>
-                        <p className="text-xs text-gray-400 font-medium">
-                          Lot #{lot.lot_name || lot.lot_number}
-                        </p>
-                      </div>
-                      <span
-                        className={`text-xs font-bold px-3 py-1 rounded-full ${
-                          lot.status === 'Ready'
-                            ? 'bg-emerald-100 text-emerald-700'
-                            : lot.status === 'Growing'
-                            ? 'bg-blue-100 text-blue-700'
-                            : 'bg-gray-100 text-gray-500'
-                        }`}
-                      >
-                        {lot.status}
-                      </span>
-                    </div>
-
-                    {/* Stats grid */}
-                    <div className="px-4 py-4 grid grid-cols-2 sm:grid-cols-5 gap-2 bg-gray-50 text-center">
-                      <div className="bg-white p-2 rounded-lg border border-gray-100 col-span-2 sm:col-span-1">
-                        <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">{t('total')}</p>
-                        <p className="text-xl font-black text-gray-700 mt-0.5">{lot.initial_quantity ?? lot.total_quantity}</p>
-                      </div>
-                      <div className="bg-white p-2 rounded-lg border border-gray-100">
-                        <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Physical</p>
-                        <p className="text-lg font-black text-gray-800 mt-0.5">{physicalStock}</p>
-                      </div>
-                      <div className="bg-white p-2 rounded-lg border border-gray-100">
-                        <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">{t('allotted')}</p>
-                        <p className="text-lg font-black text-orange-600 mt-0.5">{allottedQty}</p>
-                      </div>
-                      <div className="bg-white p-2 rounded-lg border border-gray-100">
-                        <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">{t('sold')}</p>
-                        <p className="text-lg font-black text-sky-600 mt-0.5">{soldQty}</p>
-                      </div>
-                      <div className="bg-white p-2 rounded-lg border border-gray-100">
-                        <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">{t('free')}</p>
-                        <p className={`text-lg font-black mt-0.5 ${freeStock > 0 ? 'text-green-600' : 'text-red-500'}`}>{freeStock}</p>
-                      </div>
-                    </div>
-
-                    {/* Ready Date */}
-                    <div className="px-5 pb-4">
-                      <p className="text-xs text-gray-400">
-                        {t('expectedReadyDate')}:{' '}
-                        <span className="font-semibold text-gray-600">
-                          {lot.ready_date}
-                        </span>
-                      </p>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })}
-
-      {lots.length === 0 && (
-        <div className="p-8 text-center text-gray-400 text-sm font-medium bg-white rounded-2xl border border-gray-100">
-          {t('noLotsFoundReport')}
         </div>
       )}
     </div>
@@ -944,15 +739,6 @@ export default function ReportsDashboard() {
           </div>
         </TabBtn>
         <TabBtn
-          active={activeTab === 'lots'}
-          onClick={() => setActiveTab('lots')}
-        >
-          <div className="flex flex-col items-center gap-0.5">
-            <Layers className="w-4 h-4" />
-            {t('lots')}
-          </div>
-        </TabBtn>
-        <TabBtn
           active={activeTab === 'workers'}
           onClick={() => setActiveTab('workers')}
         >
@@ -966,7 +752,6 @@ export default function ReportsDashboard() {
       {/* Tab Content */}
       {activeTab === 'reconciliation' && <ReconciliationTab />}
       {activeTab === 'production' && <ProductionDemandTab />}
-      {activeTab === 'lots' && <LotReportTab />}
       {activeTab === 'workers' && <WorkersTab />}
     </div>
   );

@@ -92,89 +92,32 @@ export async function serverCancelBooking(params: {
 }) {
   try {
     const cookieStore = await cookies();
-    const sessionCookie = cookieStore.get('snms_session');
-    let userId = '00000000-0000-0000-0000-000000000000';
-    let userName = 'Staff';
+    const sessionCookie = cookieStore.get('snms_session') || cookieStore.get('session');
+    let userId: string | null = null;
 
-    if (sessionCookie) {
+    if (sessionCookie?.value) {
       try {
         const parsed = JSON.parse(sessionCookie.value);
-        userId = parsed.id || userId;
-        userName = parsed.name || userName;
+        userId = parsed.id || null;
       } catch (e) {
         // Ignore
       }
     }
 
-    // 1. Fetch booking rows
-    const { data: bookings, error: bErr } = await supabaseAdmin
-      .from('bookings')
-      .select('id, status, advance_paid')
-      .eq('booking_number', params.bookingNumber)
-      .is('deleted_at', null);
-
-    if (bErr || !bookings || bookings.length === 0) {
-      return { success: false, error: bErr?.message || 'Booking not found' };
-    }
-
-    // 2. Validate cancellability
-    const isDelivered = bookings.some(b => b.status === 'Delivered');
-    if (isDelivered) {
-      return { success: false, error: 'Cannot cancel a booking that has already been delivered' };
-    }
-
-    const isAlreadyCancelled = bookings.every(b => b.status === 'Cancelled');
-    if (isAlreadyCancelled) {
-      return { success: false, error: 'Booking is already cancelled' };
-    }
-
-    const bookingIds = bookings.map(b => b.id);
-    const now = new Date().toISOString();
-
-    // 3. Release active allotments (return inventory to free stock)
-    const { error: aErr } = await supabaseAdmin
-      .from('allotments')
-      .update({ deleted_at: now })
-      .in('booking_id', bookingIds)
-      .is('deleted_at', null);
-
-    if (aErr) {
-      return { success: false, error: 'Failed to release allocations: ' + aErr.message };
-    }
-
-    // 4. Mark booking as Cancelled (advance retained, NO refund created per BKG-004)
-    const { error: uErr } = await supabaseAdmin
-      .from('bookings')
-      .update({
-        status: 'Cancelled',
-        refund_amount: 0,
-        refund_payment_mode: null,
-        refund_status: 'Forfeited',
-        updated_at: now
-      })
-      .eq('booking_number', params.bookingNumber)
-      .is('deleted_at', null);
-
-    if (uErr) {
-      return { success: false, error: 'Failed to cancel booking: ' + uErr.message };
-    }
-
-    // 5. Record audit log
-    await supabaseAdmin.from('audit_logs').insert({
-      id: crypto.randomUUID(),
-      user_id: userId,
-      user_name: userName,
-      action: 'CANCEL_BOOKING',
-      table_name: 'bookings',
-      record_id: params.bookingNumber,
-      details: {
-        note: 'Booking cancelled (advance retained by nursery per policy BKG-004)',
-        items_count: bookings.length
-      },
-      created_at: now
+    const { data, error } = await supabaseAdmin.rpc('rpc_cancel_booking', {
+      p_booking_number: params.bookingNumber,
+      p_user_id: userId,
     });
 
-    return { success: true, booking_number: params.bookingNumber, items_cancelled: bookings.length };
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    if (data && !data.success) {
+      return { success: false, error: data.error || 'Failed to cancel booking' };
+    }
+
+    return { success: true, booking_number: params.bookingNumber };
   } catch (error: any) {
     return { success: false, error: error.message || 'Server error during cancellation' };
   }

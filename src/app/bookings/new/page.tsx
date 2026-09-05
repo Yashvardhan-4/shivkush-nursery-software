@@ -12,8 +12,6 @@ interface CartItem {
   id: string;
   plantId: string;
   plantName: string;
-  lotId: string;
-  lotName: string;
   quantity: number;
   price: number;
   amount: number;
@@ -93,36 +91,10 @@ export default function NewBookingPage() {
       return data || [];
     }
   });
-  const { data: lots } = useQuery({
-    queryKey: ['lots', plantId],
+  const { data: inventory } = useQuery({
+    queryKey: ['vw_inventory_status'],
     queryFn: async () => {
-      if (!plantId) return [];
-      const { data, error } = await supabase.from('lots').select('*').eq('plant_id', plantId).is('deleted_at', null);
-      if (error) throw error;
-      return data || [];
-    },
-    enabled: !!plantId
-  });
-  const { data: bookings } = useQuery({
-    queryKey: ['bookings'],
-    queryFn: async () => {
-      const { data, error } = await supabase.from('bookings').select('*').is('deleted_at', null);
-      if (error) throw error;
-      return data || [];
-    }
-  });
-  const { data: allotments } = useQuery({
-    queryKey: ['allotments'],
-    queryFn: async () => {
-      const { data, error } = await supabase.from('allotments').select('*').is('deleted_at', null);
-      if (error) throw error;
-      return data || [];
-    }
-  });
-  const { data: direct_sales } = useQuery({
-    queryKey: ['direct_sales'],
-    queryFn: async () => {
-      const { data, error } = await supabase.from('direct_sales').select('*').is('deleted_at', null);
+      const { data, error } = await supabase.from('vw_inventory_status').select('*');
       if (error) throw error;
       return data || [];
     }
@@ -135,15 +107,14 @@ export default function NewBookingPage() {
       return data || [];
     }
   });
-  const { data: users } = useQuery({
-    queryKey: ['users'],
+  const { data: workers } = useQuery({
+    queryKey: ['active_workers'],
     queryFn: async () => {
-      const { data, error } = await supabase.from('users').select('*');
+      const { data, error } = await supabase.from('vw_active_workers').select('*').eq('role', 'worker');
       if (error) throw error;
       return data || [];
     }
   });
-  const workers = users?.filter(u => u.role === 'worker') || [];
 
   const uniqueCities = Array.from(new Set(customers?.map(c => c.city).filter(Boolean) as string[]));
 
@@ -185,8 +156,6 @@ export default function NewBookingPage() {
       id: generateId(),
       plantId: selectedPlant.id,
       plantName: selectedPlant.variety ? `${selectedPlant.plant_name} - ${selectedPlant.variety}` : selectedPlant.plant_name,
-      lotId: '',
-      lotName: t('noLotAssigned'),
       quantity: qty,
       price: price,
       amount: price * qty
@@ -314,7 +283,6 @@ export default function NewBookingPage() {
           customer_phone: customerPhone,
           city: city,
           plant_id: item.plantId,
-          lot_id: item.lotId || null,
           quantity: item.quantity,
           advance_paid: itemAdvance,
           advance_payment_mode: paymentMode,
@@ -323,7 +291,7 @@ export default function NewBookingPage() {
           total_amount: item.amount,
           booking_date: createdAt,
           delivery_date: deliveryDate,
-          status: item.lotId ? 'Allocated' : 'Pending',
+          status: 'Pending',
           remarks: 'Created from Cart',
           worker_id: user.id,
           assigned_to: assignedTo || null,
@@ -359,7 +327,6 @@ export default function NewBookingPage() {
       queryClient.invalidateQueries({ queryKey: ['bookings'] });
       queryClient.invalidateQueries({ queryKey: ['bookings-data'] });
       queryClient.invalidateQueries({ queryKey: ['customers'] });
-      queryClient.invalidateQueries({ queryKey: ['allotments'] });
       queryClient.invalidateQueries({ queryKey: ['vw_booking_status'] });
       queryClient.invalidateQueries({ queryKey: ['vw_daily_cashbook'] });
       queryClient.invalidateQueries({ queryKey: ['vw_profit_summary'] });
@@ -594,7 +561,7 @@ export default function NewBookingPage() {
         </div>
 
         {/* Worker Assignment (Optional) */}
-        {workers.length > 0 && currentUser?.role === 'owner' && (
+        {workers && workers.length > 0 && currentUser?.role === 'owner' && (
           <div className="bg-white p-5 rounded-3xl shadow-sm border border-gray-100 space-y-4">
             <h2 className="font-black text-gray-800 border-b border-gray-100 pb-2">Order Fulfillment</h2>
             <div className="space-y-2">
@@ -624,9 +591,15 @@ export default function NewBookingPage() {
           <div className="space-y-2">
             <select value={plantId} onChange={e => setPlantId(e.target.value)} className="w-full p-4 bg-white border border-blue-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold text-lg text-blue-900">
               <option value="">{t('choosePlantPlaceholder')}</option>
-              {plants?.filter(p => p.active !== false).map(p => (
-                <option key={p.id} value={p.id}>{p.variety ? `${p.plant_name} - ${p.variety}` : p.plant_name} (₹{p.selling_price})</option>
-              ))}
+              {plants?.filter(p => p.active !== false).map(p => {
+                const inv = inventory?.find((i: any) => i.plant_id === p.id);
+                const freeStock = inv ? inv.free_stock : 0;
+                return (
+                  <option key={p.id} value={p.id}>
+                    {p.variety ? `${p.plant_name} - ${p.variety}` : p.plant_name} (₹{p.selling_price}) — Free: {freeStock}
+                  </option>
+                );
+              })}
             </select>
           </div>
 
@@ -649,7 +622,7 @@ export default function NewBookingPage() {
                 <div key={item.id} className="flex justify-between items-center bg-gray-50 p-3 rounded-xl border border-gray-100">
                   <div>
                     <p className="font-bold text-gray-900">{item.plantName}</p>
-                    <p className="text-xs font-semibold text-gray-500">{item.quantity} x ₹{item.price} • {item.lotName}</p>
+                    <p className="text-xs font-semibold text-gray-500">{item.quantity} saplings @ ₹{item.price}</p>
                   </div>
                   <div className="flex items-center space-x-4">
                     <span className="font-black text-gray-900">₹{item.amount}</span>

@@ -33,7 +33,6 @@ function FulfillmentContent() {
   const [userId, setUserId] = useState('');
   const [userRole, setUserRole] = useState('');
   const [deliveryModal, setDeliveryModal] = useState<DeliveryModalState | null>(null);
-  const [selectedLotId, setSelectedLotId] = useState<string>('');
   
   // Payment Form States
   const [paymentMode, setPaymentMode] = useState<'Cash' | 'UPI' | 'Split'>('Cash');
@@ -75,11 +74,10 @@ function FulfillmentContent() {
         salesQuery = salesQuery.or(`assigned_to.eq.${userId},assigned_to.is.null,worker_id.eq.${userId}`);
       }
 
-      const [bRes, sRes, pRes, lRes, vwbRes, invRes] = await Promise.all([
+      const [bRes, sRes, pRes, vwbRes, invRes] = await Promise.all([
         bookingsQuery,
         salesQuery,
         supabase.from('plants').select('*').is('deleted_at', null),
-        supabase.from('lots').select('*').is('deleted_at', null),
         supabase.from('vw_booking_status').select('*'),
         supabase.from('vw_inventory_status').select('*')
       ]);
@@ -88,7 +86,6 @@ function FulfillmentContent() {
         bookings: bRes.data || [],
         sales: sRes.data || [],
         plants: pRes.data || [],
-        lots: lRes.data || [],
         vwBookingStatus: vwbRes.data || [],
         inventoryStatus: invRes.data || []
       };
@@ -96,7 +93,7 @@ function FulfillmentContent() {
     enabled: !!userId,
   });
 
-  const { bookings, sales, plants, lots, vwBookingStatus, inventoryStatus } = queriesData || {};
+  const { bookings, sales, plants, vwBookingStatus, inventoryStatus } = queriesData || {};
 
   const pendingSales = sales || [];
   const pendingBookings = bookings || [];
@@ -115,23 +112,7 @@ function FulfillmentContent() {
     }
   }, [pendingBookings, targetBookingNumber, targetBookingId]);
 
-  const checkSoldOutLot = async (lotId: string | null | undefined) => {
-    if (!lotId || !lots) return;
-    const lot = lots.find((l: any) => l.id === lotId);
-    if (!lot || lot.status === 'Completed') return;
-
-    const { data: invData } = await supabase
-      .from('vw_inventory_status')
-      .select('current_physical_stock')
-      .eq('lot_id', lotId)
-      .single();
-
-    if (invData && invData.current_physical_stock <= 0) {
-      await supabase.from('lots').update({ status: 'Completed' }).eq('id', lotId);
-    }
-  };
-
-  const handleFulfillSale = async (id: string, lotId: string | null) => {
+  const handleFulfillSale = async (id: string) => {
     try {
       if (!navigator.onLine) {
         alert('You must be online to save.');
@@ -157,7 +138,6 @@ function FulfillmentContent() {
         details: { note: 'Handed over to customer' },
       });
 
-      await checkSoldOutLot(lotId);
       queryClient.invalidateQueries({ queryKey: ['fulfillment-data'] });
       queryClient.invalidateQueries({ queryKey: ['vw_inventory_status'] });
     } catch (e: any) {
@@ -173,7 +153,6 @@ function FulfillmentContent() {
     const outstanding = statusRow ? Number(statusRow.outstanding_balance) : (booking.total_amount - (booking.advance_paid || 0));
     
     setDeliveryModal({ booking, statusRow });
-    setSelectedLotId(booking.lot_id || '');
     setActionError('');
     
     if (outstanding > 0) {
@@ -234,11 +213,6 @@ function FulfillmentContent() {
     }
   };
 
-  const availableLotsForPlant = useMemo(() => {
-    if (!deliveryModal || !lots) return [];
-    return lots.filter((l: any) => l.plant_id === deliveryModal.booking.plant_id && l.status !== 'Completed');
-  }, [deliveryModal, lots]);
-
   const cashVal = parseFloat(cashInput) || 0;
   const upiVal = parseFloat(upiInput) || 0;
   const totalEntered = cashVal + upiVal;
@@ -265,23 +239,6 @@ function FulfillmentContent() {
       const pCash = paymentMode === 'Cash' ? outstandingBalance : paymentMode === 'UPI' ? 0 : cashVal;
       const pUpi = paymentMode === 'UPI' ? outstandingBalance : paymentMode === 'Cash' ? 0 : upiVal;
 
-      // If booking was unallotted and user chose a lot in modal, allocate lot first
-      const activeLotId = deliveryModal.booking.lot_id || selectedLotId;
-      if (!deliveryModal.booking.lot_id && selectedLotId) {
-        const { error: allocErr } = await supabase.rpc('allocate_lot', {
-          p_booking_id: deliveryModal.booking.id,
-          p_lot_id: selectedLotId,
-          p_quantity: deliveryModal.booking.quantity,
-          p_user_id: userId || '00000000-0000-0000-0000-000000000000',
-          p_user_name: 'Staff',
-          p_booking_quantity: deliveryModal.booking.quantity,
-          p_total_allotted: 0
-        });
-        if (allocErr) {
-          console.warn('Lot allocation warning:', allocErr);
-        }
-      }
-
       const result = await serverCollectFinalPayment({
         p_booking_id: deliveryModal.booking.id,
         p_cash_amount: outstandingBalance > 0 ? pCash : 0,
@@ -293,10 +250,6 @@ function FulfillmentContent() {
         throw new Error(result?.error || 'Failed to record delivery');
       }
 
-      if (activeLotId) {
-        await checkSoldOutLot(activeLotId);
-      }
-
       // Invalidate all related caches
       queryClient.invalidateQueries({ queryKey: ['fulfillment-data'] });
       queryClient.invalidateQueries({ queryKey: ['bookings'] });
@@ -305,7 +258,6 @@ function FulfillmentContent() {
       queryClient.invalidateQueries({ queryKey: ['vw_daily_cashbook'] });
       queryClient.invalidateQueries({ queryKey: ['vw_profit_summary'] });
       queryClient.invalidateQueries({ queryKey: ['vw_inventory_status'] });
-      queryClient.invalidateQueries({ queryKey: ['allotments-data'] });
 
       setDeliveryModal(null);
     } catch (err: any) {
@@ -377,7 +329,7 @@ function FulfillmentContent() {
                     </p>
                   </div>
                   <button
-                    onClick={() => handleFulfillSale(sale.id, sale.lot_id)}
+                    onClick={() => handleFulfillSale(sale.id)}
                     disabled={actionLoading}
                     className="bg-purple-600 hover:bg-purple-700 active:scale-95 transition-all text-white font-bold py-3 px-5 rounded-xl text-sm whitespace-nowrap shadow-sm disabled:opacity-60"
                   >
@@ -480,14 +432,6 @@ function FulfillmentContent() {
                     </p>
 
                     <div className="flex items-center gap-2">
-                      {isPending && !booking.lot_id && (
-                        <Link
-                          href="/allotments"
-                          className="text-xs font-bold text-blue-600 hover:text-blue-700 underline py-2 px-1 flex items-center gap-1"
-                        >
-                          Allotments <ArrowRight className="w-3 h-3" />
-                        </Link>
-                      )}
                       <button
                         onClick={() => openDeliveryModal(booking)}
                         disabled={actionLoading}
@@ -528,33 +472,6 @@ function FulfillmentContent() {
                 <X className="w-4 h-4" />
               </button>
             </div>
-
-            {/* If booking is unallotted, allow picking a lot */}
-            {!deliveryModal.booking.lot_id && (
-              <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3.5 space-y-2">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-amber-800">
-                  <Layers className="w-4 h-4" /> Stock Allotment (Optional / Direct Selection)
-                </div>
-                {availableLotsForPlant.length > 0 ? (
-                  <select
-                    value={selectedLotId}
-                    onChange={(e) => setSelectedLotId(e.target.value)}
-                    className="w-full p-2.5 bg-white border border-amber-300 rounded-xl text-xs font-bold text-gray-800 outline-none"
-                  >
-                    <option value="">-- Auto / Deliver without pre-allotment --</option>
-                    {availableLotsForPlant.map((l: any) => (
-                      <option key={l.id} value={l.id}>
-                        Lot {l.lot_number} (Avail: {l.available_stock ?? l.total_quantity})
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <p className="text-[11px] text-amber-700">
-                    No active lots found for this plant. Order will be marked Delivered directly.
-                  </p>
-                )}
-              </div>
-            )}
 
             {/* Financial Ledger Breakdown */}
             <div className="bg-blue-50/70 border border-blue-100 rounded-2xl p-4 space-y-2 text-sm">

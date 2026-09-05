@@ -27,7 +27,7 @@ export function BottomNav() {
     { href: '/customers', label: t('customers'), icon: ClipboardList },
     { href: '/expenses',  label: 'Expenses',  icon: Receipt },
     { href: '/transactions', label: 'Cashbook', icon: BookOpenCheck },
-    { href: '/lots',      label: t('lots'),     icon: Layers },
+    { href: '/plants',    label: t('plants'),   icon: Leaf },
     { href: '/attendance', label: t('attendance'), icon: Users },
     { href: '/profile',   label: t('profile'),  icon: User },
   ];
@@ -37,7 +37,7 @@ export function BottomNav() {
     { href: '/sales/new', label: t('directSales'),  icon: ShoppingCart },
     { href: '/fulfillment', label: 'My Orders',     icon: Package },
     { href: '/bookings',  label: t('bookings'),     icon: BookOpen },
-    { href: '/lots',      label: t('lots'),         icon: Layers },
+    { href: '/plants',    label: t('plants'),       icon: Leaf },
     { href: '/profile',   label: t('profile'),      icon: User },
   ];
 

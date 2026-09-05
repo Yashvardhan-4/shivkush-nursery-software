@@ -10,7 +10,6 @@ export interface BookingEditItem {
   customer_phone: string;
   city?: string | null;
   plant_id: string;
-  lot_id?: string | null;
   quantity: number;
   advance_paid: number;
   advance_payment_mode: 'Cash' | 'UPI' | 'Split' | null;
@@ -36,17 +35,12 @@ export async function serverUpdateBooking(params: {
     const userId = params.userId || '00000000-0000-0000-0000-000000000000';
     const userName = params.userName || 'Staff';
 
-    // 1. Soft-delete removed items and their allotments
+    // 1. Soft-delete removed items
     if (params.deletedItemIds && params.deletedItemIds.length > 0) {
       await supabaseAdmin
         .from('bookings')
         .update({ deleted_at: now, status: 'Cancelled' })
         .in('id', params.deletedItemIds);
-
-      await supabaseAdmin
-        .from('allotments')
-        .update({ deleted_at: now })
-        .in('booking_id', params.deletedItemIds);
     }
 
     // 2. Upsert customer in customers table
@@ -70,14 +64,6 @@ export async function serverUpdateBooking(params: {
 
       const isModified = existing ? (existing.plant_id !== item.plant_id || existing.quantity !== item.quantity) : false;
 
-      if (isModified) {
-        // Release allotment if plant or quantity changed
-        await supabaseAdmin
-          .from('allotments')
-          .update({ deleted_at: now })
-          .eq('booking_id', item.id);
-      }
-
       const bookingPayload = {
         id: item.id,
         booking_number: params.bookingNumber,
@@ -85,7 +71,6 @@ export async function serverUpdateBooking(params: {
         customer_phone: item.customer_phone,
         city: item.city || null,
         plant_id: item.plant_id,
-        lot_id: isModified ? null : (item.lot_id || null),
         quantity: item.quantity,
         advance_paid: item.advance_paid,
         advance_payment_mode: item.advance_payment_mode,

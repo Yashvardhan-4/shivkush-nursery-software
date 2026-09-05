@@ -9,6 +9,15 @@ export default function PlantList({ role }: { role: string }) {
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('All');
   
+  const { data: inventory } = useQuery({
+    queryKey: ['vw_inventory_status'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('vw_inventory_status').select('*');
+      if (error) throw error;
+      return data || [];
+    }
+  });
+
   const { data: plants } = useQuery({
     queryKey: ['plants', search, categoryFilter],
     queryFn: async () => {
@@ -66,47 +75,73 @@ export default function PlantList({ role }: { role: string }) {
       </div>
 
       <div className="grid gap-3">
-        {plants.map(plant => (
-          <div key={plant.id} className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-start active:scale-[0.98] transition-transform">
-            <div className="flex-1 min-w-0">
-              <h3 className="font-extrabold text-gray-900 text-lg">{plant.plant_name}</h3>
-              <div className="flex items-center gap-2 mt-1 flex-wrap">
-                {plant.category && (
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-blue-50 text-blue-600 uppercase tracking-wider border border-blue-100">
-                    {plant.category}
-                  </span>
-                )}
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{plant.variety}</p>
-              </div>
-              {/* Pricing Tiers */}
-              {plant.pricing_tiers && plant.pricing_tiers.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 mt-2">
-                  {[...plant.pricing_tiers]
-                    .sort((a, b) => a.min_quantity - b.min_quantity)
-                    .map(tier => (
-                      <span
-                        key={tier.min_quantity}
-                        className="text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200"
-                      >
-                        ≥{tier.min_quantity} → ₹{tier.price}
-                      </span>
-                    ))}
+        {plants.map(plant => {
+          const inv = inventory?.find((i: any) => i.plant_id === plant.id);
+          const physicalStock = inv?.current_physical_stock ?? plant.total_stock ?? 0;
+          const allocated = inv?.allocated_quantity ?? 0;
+          const freeStock = inv?.free_stock ?? (plant.total_stock ?? 0);
+
+          return (
+            <div key={plant.id} className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-start active:scale-[0.98] transition-transform">
+              <div className="flex-1 min-w-0">
+                <h3 className="font-extrabold text-gray-900 text-lg">{plant.plant_name}</h3>
+                <div className="flex items-center gap-2 mt-1 flex-wrap">
+                  {plant.category && (
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-blue-50 text-blue-600 uppercase tracking-wider border border-blue-100">
+                      {plant.category}
+                    </span>
+                  )}
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{plant.variety}</p>
                 </div>
-              )}
-            </div>
-            <div className="flex items-center space-x-3 shrink-0 ml-3">
-              <div className="text-right bg-green-50 px-3 py-2 rounded-xl">
-                <span className="font-black text-green-700 text-lg">₹{plant.selling_price}</span>
+
+                {/* Stock Counters */}
+                <div className="flex items-center gap-2 mt-2.5 flex-wrap text-xs">
+                  <span className="bg-gray-100 text-gray-800 px-2.5 py-1 rounded-lg font-bold border border-gray-200">
+                    Physical: {physicalStock}
+                  </span>
+                  <span className={`px-2.5 py-1 rounded-lg font-bold border ${
+                    freeStock < 0 
+                      ? 'bg-red-50 text-red-700 border-red-200 font-extrabold' 
+                      : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                  }`}>
+                    Free to Sell: {freeStock}
+                  </span>
+                  {allocated > 0 && (
+                    <span className="bg-blue-50 text-blue-700 px-2.5 py-1 rounded-lg font-bold border border-blue-100">
+                      Booked: {allocated}
+                    </span>
+                  )}
+                </div>
+
+                {/* Pricing Tiers */}
+                {plant.pricing_tiers && plant.pricing_tiers.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {[...plant.pricing_tiers]
+                      .sort((a, b) => a.min_quantity - b.min_quantity)
+                      .map(tier => (
+                        <span
+                          key={tier.min_quantity}
+                          className="text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200"
+                        >
+                          ≥{tier.min_quantity} → ₹{tier.price}
+                        </span>
+                      ))}
+                  </div>
+                )}
               </div>
+              <div className="flex items-center space-x-3 shrink-0 ml-3">
+                <div className="text-right bg-green-50 px-3 py-2 rounded-xl">
+                  <span className="font-black text-green-700 text-lg">₹{plant.selling_price}</span>
+                </div>
               {role === 'owner' && (
                 <a href={`/plants/${plant.id}/edit`} className="p-2 bg-gray-100 rounded-xl text-gray-500 hover:bg-gray-200 active:scale-95 transition-all">
                   <Pencil className="w-4 h-4" />
                 </a>
               )}
+              </div>
             </div>
-          </div>
-
-        ))}
+          );
+        })}
         {plants.length === 0 && (
           <div className="text-center p-12 bg-white rounded-2xl border border-gray-100 border-dashed">
             <p className="text-gray-500 font-medium">No plants found.</p>

@@ -12,8 +12,6 @@ interface CartItem {
   id: string;
   plantId: string;
   plantName: string;
-  lotId: string;
-  lotNumber: string;
   quantity: number;
   price: number;
   amount: number;
@@ -69,9 +67,7 @@ export default function NewDirectSalePage() {
   
   // Current Item State
   const [plantId, setPlantId] = useState('');
-  const [selectedLotId, setSelectedLotId] = useState('');
   const [quantity, setQuantity] = useState('');
-  const [autoAllocate, setAutoAllocate] = useState(false);
   
   const [assignedTo, setAssignedTo] = useState('');
   
@@ -84,16 +80,11 @@ export default function NewDirectSalePage() {
   const queryClient = useQueryClient();
 
   const { data: plants } = useQuery({ queryKey: ['plants'], queryFn: async () => { const { data } = await supabase.from('plants').select('*').is('deleted_at', null).eq('active', true); return data || []; } });
-  const { data: lots } = useQuery({ queryKey: ['lots'], queryFn: async () => { const { data } = await supabase.from('lots').select('*').is('deleted_at', null); return data || []; } });
-  const { data: allotments } = useQuery({ queryKey: ['allotments'], queryFn: async () => { const { data } = await supabase.from('allotments').select('*').is('deleted_at', null); return data || []; } });
-  const { data: bookings } = useQuery({ queryKey: ['bookings'], queryFn: async () => { const { data } = await supabase.from('bookings').select('*').is('deleted_at', null); return data || []; } });
   const { data: existingSales } = useQuery({ queryKey: ['direct_sales'], queryFn: async () => { const { data } = await supabase.from('direct_sales').select('*').is('deleted_at', null); return data || []; } });
   const { data: inventory } = useQuery({ queryKey: ['vw_inventory_status'], queryFn: async () => { const { data } = await supabase.from('vw_inventory_status').select('*'); return data || []; } });
   const { data: customers } = useQuery({ queryKey: ['customers'], queryFn: async () => { const { data } = await supabase.from('customers').select('*').is('deleted_at', null); return data || []; } });
   const { data: users } = useQuery({ queryKey: ['users'], queryFn: async () => { const { data } = await supabase.from('users').select('*'); return data || []; } });
   const workers = users?.filter(u => u.role === 'worker') || [];
-
-
 
   const selectedPlant = plants?.find(p => p.id === plantId);
 
@@ -121,48 +112,38 @@ export default function NewDirectSalePage() {
     }
   };
 
-  // Per-lot free stock
-  const getCartAdjustedFreeStock = (lotId: string, pid: string): number => {
+  // Free stock directly for a plant (adjusted for items already in current cart)
+  const getCartAdjustedFreeStock = (pid: string): number => {
     if (!inventory) return 0;
-    const inv = inventory.find((i: any) => i.lot_id === lotId);
+    const inv = inventory.find((i: any) => i.plant_id === pid);
     if (!inv) return 0;
-    const cartQty = cart.filter(i => i.lotId === lotId).reduce((s, i) => s + i.quantity, 0);
-    return Math.max(0, inv.free_stock - cartQty);
+    const cartQty = cart.filter(i => i.plantId === pid).reduce((s, i) => s + i.quantity, 0);
+    return Math.max(0, (inv.free_stock ?? 0) - cartQty);
   };
 
-  // Total free stock across all READY lots for a plant
-  const getTotalCartAdjustedFreeStock = (pid: string): number => {
-    if (!lots) return 0;
-    return lots
-      .filter(l => l.plant_id === pid && l.status === 'Ready')
-      .reduce((sum, l) => sum + getCartAdjustedFreeStock(l.id, pid), 0);
+  const getPhysicalStock = (pid: string): number => {
+    if (!inventory) return 0;
+    const inv = inventory.find((i: any) => i.plant_id === pid);
+    return inv ? (inv.current_physical_stock ?? 0) : 0;
   };
-
-  const selectedFreeStock = (plantId && selectedLotId) ? getCartAdjustedFreeStock(selectedLotId, plantId) : null;
 
   const handleAddToCart = () => {
     if (!selectedPlant || !quantity) return;
     const qty = parseInt(quantity);
     if (isNaN(qty) || qty <= 0) return;
 
-    if (selectedLotId) {
-      const freeStock = getCartAdjustedFreeStock(selectedLotId, selectedPlant.id);
-      if (qty > freeStock) {
-        const lot = lots?.find(l => l.id === selectedLotId);
-        alert(`Only ${freeStock} plants free in lot ${lot?.lot_name || lot?.lot_number || ''}. Some are reserved for bookings.`);
-        return;
-      }
+    const freeStock = getCartAdjustedFreeStock(selectedPlant.id);
+    if (qty > freeStock) {
+      alert(`Only ${freeStock} plants free to sell. Some may be reserved for bookings.`);
+      return;
     }
 
-    const lot = selectedLotId ? lots?.find(l => l.id === selectedLotId) : null;
     const price = resolvePlantPrice(selectedPlant, qty);
 
     setCart([...cart, {
       id: generateId(),
       plantId: selectedPlant.id,
       plantName: selectedPlant.variety ? `${selectedPlant.plant_name} - ${selectedPlant.variety}` : selectedPlant.plant_name,
-      lotId: selectedLotId || '',
-      lotNumber: lot ? (lot.lot_name || lot.lot_number || '') : 'No Lot Assigned',
       quantity: qty,
       price,
       amount: price * qty
@@ -259,7 +240,6 @@ export default function NewDirectSalePage() {
         customer_name: customerName || undefined,
         customer_phone: customerPhone || undefined,
         plant_id: item.plantId,
-        lot_id: item.lotId || null,
         quantity: item.quantity,
         amount: item.amount,
         payment_mode: itemPayMode,
@@ -267,7 +247,7 @@ export default function NewDirectSalePage() {
         upi_amount: itemUpi,
         worker_id: user.id,
         assigned_to: assignedTo || null,
-        fulfillment_status: assignedTo ? ('Pending Handover') : undefined,
+        fulfillment_status: assignedTo ? 'Pending Handover' : 'Fulfilled',
         created_at: createdAt
       };
     });
@@ -299,7 +279,6 @@ export default function NewDirectSalePage() {
 
     queryClient.invalidateQueries({ queryKey: ['customers'] });
     queryClient.invalidateQueries({ queryKey: ['direct_sales'] });
-    queryClient.invalidateQueries({ queryKey: ['lots'] });
     queryClient.invalidateQueries({ queryKey: ['vw_daily_cashbook'] });
     queryClient.invalidateQueries({ queryKey: ['vw_profit_summary'] });
     queryClient.invalidateQueries({ queryKey: ['vw_inventory_status'] });
@@ -341,7 +320,6 @@ export default function NewDirectSalePage() {
     setCustomerCity('');
     setCart([]);
     setPlantId('');
-    setSelectedLotId('');
     setQuantity('');
     setCashAmount('');
     setUpiAmount('');
@@ -561,7 +539,7 @@ export default function NewDirectSalePage() {
             <select value={plantId} onChange={e => { setPlantId(e.target.value); setQuantity(''); }} className="w-full p-4 bg-white border border-green-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-bold text-lg text-green-900">
               <option value="">{t('choosePlantPlaceholder')}</option>
               {plants?.filter(p => p.active !== false).map(p => {
-                const fs = getTotalCartAdjustedFreeStock(p.id);
+                const fs = getCartAdjustedFreeStock(p.id);
                 return (
                   <option key={p.id} value={p.id}>
                     {p.variety ? `${p.plant_name} - ${p.variety}` : p.plant_name} — ₹{p.selling_price} ({t('free')}: {fs})
@@ -572,73 +550,18 @@ export default function NewDirectSalePage() {
           </div>
 
           {plantId && (
-            <div className="space-y-2">
-              {/* Auto-allocate FIFO Toggle */}
-              <div className="flex items-center justify-between p-3.5 bg-white border border-green-150 rounded-xl">
-                <div>
-                  <span className="text-xs font-black text-green-800 block">Auto-Allocate Lots (FIFO)</span>
-                  <span className="text-[10px] text-gray-400 font-semibold mt-0.5">Picks the oldest ready batch automatically</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const nextVal = !autoAllocate;
-                    setAutoAllocate(nextVal);
-                    if (nextVal) {
-                      const first = (lots || [])
-                        .filter(l => l.plant_id === plantId && l.status !== 'Completed')
-                        .sort((a, b) => new Date(a.ready_date).getTime() - new Date(b.ready_date).getTime())[0];
-                      setSelectedLotId(first?.id || '');
-                    }
-                  }}
-                  className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${autoAllocate ? 'bg-green-600' : 'bg-gray-200'}`}
-                >
-                  <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${autoAllocate ? 'translate-x-5' : 'translate-x-0'}`} />
-                </button>
+            <div className="space-y-3">
+              {/* Plant stock indicator */}
+              <div className="bg-white p-3.5 rounded-xl border border-green-200 flex items-center justify-between text-xs">
+                <span className="font-bold text-gray-600">Physical Stock: <strong className="text-gray-900">{getPhysicalStock(plantId)}</strong></span>
+                <span className="font-bold text-green-700">Free to Sell: <strong className="text-lg font-black text-green-700">{getCartAdjustedFreeStock(plantId)}</strong></span>
               </div>
 
-              {/* Lot selector */}
-              {lots && lots.filter(l => l.plant_id === plantId && l.status === 'Ready').length > 0 ? (
-                <>
-                  {!autoAllocate && (
-                    <div className="space-y-1">
-                      <label className="text-xs font-bold text-green-700 uppercase">Source Lot</label>
-                      <select
-                        value={selectedLotId}
-                        onChange={e => setSelectedLotId(e.target.value)}
-                        className="w-full p-3 bg-white border border-green-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-bold text-green-900 text-sm"
-                      >
-                        <option value="">-- No Lot Assigned --</option>
-                        {lots
-                          .filter(l => l.plant_id === plantId && l.status === 'Ready')
-                          .sort((a, b) => new Date(a.ready_date).getTime() - new Date(b.ready_date).getTime())
-                          .map(l => {
-                            const free = getCartAdjustedFreeStock(l.id, plantId);
-                            return (
-                              <option key={l.id} value={l.id}>
-                                {l.lot_name || l.lot_number} — {free} free{free <= 0 ? ' (fully reserved)' : ''}
-                              </option>
-                            );
-                          })}
-                      </select>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <p className="text-sm font-bold text-red-600 text-center py-2">No active lots for this plant</p>
-              )}
-              {/* Per-lot free stock indicator */}
-              {selectedLotId && selectedFreeStock !== null && (
-                <div className={`flex items-center justify-between px-4 py-2 rounded-xl text-sm font-bold ${selectedFreeStock > 0 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                  <span>{t('availableToSell')}</span>
-                  <span className="text-lg font-black">{selectedFreeStock}</span>
-                </div>
-              )}
               <div className="flex space-x-2">
                 <input
                   type="number"
                   min="1"
-                  max={selectedFreeStock ?? undefined}
+                  max={getCartAdjustedFreeStock(plantId) || undefined}
                   value={quantity}
                   onChange={e => setQuantity(e.target.value)}
                   className="w-2/3 p-4 bg-white border border-green-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-black text-2xl text-green-900"
@@ -647,13 +570,14 @@ export default function NewDirectSalePage() {
                 <button
                   type="button"
                   onClick={handleAddToCart}
-                  disabled={!quantity || (!!selectedLotId && selectedFreeStock !== null && selectedFreeStock <= 0)}
+                  disabled={!quantity || parseInt(quantity) <= 0 || parseInt(quantity) > getCartAdjustedFreeStock(plantId)}
                   className="w-1/3 bg-green-600 text-white rounded-xl font-black flex items-center justify-center disabled:opacity-50 active:scale-95 transition-transform"
                 >
                   {t('add')}
                 </button>
               </div>
-              {selectedFreeStock !== null && selectedFreeStock <= 0 && (
+
+              {getCartAdjustedFreeStock(plantId) <= 0 && (
                 <p className="text-xs font-bold text-red-600 text-center">{t('allStockReserved')}</p>
               )}
             </div>
@@ -669,7 +593,7 @@ export default function NewDirectSalePage() {
                 <div key={item.id} className="flex justify-between items-center bg-gray-50 p-3 rounded-xl border border-gray-100">
                   <div>
                     <p className="font-bold text-gray-900">{item.plantName}</p>
-                    <p className="text-xs font-semibold text-gray-500">{item.quantity} × ₹{item.price} · {item.lotNumber}</p>
+                    <p className="text-xs font-semibold text-gray-500">{item.quantity} × ₹{item.price}</p>
                   </div>
                   <div className="flex items-center space-x-4">
                     <span className="font-black text-gray-900">₹{item.amount}</span>

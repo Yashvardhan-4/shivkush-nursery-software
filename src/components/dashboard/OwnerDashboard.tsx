@@ -12,7 +12,6 @@ import {
   AlertTriangle,
   ClipboardList,
   BarChart3,
-  Layers,
   ShoppingCart,
   TrendingUp,
   TrendingDown,
@@ -68,15 +67,6 @@ export default function OwnerDashboard() {
         .maybeSingle();
       if (error) throw error;
       return data;
-    }
-  });
-
-  const { data: allLots } = useQuery({
-    queryKey: ['lots'],
-    queryFn: async () => {
-      const { data, error } = await supabase.from('lots').select('*').is('deleted_at', null);
-      if (error) throw error;
-      return data || [];
     }
   });
 
@@ -151,32 +141,10 @@ export default function OwnerDashboard() {
     enabled: users.length > 0
   });
 
-  const productionAlertsCount = (allPlants && allBookings && allLots && inventory)
-    ? allPlants.filter((plant) => {
-        const totalBooked = allBookings
-          .filter((b) => b.plant_id === plant.id && b.status !== 'Cancelled' && b.status !== 'Delivered')
-          .reduce((sum, b) => sum + b.quantity, 0);
-        const totalGrowing = allLots
-          .filter((l) => l.plant_id === plant.id && l.status !== 'Completed')
-          .reduce((sum, l) => {
-            const inv = inventory.find((i: any) => i.lot_id === l.id);
-            return sum + (inv ? inv.free_stock : 0);
-          }, 0);
-        return totalBooked > totalGrowing;
-      }).length
+  // Production Deficit: Any plant variety where booked quantity exceeds physical stock (free_stock < 0)
+  const productionAlertsCount = inventory
+    ? inventory.filter((inv: any) => (inv.free_stock ?? 0) < 0).length
     : null;
-
-  const conflictingLots = (allLots && allBookings && allSales)
-    ? allLots.filter((lot) => {
-        const deliveredQty = allBookings
-          .filter((b) => b.lot_id === lot.id && b.status === 'Delivered')
-          .reduce((sum, b) => sum + b.quantity, 0);
-        const salesQty = allSales
-          .filter((s) => s.lot_id === lot.id)
-          .reduce((sum, s) => sum + s.quantity, 0);
-        return (deliveredQty + salesQty) > lot.total_quantity;
-      })
-    : [];
 
   const todayRevenue = profitSummary?.revenue ?? 0;
   const todayExpenses = profitSummary?.expenses ?? 0;
@@ -192,8 +160,6 @@ export default function OwnerDashboard() {
     { href: '/sell', label: t('newSale'), icon: ShoppingCart, color: 'bg-purple-600', bg: 'bg-purple-50', border: 'border-purple-200' },
     { href: '/bookings/new', label: t('newBooking'), icon: BookOpen, color: 'bg-blue-600', bg: 'bg-blue-50', border: 'border-blue-200' },
     { href: '/plants', label: t('plants'), icon: Leaf, color: 'bg-green-600', bg: 'bg-green-50', border: 'border-green-200' },
-    { href: '/lots', label: t('lots'), icon: Layers, color: 'bg-amber-500', bg: 'bg-amber-50', border: 'border-amber-200' },
-    { href: '/allotments', label: t('allotments'), icon: ClipboardList, color: 'bg-indigo-600', bg: 'bg-indigo-50', border: 'border-indigo-200' },
     { href: '/fulfillment', label: t('fulfillment'), icon: Package, color: 'bg-pink-600', bg: 'bg-pink-50', border: 'border-pink-200' },
     { href: '/calculator', label: t('calculator'), icon: TrendingUp, color: 'bg-teal-600', bg: 'bg-teal-50', border: 'border-teal-200' },
     { href: '/notebook', label: t('ledger'), icon: BookOpen, color: 'bg-orange-600', bg: 'bg-orange-50', border: 'border-orange-200' },
@@ -296,35 +262,6 @@ export default function OwnerDashboard() {
         </div>
       )}
 
-      {/* ── Conflict Alerts Block ────────────────────────────────────── */}
-      {conflictingLots.length > 0 && (
-        <div className="bg-orange-50 border border-orange-200 rounded-2xl p-5 space-y-3">
-          <div className="flex items-center gap-3">
-            <div className="bg-orange-100 text-orange-600 p-3 rounded-2xl">
-              <AlertTriangle className="w-6 h-6 animate-bounce" />
-            </div>
-            <div>
-              <h2 className="font-bold text-orange-850 text-lg">Inventory Stock Conflicts!</h2>
-              <p className="text-sm font-semibold text-orange-700 mt-0.5">
-                {conflictingLots.length} lot(s) have negative stock due to offline sync overlaps.
-              </p>
-            </div>
-          </div>
-          <div className="divide-y divide-orange-100 bg-white rounded-xl p-3 border border-orange-100">
-            {conflictingLots.map((lot) => (
-              <div key={lot.id} className="py-2 first:pt-0 last:pb-0 flex justify-between items-center text-xs">
-                <div>
-                  <p className="font-bold text-gray-800">{lot.lot_name || lot.lot_number}</p>
-                  <p className="text-gray-400 font-semibold mt-0.5">Physical sales exceed surviving saplings.</p>
-                </div>
-                <Link href={`/lots/${lot.id}/edit`} className="bg-orange-600 hover:bg-orange-700 text-white px-3 py-1.5 rounded-lg font-black transition-colors">
-                  Fix
-                </Link>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* ── View All Transactions ──────────────────────────────────────── */}
       <Link href="/transactions" className="bg-white border border-gray-100 rounded-2xl px-5 py-4 flex items-center justify-between shadow-sm active:scale-95 transition-transform">

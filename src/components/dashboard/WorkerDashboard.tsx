@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabaseClient';
 import { toLocalDateStr } from '@/lib/utils';
-import { Banknote, PlusCircle, BookOpen, Layers, Leaf, Package } from 'lucide-react';
+import { Banknote, PlusCircle, BookOpen, Leaf, Package } from 'lucide-react';
 import Link from 'next/link';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 
@@ -19,8 +19,6 @@ export default function WorkerDashboard() {
   const { data: allSales } = useQuery({ queryKey: ['direct_sales'], queryFn: async () => { const { data } = await supabase.from('direct_sales').select('*').is('deleted_at', null); return data || []; } });
   const { data: allBookings } = useQuery({ queryKey: ['bookings'], queryFn: async () => { const { data } = await supabase.from('bookings').select('*').is('deleted_at', null); return data || []; } });
   const { data: allPlants } = useQuery({ queryKey: ['plants'], queryFn: async () => { const { data } = await supabase.from('plants').select('*').is('deleted_at', null).eq('active', true); return data || []; } });
-  const { data: allLots } = useQuery({ queryKey: ['lots'], queryFn: async () => { const { data } = await supabase.from('lots').select('*').is('deleted_at', null); return data || []; } });
-  const { data: allAllotments } = useQuery({ queryKey: ['allotments'], queryFn: async () => { const { data } = await supabase.from('allotments').select('*').is('deleted_at', null); return data || []; } });
   const { data: inventory } = useQuery({ queryKey: ['vw_inventory_status'], queryFn: async () => { const { data } = await supabase.from('vw_inventory_status').select('*'); return data || []; } });
 
   const todaySalesTotal = (() => {
@@ -39,34 +37,20 @@ export default function WorkerDashboard() {
   })();
 
   const freeStockData = (() => {
-    if (!allPlants || !allLots || !allAllotments || !allBookings) return null;
+    if (!inventory) return null;
 
-    return allPlants
-      .map(plant => {
-        let freeStock = 0;
-        let totalStock = 0;
-        let allottedQty = 0;
-
-        allLots.filter(l => l.plant_id === plant.id && l.status === 'Ready').forEach(lot => {
-          const lotTotal = lot.total_quantity;
-          const lotBookings = allBookings.filter(b => b.lot_id === lot.id);
-          
-          const activeBookingIds = new Set(
-            lotBookings.filter(b => b.status !== 'Delivered' && b.status !== 'Cancelled').map(b => b.id)
-          );
-          const allottedInLot = allAllotments.filter(a => a.lot_id === lot.id && activeBookingIds.has(a.booking_id)).reduce((s, a) => s + a.quantity, 0);
-          
-          const inv = inventory?.find((i: any) => i.lot_id === lot.id);
-          const lotFree = inv ? Math.max(0, inv.free_stock) : 0;
-          
-          freeStock += Math.max(0, lotFree);
-          totalStock += lotTotal;
-          allottedQty += allottedInLot;
-        });
-
-        return { plant, totalStock, allottedQty, freeStock };
-      })
-      .filter(item => item.totalStock > 0);
+    return inventory
+      .filter((item: any) => (item.current_physical_stock ?? 0) > 0 || (item.allocated_quantity ?? 0) > 0)
+      .map((item: any) => ({
+        plant: {
+          id: item.plant_id,
+          plant_name: item.plant_name,
+          variety: item.variety,
+        },
+        totalStock: item.current_physical_stock ?? 0,
+        bookedQty: item.allocated_quantity ?? 0,
+        freeStock: item.free_stock ?? 0,
+      }));
   })();
 
   const { t } = useLanguage();
@@ -124,9 +108,9 @@ export default function WorkerDashboard() {
           </div>
         </Link>
 
-        <Link href="/lots" className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center space-x-5 active:scale-95 transition-all">
-          <div className="bg-orange-100 p-4 rounded-2xl text-orange-600 shadow-inner">
-            <Layers className="w-7 h-7" />
+        <Link href="/plants" className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex items-center space-x-5 active:scale-95 transition-all">
+          <div className="bg-green-100 p-4 rounded-2xl text-green-600 shadow-inner">
+            <Leaf className="w-7 h-7" />
           </div>
           <div>
             <h3 className="text-lg font-extrabold text-gray-900">{t('viewStock')}</h3>
@@ -160,7 +144,7 @@ export default function WorkerDashboard() {
           <p className="text-sm text-gray-400 text-center py-4">{t('noPlantStock')}</p>
         )}
 
-        {freeStockData && freeStockData.map(({ plant, totalStock, allottedQty, freeStock }) => (
+        {freeStockData && freeStockData.map(({ plant, totalStock, bookedQty, freeStock }) => (
           <div
             key={plant.id}
             className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 flex items-center justify-between"
@@ -170,10 +154,10 @@ export default function WorkerDashboard() {
               <p className="text-xs font-medium text-gray-400 mt-0.5">{plant.variety} · {t('stock')}: {totalStock}</p>
             </div>
             <div className="flex items-center space-x-3 text-right">
-              {allottedQty > 0 && (
+              {bookedQty > 0 && (
                 <div className="text-center">
                   <p className="text-xs font-bold text-red-500 uppercase tracking-wide">{t('booked')}</p>
-                  <p className="text-lg font-black text-red-500">{allottedQty}</p>
+                  <p className="text-lg font-black text-red-500">{bookedQty}</p>
                 </div>
               )}
               <div className="text-center">

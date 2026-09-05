@@ -16,11 +16,27 @@ export default function WastageReportPage() {
   const router = useRouter();
   const [search, setSearch] = useState('');
 
-  const { data: auditLogs } = useQuery({ queryKey: ['audit_logs_wastage'], queryFn: async () => { const { data } = await supabase.from('audit_logs').select('*').eq('action', 'UPDATE_LOT').order('created_at', { ascending: false }); return data || []; } });
-  const { data: lots } = useQuery({ queryKey: ['lots'], queryFn: async () => { const { data } = await supabase.from('lots').select('*').is('deleted_at', null); return data || []; } });
-  const { data: plants } = useQuery({ queryKey: ['plants'], queryFn: async () => { const { data } = await supabase.from('plants').select('*').is('deleted_at', null); return data || []; } });
+  const { data: adjustments, isLoading } = useQuery({
+    queryKey: ['stock_adjustments_report'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('stock_adjustments')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return data || [];
+    }
+  });
 
-  if (!auditLogs || !lots || !plants) {
+  const { data: plants } = useQuery({
+    queryKey: ['plants'],
+    queryFn: async () => {
+      const { data } = await supabase.from('plants').select('*');
+      return data || [];
+    }
+  });
+
+  if (isLoading || !adjustments || !plants) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="w-8 h-8 border-4 border-amber-200 border-t-amber-600 rounded-full animate-spin" />
@@ -28,54 +44,32 @@ export default function WastageReportPage() {
     );
   }
 
-  // Process logs to find those with adjustment_reason
-  const wastageRecords = auditLogs.filter(log => {
-    try {
-      const details = JSON.parse(log.details);
-      return !!details.adjustment_reason;
-    } catch {
-      return false;
-    }
-  }).map(log => {
-    const details = JSON.parse(log.details);
-    const lot = lots.find(l => l.id === log.record_id);
-    const plant = lot ? plants.find(p => p.id === lot.plant_id) : null;
-    
-    // Extract old vs new qty from notes if possible: "[Adjustment] Stock changed from 100 to 90 because: ..."
-    let oldQty = 'Unknown';
-    let newQty = details.total_quantity || 'Unknown';
-    let lostQty = 0;
-    
-    if (details.notes) {
-      const match = details.notes.match(/Stock changed from (\d+) to (\d+)/);
-      if (match) {
-        oldQty = match[1];
-        newQty = match[2];
-        lostQty = Number(oldQty) - Number(newQty);
-      }
-    }
+  const records = adjustments.map((adj: any) => {
+    const plant = plants.find((p: any) => p.id === adj.plant_id);
+    const plantName = plant 
+      ? (plant.variety ? `${plant.plant_name} - ${plant.variety}` : plant.plant_name) 
+      : 'Unknown Plant';
 
     return {
-      id: log.id,
-      date: toLocalDateStr(log.created_at || Date.now()),
-      user_name: log.user_name,
-      lot_number: lot?.lot_number || details.lot_number || 'Unknown',
-      lot_name: lot?.lot_name || details.lot_name || '',
-      plant_name: plant?.plant_name || 'Unknown Plant',
-      reason: details.adjustment_reason,
-      lostQty,
-      oldQty,
-      newQty
+      id: adj.id,
+      date: toLocalDateStr(adj.created_at || Date.now()),
+      plant_name: plantName,
+      type: adj.adjustment_type,
+      reason: adj.reason || adj.adjustment_type,
+      quantityDelta: adj.quantity_delta,
+      isLoss: adj.quantity_delta < 0,
+      lostQty: adj.quantity_delta < 0 ? Math.abs(adj.quantity_delta) : 0,
+      surplusQty: adj.quantity_delta > 0 ? adj.quantity_delta : 0
     };
   });
 
-  const filteredRecords = wastageRecords.filter(r => 
+  const filteredRecords = records.filter((r: any) => 
     r.plant_name.toLowerCase().includes(search.toLowerCase()) ||
-    r.lot_number.toLowerCase().includes(search.toLowerCase()) ||
+    r.type.toLowerCase().includes(search.toLowerCase()) ||
     r.reason.toLowerCase().includes(search.toLowerCase())
   );
 
-  const totalLost = filteredRecords.reduce((sum, r) => sum + r.lostQty, 0);
+  const totalLost = filteredRecords.reduce((sum: number, r: any) => sum + r.lostQty, 0);
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
@@ -90,8 +84,8 @@ export default function WastageReportPage() {
               <ArrowLeft className="w-5 h-5" />
             </button>
             <div>
-              <h1 className="text-lg font-black text-gray-900 tracking-tight leading-none">Loss & Wastage</h1>
-              <p className="text-[11px] font-bold text-gray-500 mt-0.5">Track dead/damaged plants</p>
+              <h1 className="text-lg font-black text-gray-900 tracking-tight leading-none">Stock Adjustments & Loss</h1>
+              <p className="text-[11px] font-bold text-gray-500 mt-0.5">Audit log of mortality, recounting & damages</p>
             </div>
           </div>
         </div>
@@ -102,7 +96,7 @@ export default function WastageReportPage() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
             <input
               type="text"
-              placeholder="Search by plant, lot or reason..."
+              placeholder="Search by plant, adjustment type or reason..."
               value={search}
               onChange={e => setSearch(e.target.value)}
               className="w-full pl-9 pr-4 py-2.5 bg-gray-100 border-none rounded-xl text-sm font-semibold text-gray-900 placeholder:text-gray-400 focus:ring-2 focus:ring-amber-500 transition-all"
@@ -116,7 +110,7 @@ export default function WastageReportPage() {
         <div className="bg-gradient-to-br from-amber-500 to-orange-600 rounded-2xl p-4 text-white shadow-sm shadow-amber-600/20">
           <div className="flex items-start justify-between">
             <div>
-              <p className="text-white/80 text-xs font-bold tracking-wider uppercase mb-1">Total Wastage Recorded</p>
+              <p className="text-white/80 text-xs font-bold tracking-wider uppercase mb-1">Total Loss / Wastage Recorded</p>
               <p className="text-3xl font-black">{totalLost} <span className="text-lg font-bold text-white/70">plants</span></p>
             </div>
             <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center shrink-0">
@@ -127,37 +121,42 @@ export default function WastageReportPage() {
 
         {/* Records List */}
         <div className="space-y-3 mt-6">
-          <h2 className="text-sm font-black text-gray-900 px-1">Adjustment Logs</h2>
+          <h2 className="text-sm font-black text-gray-900 px-1">Adjustment Logs ({filteredRecords.length})</h2>
           
           {filteredRecords.length === 0 ? (
             <div className="bg-white rounded-2xl border border-gray-200 p-8 text-center">
               <p className="text-4xl mb-3">🌱</p>
-              <p className="text-sm font-bold text-gray-900">No wastage recorded</p>
+              <p className="text-sm font-bold text-gray-900">No adjustments found</p>
               <p className="text-xs font-medium text-gray-500 mt-1">Healthy nursery!</p>
             </div>
           ) : (
-            filteredRecords.map((record) => (
-              <div key={record.id} className="bg-white rounded-2xl border border-red-100 p-4 shadow-sm relative overflow-hidden">
-                <div className="absolute top-0 right-0 w-16 h-16 bg-red-50 rounded-bl-[100px] -z-0"></div>
+            filteredRecords.map((record: any) => (
+              <div key={record.id} className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm relative overflow-hidden">
                 <div className="relative z-10 flex flex-col gap-3">
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex-1">
                       <div className="flex items-center gap-1.5 mb-1">
-                        <Leaf className="w-3.5 h-3.5 text-red-500" />
-                        <span className="text-xs font-black tracking-wider text-red-600 uppercase">{record.lot_number} {record.lot_name ? `(${record.lot_name})` : ''}</span>
+                        <Leaf className="w-3.5 h-3.5 text-gray-400" />
+                        <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                          record.isLoss ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'
+                        }`}>
+                          {record.type.replace(/_/g, ' ')}
+                        </span>
                       </div>
                       <h3 className="text-base font-black text-gray-900 leading-tight">{record.plant_name}</h3>
-                      <p className="text-xs font-medium text-gray-500 mt-1">By {record.user_name} on {record.date}</p>
+                      <p className="text-xs font-medium text-gray-500 mt-1">{record.date}</p>
                     </div>
                     <div className="text-right shrink-0">
-                      <p className="text-lg font-black text-red-600">-{record.lostQty}</p>
-                      <p className="text-[10px] font-bold text-gray-400">Qty: {record.oldQty} → {record.newQty}</p>
+                      <p className={`text-lg font-black ${record.isLoss ? 'text-red-600' : 'text-green-600'}`}>
+                        {record.quantityDelta > 0 ? `+${record.quantityDelta}` : record.quantityDelta}
+                      </p>
+                      <p className="text-[10px] font-bold text-gray-400">saplings</p>
                     </div>
                   </div>
                   
-                  <div className="bg-red-50 rounded-xl p-3 border border-red-100">
-                    <p className="text-xs font-bold text-red-800 flex items-start gap-1.5 leading-relaxed">
-                      <span className="font-black">Reason:</span> {record.reason}
+                  <div className="bg-gray-50 rounded-xl p-3 border border-gray-100">
+                    <p className="text-xs font-bold text-gray-700 flex items-start gap-1.5 leading-relaxed">
+                      <span className="font-black text-gray-900">Reason:</span> {record.reason}
                     </p>
                   </div>
                 </div>

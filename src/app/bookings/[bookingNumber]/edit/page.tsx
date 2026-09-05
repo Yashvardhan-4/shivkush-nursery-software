@@ -41,7 +41,7 @@ async function logAudit(user_id: string, user_name: string, action: string, enti
   });
 }
 
-interface Booking { id: string; booking_number: string; customer_name: string; customer_phone: string; city: string | null; plant_id: string; lot_id: string | null; quantity: number; advance_paid: number; advance_payment_mode: 'Cash' | 'UPI' | 'Split' | null; advance_cash_amount: number | null; advance_upi_amount: number | null; total_amount: number; booking_date: string; delivery_date: string | null; status: 'Pending' | 'Delivered' | 'Cancelled'; worker_id: string; created_at: string; remarks: string; refund_amount?: number; refund_payment_mode?: 'Cash' | 'UPI' | null; refund_status?: 'Refunded' | 'Forfeited' | 'Not Refunded'; refund_date?: string | null; }
+interface Booking { id: string; booking_number: string; customer_name: string; customer_phone: string; city: string | null; plant_id: string; quantity: number; advance_paid: number; advance_payment_mode: 'Cash' | 'UPI' | 'Split' | null; advance_cash_amount: number | null; advance_upi_amount: number | null; total_amount: number; booking_date: string; delivery_date: string | null; status: 'Pending' | 'Delivered' | 'Cancelled'; worker_id: string; created_at: string; remarks: string; refund_amount?: number; refund_payment_mode?: 'Cash' | 'UPI' | null; refund_status?: 'Refunded' | 'Forfeited' | 'Not Refunded'; refund_date?: string | null; }
 
 import { PlusCircle, Trash2, ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
@@ -51,8 +51,6 @@ interface CartItem {
   id: string; // original row id or newly generated uuid
   plantId: string;
   plantName: string;
-  lotId: string;
-  lotName: string;
   quantity: number;
   price: number;
   amount: number;
@@ -73,7 +71,6 @@ export default function EditBookingPage() {
   
   // Current Item State
   const [plantId, setPlantId] = useState('');
-  const [lotId, setLotId] = useState('');
   const [quantity, setQuantity] = useState('');
   
   const [advancePaid, setAdvancePaid] = useState('');
@@ -90,11 +87,6 @@ export default function EditBookingPage() {
   }, []);
 
   const { data: plants } = useQuery({ queryKey: ['plants'], queryFn: async () => { const { data } = await supabase.from('plants').select('*').is('deleted_at', null).eq('active', true); return data || []; } });
-  const { data: lotsData } = useQuery({ queryKey: ['lots'], queryFn: async () => { const { data } = await supabase.from('lots').select('*').is('deleted_at', null); return data || []; } });
-  const lots = lotsData?.filter(l => l.plant_id === plantId) || [];
-  const { data: bookings } = useQuery({ queryKey: ['bookings'], queryFn: async () => { const { data } = await supabase.from('bookings').select('*').is('deleted_at', null); return data || []; } });
-  const { data: allotments } = useQuery({ queryKey: ['allotments'], queryFn: async () => { const { data } = await supabase.from('allotments').select('*').is('deleted_at', null); return data || []; } });
-  const { data: direct_sales } = useQuery({ queryKey: ['direct_sales'], queryFn: async () => { const { data } = await supabase.from('direct_sales').select('*').is('deleted_at', null); return data || []; } });
   const { data: customers } = useQuery({ queryKey: ['customers'], queryFn: async () => { const { data } = await supabase.from('customers').select('*').is('deleted_at', null); return data || []; } });
   const { data: inventory } = useQuery({ queryKey: ['vw_inventory_status'], queryFn: async () => { const { data } = await supabase.from('vw_inventory_status').select('*'); return data || []; } });
 
@@ -108,7 +100,7 @@ export default function EditBookingPage() {
   });
 
   useEffect(() => {
-    if (originalBookingRows && originalBookingRows.length > 0 && plants && lots && !initialLoaded) {
+    if (originalBookingRows && originalBookingRows.length > 0 && plants && !initialLoaded) {
       const first = originalBookingRows[0];
       setCustomerName(first.customer_name);
       setCustomerPhone(first.customer_phone);
@@ -117,14 +109,11 @@ export default function EditBookingPage() {
 
       const loadedCart = originalBookingRows.map(r => {
         const p = plants.find(plant => plant.id === r.plant_id);
-        const l = lots.find(lot => lot.id === r.lot_id);
         const price = p ? p.selling_price : (r.total_amount / r.quantity);
         return {
           id: r.id,
           plantId: r.plant_id,
           plantName: p ? (p.variety ? `${p.plant_name} - ${p.variety}` : p.plant_name) : 'Unknown Plant',
-          lotId: r.lot_id || '',
-          lotName: l ? (l.lot_name || l.lot_number) : t('noLotAssigned'),
           quantity: r.quantity,
           price: price,
           amount: r.total_amount
@@ -155,28 +144,11 @@ export default function EditBookingPage() {
 
       setInitialLoaded(true);
     }
-  }, [originalBookingRows, plants, lots, initialLoaded]);
+  }, [originalBookingRows, plants, initialLoaded]);
 
   const uniqueCities = Array.from(new Set(customers?.map(c => c.city).filter(Boolean) as string[]));
 
   const selectedPlant = plants?.find(p => p.id === plantId);
-  const selectedLot = lots?.find(l => l.id === lotId);
-
-  const computeFreeStockForLot = (lId: string, pid: string): number => {
-    if (!inventory || !allotments || !originalBookingRows) return 0;
-    const inv = inventory.find((i: any) => i.lot_id === lId);
-    if (!inv) return 0;
-    
-    const currentBookingIds = new Set(originalBookingRows.map((r: any) => r.id));
-    const currentBookingAllotted = allotments
-      .filter((a: any) => a.lot_id === lId && currentBookingIds.has(a.booking_id))
-      .reduce((sum: number, a: any) => sum + a.quantity, 0);
-
-    const cartQty = cart.filter(i => i.lotId === lId).reduce((s, i) => s + i.quantity, 0);
-    return Math.max(0, inv.free_stock + currentBookingAllotted - cartQty);
-  };
-
-  const availableQty = (lotId && plantId) ? computeFreeStockForLot(lotId, plantId) : 0;
 
   const handleAddToCart = () => {
     if (!selectedPlant || !quantity) return;
@@ -184,21 +156,12 @@ export default function EditBookingPage() {
     const qty = parseInt(quantity);
     if (isNaN(qty) || qty <= 0) return;
 
-    if (lotId && selectedLot) {
-      if (qty > availableQty) {
-        alert(`Cannot add more than available quantity (${availableQty}) for this lot.`);
-        return;
-      }
-    }
-
     const price = resolvePlantPrice(selectedPlant, qty);
     
     setCart([...cart, {
       id: generateId(),
       plantId: selectedPlant.id,
       plantName: selectedPlant.variety ? `${selectedPlant.plant_name} - ${selectedPlant.variety}` : selectedPlant.plant_name,
-      lotId: selectedLot ? selectedLot.id : '',
-      lotName: selectedLot ? (selectedLot.lot_name || selectedLot.lot_number) : t('noLotAssigned'),
       quantity: qty,
       price: price,
       amount: price * qty
@@ -206,7 +169,6 @@ export default function EditBookingPage() {
 
     // Reset current item
     setPlantId('');
-    setLotId('');
     setQuantity('');
   };
 
@@ -248,7 +210,6 @@ export default function EditBookingPage() {
 
       // Invalidate all related caches & navigate
       queryClient.invalidateQueries({ queryKey: ['bookings'] });
-      queryClient.invalidateQueries({ queryKey: ['allotments'] });
       queryClient.invalidateQueries({ queryKey: ['vw_inventory_status'] });
       queryClient.invalidateQueries({ queryKey: ['vw_booking_status'] });
       queryClient.invalidateQueries({ queryKey: ['vw_daily_cashbook'] });
@@ -381,7 +342,6 @@ export default function EditBookingPage() {
         customer_phone: customerPhone,
         city: city,
         plant_id: item.plantId,
-        lot_id: isModified ? null : (item.lotId || null),
         quantity: item.quantity,
         advance_paid: itemAdvance,
         advance_payment_mode: finalItemPayMode,
@@ -413,7 +373,6 @@ export default function EditBookingPage() {
           customer_phone: b.customer_phone,
           city: b.city,
           plant_id: b.plant_id,
-          lot_id: b.lot_id,
           quantity: b.quantity,
           advance_paid: b.advance_paid,
           advance_payment_mode: b.advance_payment_mode,
@@ -436,7 +395,6 @@ export default function EditBookingPage() {
       }
 
       queryClient.invalidateQueries({ queryKey: ['bookings'] });
-      queryClient.invalidateQueries({ queryKey: ['allotments'] });
       queryClient.invalidateQueries({ queryKey: ['vw_inventory_status'] });
       queryClient.invalidateQueries({ queryKey: ['vw_booking_status'] });
       queryClient.invalidateQueries({ queryKey: ['vw_daily_cashbook'] });
@@ -505,27 +463,19 @@ export default function EditBookingPage() {
           </div>
           
           <div className="space-y-2">
-            <select value={plantId} onChange={e => { setPlantId(e.target.value); setLotId(''); }} className="w-full p-4 bg-white border border-blue-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold text-lg text-blue-900">
+            <select value={plantId} onChange={e => setPlantId(e.target.value)} className="w-full p-4 bg-white border border-blue-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold text-lg text-blue-900">
               <option value="">{t('choosePlantPlaceholder')}</option>
-              {plants?.filter(p => p.active !== false).map(p => (
-                <option key={p.id} value={p.id}>{p.variety ? `${p.plant_name} - ${p.variety}` : p.plant_name} (₹{p.selling_price})</option>
-              ))}
+              {plants?.filter(p => p.active !== false).map(p => {
+                const inv = inventory?.find((i: any) => i.plant_id === p.id);
+                const freeStock = inv ? inv.free_stock : 0;
+                return (
+                  <option key={p.id} value={p.id}>
+                    {p.variety ? `${p.plant_name} - ${p.variety}` : p.plant_name} (₹{p.selling_price}) — Free: {freeStock}
+                  </option>
+                );
+              })}
             </select>
           </div>
-
-          {plantId && currentUser?.role === 'owner' && (
-            <div className="space-y-2">
-              <select value={lotId} onChange={e => setLotId(e.target.value)} className="w-full p-4 bg-white border border-blue-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold text-blue-900">
-                <option value="">{t('noLotAllotLater')}</option>
-                {lots?.map(l => {
-                  const free = computeFreeStockForLot(l.id, plantId);
-                  return (
-                    <option key={l.id} value={l.id}>{l.lot_name || l.lot_number} ({t('availableLabel')} {free})</option>
-                  );
-                })}
-              </select>
-            </div>
-          )}
 
           {plantId && (
             <div className="flex space-x-2">
@@ -546,7 +496,7 @@ export default function EditBookingPage() {
                 <div key={item.id} className="flex justify-between items-center bg-gray-50 p-3 rounded-xl border border-gray-100">
                   <div>
                     <p className="font-bold text-gray-900">{item.plantName}</p>
-                    <p className="text-xs font-semibold text-gray-500">{item.quantity} x ₹{item.price} • {item.lotName}</p>
+                    <p className="text-xs font-semibold text-gray-500">{item.quantity} saplings @ ₹{item.price}</p>
                   </div>
                   <div className="flex items-center space-x-4">
                     <span className="font-black text-gray-900">₹{item.amount}</span>

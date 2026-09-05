@@ -4,8 +4,8 @@ import { useState, useEffect, use } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabaseClient';
-import { serverSavePlant, serverDeletePlant } from '@/lib/actions/plants';
-import { ArrowLeft, ArchiveX, Plus, Trash2, Tag } from 'lucide-react';
+import { serverSavePlant, serverDeletePlant, serverAdjustPlantStock } from '@/lib/actions/plants';
+import { ArrowLeft, ArchiveX, Plus, Trash2, Tag, SlidersHorizontal, AlertTriangle, X, CheckCircle, Package } from 'lucide-react';
 
 interface PricingTier {
   min_quantity: number;
@@ -18,6 +18,7 @@ interface Plant {
   variety?: string | null;
   category?: string | null;
   selling_price: number;
+  total_stock: number;
   pricing_tiers?: PricingTier[] | null;
   active: boolean;
 }
@@ -37,12 +38,28 @@ export default function EditPlantPage({ params }: { params: Promise<{ id: string
   const [loading, setLoading] = useState(false);
   const [archiving, setArchiving] = useState(false);
 
+  // Stock Adjustment Modal State
+  const [showAdjustModal, setShowAdjustModal] = useState(false);
+  const [adjustType, setAdjustType] = useState<'MORTALITY' | 'RECOUNT_SHORTAGE' | 'RECOUNT_SURPLUS' | 'DAMAGE' | 'MANUAL_ADJUSTMENT' | 'OTHER'>('MANUAL_ADJUSTMENT');
+  const [adjustDelta, setAdjustDelta] = useState('');
+  const [adjustReason, setAdjustReason] = useState('');
+  const [adjusting, setAdjusting] = useState(false);
+
   const { data: plant, isLoading: initialLoading, isError } = useQuery<Plant>({
     queryKey: ['plant', id],
     queryFn: async () => {
       const { data, error } = await supabase.from('plants').select('*').eq('id', id).single();
       if (error) throw error;
       return data as Plant;
+    }
+  });
+
+  const { data: invStatus } = useQuery({
+    queryKey: ['vw_inventory_status', id],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('vw_inventory_status').select('*').eq('plant_id', id).maybeSingle();
+      if (error) throw error;
+      return data;
     }
   });
 
@@ -107,6 +124,48 @@ export default function EditPlantPage({ params }: { params: Promise<{ id: string
     router.push('/plants');
   };
 
+  const handleAdjustSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const deltaNum = parseInt(adjustDelta);
+    if (isNaN(deltaNum) || deltaNum === 0) {
+      alert('Please enter a non-zero adjustment quantity (positive to add stock, negative to subtract).');
+      return;
+    }
+    if (!adjustReason.trim()) {
+      alert('Please enter a brief reason/note for this stock adjustment.');
+      return;
+    }
+
+    setAdjusting(true);
+    try {
+      const user = JSON.parse(localStorage.getItem('snms_user') || '{}');
+      const res = await serverAdjustPlantStock({
+        plantId: id,
+        adjustmentType: adjustType,
+        quantityDelta: deltaNum,
+        reason: adjustReason.trim(),
+        userId: user.id,
+        userName: user.name
+      });
+
+      if (!res.success) {
+        throw new Error(res.error);
+      }
+
+      queryClient.invalidateQueries({ queryKey: ['plant', id] });
+      queryClient.invalidateQueries({ queryKey: ['plants'] });
+      queryClient.invalidateQueries({ queryKey: ['vw_inventory_status'] });
+      setShowAdjustModal(false);
+      setAdjustDelta('');
+      setAdjustReason('');
+      alert('Plant stock adjusted successfully!');
+    } catch (err: any) {
+      alert('Failed to adjust stock: ' + (err.message || ''));
+    } finally {
+      setAdjusting(false);
+    }
+  };
+
   const handleArchive = async () => {
     if (!confirm('Archive this plant? It will be hidden from active lists.')) return;
     if (!navigator.onLine) { alert('You must be online to save.'); return; }
@@ -165,6 +224,46 @@ export default function EditPlantPage({ params }: { params: Promise<{ id: string
           <p className="text-sm font-medium text-gray-500 mt-0.5">Update plant details</p>
         </div>
       </header>
+
+      {/* Live Plant Inventory Overview */}
+      <div className="bg-gradient-to-br from-green-50 to-emerald-50 border border-green-200 rounded-3xl p-5 shadow-sm space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Package className="w-5 h-5 text-green-700" />
+            <h2 className="text-base font-black text-green-950">Live Plant Inventory</h2>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowAdjustModal(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 hover:bg-green-700 active:scale-95 text-white font-bold text-xs rounded-xl shadow-sm transition-all"
+          >
+            <SlidersHorizontal className="w-3.5 h-3.5" /> Adjust Stock
+          </button>
+        </div>
+
+        <div className="grid grid-cols-3 gap-3">
+          <div className="bg-white/80 backdrop-blur-sm p-3 rounded-2xl border border-green-100 text-center">
+            <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Physical Stock</p>
+            <p className="text-xl font-black text-gray-900 mt-1">
+              {invStatus?.current_physical_stock ?? plant?.total_stock ?? 0}
+            </p>
+          </div>
+          <div className="bg-white/80 backdrop-blur-sm p-3 rounded-2xl border border-green-100 text-center">
+            <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wider">Booked</p>
+            <p className="text-xl font-black text-blue-800 mt-1">
+              {invStatus?.allocated_quantity ?? 0}
+            </p>
+          </div>
+          <div className="bg-white/80 backdrop-blur-sm p-3 rounded-2xl border border-green-100 text-center">
+            <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">Free to Sell</p>
+            <p className={`text-xl font-black mt-1 ${
+              (invStatus?.free_stock ?? 0) < 0 ? 'text-red-600 font-extrabold' : 'text-emerald-700'
+            }`}>
+              {invStatus?.free_stock ?? (plant?.total_stock ?? 0)}
+            </p>
+          </div>
+        </div>
+      </div>
 
       {/* Form */}
       <form onSubmit={handleSave} className="space-y-5">
@@ -318,6 +417,97 @@ export default function EditPlantPage({ params }: { params: Promise<{ id: string
           Archived plants are hidden from new bookings and sales but data is preserved.
         </p>
       </div>
+
+      {/* Stock Adjustment Modal */}
+      {showAdjustModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in duration-200" onClick={() => setShowAdjustModal(false)}>
+          <div className="bg-white rounded-3xl p-6 w-full max-w-md border border-gray-100 shadow-2xl space-y-4 animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center pb-2 border-b border-gray-100">
+              <h3 className="font-black text-gray-900 text-lg flex items-center gap-2">
+                <SlidersHorizontal className="w-5 h-5 text-green-600" /> Adjust Physical Stock
+              </h3>
+              <button onClick={() => setShowAdjustModal(false)} className="p-1 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-500">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleAdjustSubmit} className="space-y-4">
+              <div className="bg-gray-50 p-3 rounded-2xl text-xs space-y-1">
+                <div className="flex justify-between text-gray-600">
+                  <span>Current Physical Stock:</span>
+                  <strong className="text-gray-900 font-black">{plant?.total_stock ?? 0} saplings</strong>
+                </div>
+                <div className="flex justify-between text-gray-600">
+                  <span>New Physical Stock:</span>
+                  <strong className="text-green-700 font-black">
+                    {Math.max(0, (plant?.total_stock ?? 0) + (parseInt(adjustDelta) || 0))} saplings
+                  </strong>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-gray-700 uppercase">Reason / Action</label>
+                <select
+                  value={adjustType}
+                  onChange={(e: any) => setAdjustType(e.target.value)}
+                  className="w-full p-3 bg-white border border-gray-200 rounded-xl outline-none font-bold text-sm text-gray-800"
+                >
+                  <option value="MANUAL_ADJUSTMENT">Manual Adjustment / Stock Intake</option>
+                  <option value="RECOUNT_SURPLUS">Recount Surplus (+)</option>
+                  <option value="RECOUNT_SHORTAGE">Recount Shortage (-)</option>
+                  <option value="MORTALITY">Mortality / Plant Loss (-)</option>
+                  <option value="DAMAGE">Physical Damage / Broken (-)</option>
+                  <option value="OTHER">Other Adjustment</option>
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-gray-700 uppercase">
+                  Quantity Delta (+ to add, - to deduct)
+                </label>
+                <input
+                  required
+                  type="number"
+                  value={adjustDelta}
+                  onChange={e => setAdjustDelta(e.target.value)}
+                  className="w-full p-3 bg-white border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-black text-xl text-gray-900"
+                  placeholder="e.g. +50 or -10"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-gray-700 uppercase">Audit Note / Reason</label>
+                <input
+                  required
+                  type="text"
+                  value={adjustReason}
+                  onChange={e => setAdjustReason(e.target.value)}
+                  className="w-full p-3 bg-white border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-medium text-sm text-gray-900"
+                  placeholder="e.g. Nursery bed recounting surplus"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAdjustModal(false)}
+                  disabled={adjusting}
+                  className="py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl active:scale-95 transition-all text-sm"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={adjusting || !adjustDelta || adjustDelta === '0'}
+                  className="py-3 bg-green-600 hover:bg-green-700 text-white font-black rounded-xl active:scale-95 transition-all text-sm disabled:opacity-50"
+                >
+                  {adjusting ? 'Saving...' : 'Apply Stock Change'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

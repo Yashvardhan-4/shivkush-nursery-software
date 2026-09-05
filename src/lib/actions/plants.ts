@@ -11,6 +11,7 @@ export interface SavePlantParams {
   variety?: string;
   category: string;
   selling_price: number;
+  total_stock?: number;
   pricing_tiers?: PricingTier[];
   active?: boolean;
 }
@@ -18,7 +19,7 @@ export interface SavePlantParams {
 export async function serverSavePlant(params: SavePlantParams) {
   try {
     const plantId = params.id || generateId();
-    const newPlant = {
+    const newPlant: any = {
       id: plantId,
       plant_name: params.plant_name.trim(),
       variety: params.variety?.trim() || null,
@@ -28,6 +29,10 @@ export async function serverSavePlant(params: SavePlantParams) {
       active: params.active ?? true,
       updated_at: new Date().toISOString()
     };
+
+    if (params.total_stock !== undefined) {
+      newPlant.total_stock = Math.max(0, params.total_stock);
+    }
 
     const { data, error } = await supabaseAdmin
       .from('plants')
@@ -42,6 +47,36 @@ export async function serverSavePlant(params: SavePlantParams) {
     return { success: true, plant: data };
   } catch (error: any) {
     return { success: false, error: error.message || 'Server error saving plant' };
+  }
+}
+
+export interface AdjustPlantStockParams {
+  plantId: string;
+  adjustmentType: 'MORTALITY' | 'RECOUNT_SHORTAGE' | 'RECOUNT_SURPLUS' | 'DAMAGE' | 'OTHER' | 'MANUAL_ADJUSTMENT';
+  quantityDelta: number;
+  reason: string;
+  userId?: string;
+  userName?: string;
+}
+
+export async function serverAdjustPlantStock(params: AdjustPlantStockParams) {
+  try {
+    const { data, error } = await supabaseAdmin.rpc('rpc_adjust_plant_stock', {
+      p_plant_id: params.plantId,
+      p_adjustment_type: params.adjustmentType,
+      p_quantity_delta: params.quantityDelta,
+      p_reason: params.reason,
+      p_user_id: params.userId || '00000000-0000-0000-0000-000000000000',
+      p_user_name: params.userName || 'Owner'
+    });
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    return { success: true, result: data };
+  } catch (error: any) {
+    return { success: false, error: error.message || 'Server error adjusting plant stock' };
   }
 }
 
