@@ -23,6 +23,7 @@ import { supabase } from '@/lib/supabaseClient';
 import { serverProcessDirectSale, serverFulfillDirectSale } from '@/lib/actions/sales';
 import Link from 'next/link';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
+import PlantPicker from '@/components/plants/PlantPicker';
 
 interface CartItem {
   id: string;
@@ -700,24 +701,16 @@ export default function NewDirectSalePage() {
           </div>
 
           <div className="space-y-3">
-            {/* Plant Dropdown */}
-            <select
-              value={plantId}
-              onChange={e => {
-                setPlantId(e.target.value);
+            {/* Plant Picker with Categories, Instant Search & Quick Picks */}
+            <PlantPicker
+              plants={plants || []}
+              selectedPlantId={plantId}
+              onSelectPlant={p => {
+                setPlantId(p ? p.id : '');
                 setQuantity('');
               }}
-              className="w-full p-4 bg-white border border-green-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-bold text-base text-green-900 shadow-sm"
-            >
-              <option value="">-- रोप निवडा (Choose Plant) --</option>
-              {plants
-                ?.filter(p => p.active !== false)
-                .map(p => (
-                  <option key={p.id} value={p.id}>
-                    {p.variety ? `${p.plant_name} - ${p.variety}` : p.plant_name} — दर: ₹{p.selling_price}
-                  </option>
-                ))}
-            </select>
+              accentColor="green"
+            />
 
             {plantId && (
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">

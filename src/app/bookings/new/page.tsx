@@ -7,6 +7,7 @@ import { supabase } from '@/lib/supabaseClient';
 import { PlusCircle, Trash2, QrCode, X, WifiOff, Receipt, CheckCircle2, ArrowRight } from 'lucide-react';
 import Link from 'next/link';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
+import PlantPicker from '@/components/plants/PlantPicker';
 
 interface CartItem {
   id: string;
@@ -604,18 +605,15 @@ export default function NewBookingPage() {
           </div>
           
           <div className="space-y-2">
-            <select value={plantId} onChange={e => setPlantId(e.target.value)} className="w-full p-4 bg-white border border-blue-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold text-lg text-blue-900">
-              <option value="">{t('choosePlantPlaceholder')}</option>
-              {plants?.filter(p => p.active !== false).map(p => {
-                const inv = inventory?.find((i: any) => i.plant_id === p.id);
-                const freeStock = inv ? inv.free_stock : 0;
-                return (
-                  <option key={p.id} value={p.id}>
-                    {p.variety ? `${p.plant_name} - ${p.variety}` : p.plant_name} (₹{p.selling_price}) — Free: {freeStock}
-                  </option>
-                );
-              })}
-            </select>
+            <PlantPicker
+              plants={plants || []}
+              selectedPlantId={plantId}
+              onSelectPlant={p => {
+                setPlantId(p ? p.id : '');
+                setQuantity('');
+              }}
+              accentColor="blue"
+            />
           </div>
 
           {plantId && (
