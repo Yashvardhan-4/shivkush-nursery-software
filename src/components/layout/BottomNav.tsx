@@ -21,24 +21,22 @@ export function BottomNav() {
   const isOwner = role === 'owner';
   
   const OWNER_LINKS = [
-    { href: '/dashboard', label: t('dashboard'),     icon: Home },
-    { href: '/sales/new',      label: t('directSales'),     icon: ShoppingCart },
-    { href: '/bookings',  label: t('bookings'), icon: BookOpen },
-    { href: '/customers', label: t('customers'), icon: ClipboardList },
-    { href: '/expenses',  label: 'Expenses',  icon: Receipt },
+    { href: '/dashboard', label: t('dashboard'), icon: Home },
+    { href: '/sales/new', label: t('directSales'), icon: ShoppingCart },
+    { href: '/sales', label: 'ऑर्डर्स', icon: Package },
+    { href: '/bookings', label: t('bookings'), icon: BookOpen },
     { href: '/transactions', label: 'Cashbook', icon: BookOpenCheck },
-    { href: '/plants',    label: t('plants'),   icon: Leaf },
-    { href: '/attendance', label: t('attendance'), icon: Users },
-    { href: '/profile',   label: t('profile'),  icon: User },
+    { href: '/plants', label: t('plants'), icon: Leaf },
+    { href: '/profile', label: t('profile'), icon: User },
   ];
 
   const WORKER_LINKS = [
-    { href: '/dashboard', label: t('dashboard'),    icon: Home },
-    { href: '/sales/new', label: t('directSales'),  icon: ShoppingCart },
-    { href: '/fulfillment', label: 'My Orders',     icon: Package },
-    { href: '/bookings',  label: t('bookings'),     icon: BookOpen },
-    { href: '/plants',    label: t('plants'),       icon: Leaf },
-    { href: '/profile',   label: t('profile'),      icon: User },
+    { href: '/dashboard', label: t('dashboard'), icon: Home },
+    { href: '/sales/new', label: t('directSales'), icon: ShoppingCart },
+    { href: '/sales', label: 'ऑर्डर्स', icon: Package },
+    { href: '/bookings', label: t('bookings'), icon: BookOpen },
+    { href: '/plants', label: t('plants'), icon: Leaf },
+    { href: '/profile', label: t('profile'), icon: User },
   ];
 
   const links = isOwner ? OWNER_LINKS : WORKER_LINKS;

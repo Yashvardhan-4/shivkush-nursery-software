@@ -169,11 +169,38 @@ export default function OwnerDashboard() {
     { href: '/settings/qr', label: 'Manage QRs', icon: Banknote, color: 'bg-fuchsia-600', bg: 'bg-fuchsia-50', border: 'border-fuchsia-200' },
   ];
 
+  const pendingOrdersCount = (allSales || []).filter(
+    (s: any) => s.fulfillment_status === 'Pending Handover'
+  ).length;
+
   return (
     <div className="space-y-6 pb-20">
       <header className="flex justify-between items-center mb-2">
         <h1 className="text-2xl font-black text-gray-900 tracking-tight">{t('Owner Dashboard')}</h1>
       </header>
+
+      {/* Pending Handover Alert Banner */}
+      {pendingOrdersCount > 0 && (
+        <Link
+          href="/sales"
+          className="bg-amber-50 border-2 border-amber-300 p-4 rounded-2xl flex items-center justify-between shadow-sm active:scale-98 transition-all hover:bg-amber-100/70"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-500 text-white flex items-center justify-center font-black text-lg">
+              {pendingOrdersCount}
+            </div>
+            <div>
+              <p className="font-black text-amber-900 text-base">द्यायच्या ऑर्डर्स (Orders to Give)</p>
+              <p className="text-xs text-amber-700 font-medium">
+                {pendingOrdersCount} ऑर्डर्स ग्राहकांना देणे बाकी आहेत • पाहण्यासाठी टॅप करा
+              </p>
+            </div>
+          </div>
+          <span className="text-xs font-black bg-amber-200 text-amber-900 px-3 py-1.5 rounded-xl">
+            पहा →
+          </span>
+        </Link>
+      )}
       
       {/* ── Live Stat Cards ──────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">

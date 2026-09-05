@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 import { serverCollectFinalPayment } from '@/lib/actions/finance';
+import { serverFulfillDirectSale } from '@/lib/actions/sales';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   PackageOpen,
@@ -68,11 +69,8 @@ function FulfillmentContent() {
         .is('deleted_at', null)
         .order('created_at', { ascending: false });
 
-      // Workers can see unassigned orders, orders assigned to them, and orders created by them
-      if (userRole !== 'owner') {
-        bookingsQuery = bookingsQuery.or(`assigned_to.eq.${userId},assigned_to.is.null,worker_id.eq.${userId}`);
-        salesQuery = salesQuery.or(`assigned_to.eq.${userId},assigned_to.is.null,worker_id.eq.${userId}`);
-      }
+      // Workers can see all pending orders so they can deliver even when owner is absent
+      // No filter restriction so no customer is left waiting at the counter
 
       const [bRes, sRes, pRes, vwbRes, invRes] = await Promise.all([
         bookingsQuery,
@@ -120,26 +118,22 @@ function FulfillmentContent() {
       }
       setActionLoading(true);
 
-      const { error } = await supabase
-        .from('direct_sales')
-        .update({ fulfillment_status: 'Fulfilled' })
-        .eq('id', id);
-
-      if (error) throw error;
-
+      const targetSale = pendingSales.find((s: any) => s.id === id);
+      const saleNumber = targetSale?.sale_number || id;
       const user = JSON.parse(localStorage.getItem('snms_user') || '{}');
-      await supabase.from('audit_logs').insert({
-        id: crypto.randomUUID(),
-        user_id: user.id || '00000000-0000-0000-0000-000000000000',
-        user_name: user.name || 'Staff',
-        action: 'FULFILL_SALE',
-        entity_type: 'direct_sales',
-        entity_id: id,
-        details: { note: 'Handed over to customer' },
+
+      const res = await serverFulfillDirectSale({
+        saleNumber,
+        userId: user.id || userId,
+        userName: user.name || 'Staff'
       });
 
+      if (!res.success) {
+        throw new Error(res.error || 'Failed to fulfill sale');
+      }
+
       queryClient.invalidateQueries({ queryKey: ['fulfillment-data'] });
-      queryClient.invalidateQueries({ queryKey: ['vw_inventory_status'] });
+      queryClient.invalidateQueries({ queryKey: ['direct_sales'] });
     } catch (e: any) {
       console.error(e);
       alert('Failed to fulfill sale: ' + (e.message || ''));

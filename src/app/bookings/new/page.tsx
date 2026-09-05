@@ -290,7 +290,7 @@ export default function NewBookingPage() {
           advance_upi_amount: itemUpi,
           total_amount: item.amount,
           booking_date: createdAt,
-          delivery_date: deliveryDate,
+          delivery_date: deliveryDate ? deliveryDate : null,
           status: 'Pending',
           remarks: 'Created from Cart',
           worker_id: user.id,
@@ -555,8 +555,23 @@ export default function NewBookingPage() {
           </div>
 
           <div className="space-y-2 pt-2 border-t border-gray-100">
-            <label className="text-xs font-bold text-gray-500 uppercase">{t('requestedDeliveryDate')}</label>
-            <input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold" />
+            <div className="flex justify-between items-center">
+              <label className="text-xs font-bold text-gray-500 uppercase">
+                वितरण दिनांक (Delivery Date - ऐच्छिक)
+              </label>
+              <span className="text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+                रोपे तयार झाल्यावर फोन करून कळवणे
+              </span>
+            </div>
+            <input 
+              type="date" 
+              value={deliveryDate} 
+              onChange={e => setDeliveryDate(e.target.value)} 
+              className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold" 
+            />
+            <p className="text-[11px] text-gray-400 font-medium">
+              तारीख न टाकल्यास बुकिंग 'तयार झाल्यावर (Open)' म्हणून नोंदवले जाईल.
+            </p>
           </div>
         </div>
 
