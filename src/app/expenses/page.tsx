@@ -66,6 +66,7 @@ export default function ExpensesPage() {
         p_amount: amt,
         p_payment_mode: paymentMode,
         p_description: description || null,
+        p_expense_date: expenseDate || null,
       });
 
       if (!result?.success) {

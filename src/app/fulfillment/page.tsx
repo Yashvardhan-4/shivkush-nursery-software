@@ -55,14 +55,14 @@ function FulfillmentContent() {
     queryFn: async () => {
       if (!userId) return null;
 
-      let bookingsQuery = supabase
+      const bookingsQuery = supabase
         .from('bookings')
         .select('*')
         .in('status', ['Pending', 'Allocated', 'Ready'])
         .is('deleted_at', null)
         .order('created_at', { ascending: false });
 
-      let salesQuery = supabase
+      const salesQuery = supabase
         .from('direct_sales')
         .select('*')
         .eq('fulfillment_status', 'Pending Handover')
@@ -72,26 +72,24 @@ function FulfillmentContent() {
       // Workers can see all pending orders so they can deliver even when owner is absent
       // No filter restriction so no customer is left waiting at the counter
 
-      const [bRes, sRes, pRes, vwbRes, invRes] = await Promise.all([
+      const [bRes, sRes, pRes, vwbRes] = await Promise.all([
         bookingsQuery,
         salesQuery,
         supabase.from('plants').select('*').is('deleted_at', null),
-        supabase.from('vw_booking_status').select('*'),
-        supabase.from('vw_inventory_status').select('*')
+        supabase.from('vw_booking_status').select('*')
       ]);
 
       return {
         bookings: bRes.data || [],
         sales: sRes.data || [],
         plants: pRes.data || [],
-        vwBookingStatus: vwbRes.data || [],
-        inventoryStatus: invRes.data || []
+        vwBookingStatus: vwbRes.data || []
       };
     },
     enabled: !!userId,
   });
 
-  const { bookings, sales, plants, vwBookingStatus, inventoryStatus } = queriesData || {};
+  const { bookings, sales, plants, vwBookingStatus } = queriesData || {};
 
   const pendingSales = sales || [];
   const pendingBookings = bookings || [];
@@ -251,7 +249,6 @@ function FulfillmentContent() {
       queryClient.invalidateQueries({ queryKey: ['vw_booking_status'] });
       queryClient.invalidateQueries({ queryKey: ['vw_daily_cashbook'] });
       queryClient.invalidateQueries({ queryKey: ['vw_profit_summary'] });
-      queryClient.invalidateQueries({ queryKey: ['vw_inventory_status'] });
 
       setDeliveryModal(null);
     } catch (err: any) {

@@ -30,17 +30,6 @@ interface CashbookItem {
   description: string;
 }
 
-interface InventoryStatusRow {
-  plant_id: string;
-  plant_name: string;
-  variety: string;
-  category: string;
-  current_physical_stock: number;
-  allocated_quantity: number;
-  free_stock: number;
-  selling_price: number;
-  active: boolean;
-}
 
 interface UserItem {
   id: string;
@@ -324,22 +313,49 @@ function ReconciliationTab() {
   );
 }
 
-// ─── PRODUCTION DEMAND TAB ────────────────────────────────────────────────────
+// ─── CROP DEMAND & SALES ANALYTICS TAB ─────────────────────────────────────────
 function ProductionDemandTab() {
   const { t } = useLanguage();
-  const { data: inventory, isLoading } = useQuery<InventoryStatusRow[]>({
-    queryKey: ['vw_inventory_status'],
+
+  const { data: plants = [], isLoading: plantsLoading } = useQuery({
+    queryKey: ['plants_demand_report'],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from('vw_inventory_status')
+        .from('plants')
         .select('*')
+        .is('deleted_at', null)
         .eq('active', true);
       if (error) throw error;
-      return (data as InventoryStatusRow[]) || [];
+      return data || [];
     },
   });
 
-  if (isLoading || !inventory) {
+  const { data: bookings = [], isLoading: bookingsLoading } = useQuery({
+    queryKey: ['bookings_demand_report'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('bookings')
+        .select('*')
+        .is('deleted_at', null)
+        .neq('status', 'Cancelled');
+      if (error) throw error;
+      return data || [];
+    },
+  });
+
+  const { data: sales = [], isLoading: salesLoading } = useQuery({
+    queryKey: ['sales_demand_report'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('direct_sales')
+        .select('*')
+        .is('deleted_at', null);
+      if (error) throw error;
+      return data || [];
+    },
+  });
+
+  if (plantsLoading || bookingsLoading || salesLoading) {
     return <LoadingCard />;
   }
 
@@ -347,126 +363,130 @@ function ProductionDemandTab() {
     id: string;
     name: string;
     variety: string;
-    totalBooked: number;
-    physicalStock: number;
-    freeStock: number;
-    deficit: number;
+    category: string;
+    sellingPrice: number;
+    bookedQty: number;
+    directSaleQty: number;
+    totalDemand: number;
+    pendingDeliveryQty: number;
+    totalRevenue: number;
   };
 
-  const demands: PlantDemand[] = inventory.map((plant) => {
-    const totalBooked = Number(plant.allocated_quantity) || 0;
-    const physicalStock = Number(plant.current_physical_stock) || 0;
-    const freeStock = Number(plant.free_stock) || 0;
-    const deficit = Math.max(0, totalBooked - physicalStock);
+  const demands: PlantDemand[] = plants.map((plant: any) => {
+    const plantBookings = bookings.filter((b: any) => b.plant_id === plant.id);
+    const plantSales = sales.filter((s: any) => s.plant_id === plant.id);
+
+    const bookedQty = plantBookings.reduce((sum: number, b: any) => sum + (Number(b.quantity) || 0), 0);
+    const directSaleQty = plantSales.reduce((sum: number, s: any) => sum + (Number(s.quantity) || 0), 0);
+    const totalDemand = bookedQty + directSaleQty;
+
+    const pendingDeliveryQty = plantBookings
+      .filter((b: any) => b.status !== 'Delivered')
+      .reduce((sum: number, b: any) => sum + (Number(b.quantity) || 0), 0);
+
+    const bookingRevenue = plantBookings.reduce((sum: number, b: any) => sum + (Number(b.total_amount) || 0), 0);
+    const salesRevenue = plantSales.reduce((sum: number, s: any) => sum + (Number(s.amount) || 0), 0);
+    const totalRevenue = bookingRevenue + salesRevenue;
 
     return {
-      id: plant.plant_id,
+      id: plant.id,
       name: plant.plant_name,
-      variety: plant.variety,
-      totalBooked,
-      physicalStock,
-      freeStock,
-      deficit,
+      variety: plant.variety || '',
+      category: plant.category || 'Other',
+      sellingPrice: Number(plant.selling_price) || 0,
+      bookedQty,
+      directSaleQty,
+      totalDemand,
+      pendingDeliveryQty,
+      totalRevenue,
     };
   });
 
-  // Sort: deficit plants first
-  const sorted = [...demands].sort((a, b) => b.deficit - a.deficit);
-  const alertCount = sorted.filter((d) => d.deficit > 0).length;
+  // Sort by highest demand first
+  const sorted = [...demands].sort((a, b) => b.totalDemand - a.totalDemand);
+  const totalVolume = sorted.reduce((sum, d) => sum + d.totalDemand, 0);
+  const totalPendingDelivery = sorted.reduce((sum, d) => sum + d.pendingDeliveryQty, 0);
 
   return (
     <div className="space-y-4">
-      {/* Summary banner */}
-      {alertCount > 0 ? (
-        <div className="bg-red-50 border-2 border-red-200 rounded-2xl px-5 py-4 flex items-center gap-3">
-          <AlertTriangle className="w-5 h-5 text-red-500 shrink-0" />
-          <p className="text-sm font-bold text-red-700">
-            {alertCount} {t('needMoreProduction')}
-          </p>
+      {/* Summary KPI Banner */}
+      <div className="bg-gradient-to-br from-green-50 to-emerald-50 border border-green-200 rounded-2xl p-4 shadow-sm">
+        <div className="grid grid-cols-3 gap-2 text-center">
+          <div className="bg-white/90 p-3 rounded-xl border border-green-100">
+            <p className="text-[10px] font-bold text-gray-500 uppercase">एकूण मागणी</p>
+            <p className="text-xl font-black text-green-900 mt-0.5">
+              {totalVolume.toLocaleString('en-IN')}
+            </p>
+            <p className="text-[9px] font-semibold text-gray-400">रोपे (Saplings)</p>
+          </div>
+          <div className="bg-white/90 p-3 rounded-xl border border-green-100">
+            <p className="text-[10px] font-bold text-amber-700 uppercase">द्यायची बाकी</p>
+            <p className="text-xl font-black text-amber-800 mt-0.5">
+              {totalPendingDelivery.toLocaleString('en-IN')}
+            </p>
+            <p className="text-[9px] font-semibold text-amber-600">प्रलंबित (Pending)</p>
+          </div>
+          <div className="bg-white/90 p-3 rounded-xl border border-green-100">
+            <p className="text-[10px] font-bold text-blue-700 uppercase">रोपांच्या जाती</p>
+            <p className="text-xl font-black text-blue-900 mt-0.5">
+              {plants.length}
+            </p>
+            <p className="text-[9px] font-semibold text-blue-600">व्हरायटीज (Varieties)</p>
+          </div>
         </div>
-      ) : (
-        <div className="bg-green-50 border-2 border-green-200 rounded-2xl px-5 py-4 flex items-center gap-3">
-          <CheckCircle2 className="w-5 h-5 text-green-600 shrink-0" />
-          <p className="text-sm font-bold text-green-700">
-            {t('allStockSufficient')}
-          </p>
-        </div>
-      )}
+      </div>
 
-      {/* Per-plant cards */}
+      {/* Per-plant demand cards */}
       {sorted.map((d) => (
         <div
           key={d.id}
-          className={`bg-white rounded-2xl border shadow-sm overflow-hidden ${
-            d.deficit > 0 ? 'border-red-200' : 'border-gray-100'
-          }`}
+          className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 space-y-3"
         >
-          <div className="px-5 py-4 flex items-start justify-between gap-3">
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <Sprout
-                  className={`w-4 h-4 shrink-0 ${
-                    d.deficit > 0 ? 'text-red-400' : 'text-green-500'
-                  }`}
-                />
-                <h3 className="font-black text-gray-900 text-sm truncate">
-                  {d.name}
-                </h3>
-                <span className="text-xs text-gray-400 font-medium">
-                  ({d.variety})
-                </span>
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-green-50 text-green-700 flex items-center justify-center font-bold">
+                <Sprout className="w-5 h-5 text-green-600" />
               </div>
-              <div className="flex gap-4 mt-3">
-                <div className="text-center">
-                  <p className="text-xs text-gray-400 font-semibold uppercase tracking-wide">
-                    Physical Stock
-                  </p>
-                  <p className="text-2xl font-black text-gray-800">
-                    {d.physicalStock}
-                  </p>
-                </div>
-                <div className="text-gray-200 self-stretch border-l" />
-                <div className="text-center">
-                  <p className="text-xs text-gray-400 font-semibold uppercase tracking-wide">
-                    Booked
-                  </p>
-                  <p className="text-2xl font-black text-blue-600">
-                    {d.totalBooked}
-                  </p>
-                </div>
-                <div className="text-gray-200 self-stretch border-l" />
-                <div className="text-center">
-                  <p className="text-xs text-gray-400 font-semibold uppercase tracking-wide">
-                    Free to Sell
-                  </p>
-                  <p className={`text-2xl font-black ${d.freeStock >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-                    {d.freeStock}
-                  </p>
-                </div>
+              <div>
+                <h3 className="font-black text-gray-900 text-sm">
+                  {d.name} {d.variety ? `— ${d.variety}` : ''}
+                </h3>
+                <span className="text-[10px] font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-md">
+                  {d.category} · दर ₹{d.sellingPrice}
+                </span>
               </div>
             </div>
 
-            {/* Badge */}
-            <div className="shrink-0">
-              {d.deficit > 0 ? (
-                <span className="inline-block bg-red-100 text-red-700 border border-red-300 text-xs font-black px-3 py-2 rounded-xl leading-tight text-center">
-                  ⚠️ {t('needToGrow')}
-                  <br />
-                  <span className="text-lg">{d.deficit}</span> {t('qty').toLowerCase()}
-                </span>
-              ) : (
-                <span className="inline-block bg-green-100 text-green-700 border border-green-300 text-xs font-black px-3 py-2 rounded-xl text-center leading-tight">
-                  ✅ {t('stockOk')}
-                </span>
-              )}
+            <div className="text-right">
+              <span className="text-xs font-black text-emerald-800 block">
+                {fmt(d.totalRevenue)}
+              </span>
+              <span className="text-[10px] font-bold text-gray-400">एकूण महसूल</span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 gap-2 bg-gray-50 p-2.5 rounded-xl text-center text-xs">
+            <div>
+              <p className="text-[10px] font-bold text-gray-400">बुकिंग मागणी</p>
+              <p className="font-black text-blue-700 text-base">{d.bookedQty}</p>
+            </div>
+            <div>
+              <p className="text-[10px] font-bold text-gray-400">थेट विक्री</p>
+              <p className="font-black text-purple-700 text-base">{d.directSaleQty}</p>
+            </div>
+            <div>
+              <p className="text-[10px] font-bold text-gray-400">द्यायची बाकी</p>
+              <p className={`font-black text-base ${d.pendingDeliveryQty > 0 ? 'text-amber-700' : 'text-gray-400'}`}>
+                {d.pendingDeliveryQty}
+              </p>
             </div>
           </div>
         </div>
       ))}
 
-      {inventory.length === 0 && (
+      {sorted.length === 0 && (
         <div className="p-8 text-center text-gray-400 text-sm font-medium bg-white rounded-2xl border border-gray-100">
-          {t('noActivePlants')}
+          कोणतीही रोपे नोंदवलेली नाहीत.
         </div>
       )}
     </div>
@@ -735,7 +755,7 @@ export default function ReportsDashboard() {
         >
           <div className="flex flex-col items-center gap-0.5">
             <BarChart3 className="w-4 h-4" />
-            {t('productionAlerts')}
+            मागणी व विक्री
           </div>
         </TabBtn>
         <TabBtn

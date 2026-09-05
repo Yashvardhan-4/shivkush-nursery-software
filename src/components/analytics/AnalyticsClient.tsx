@@ -19,20 +19,18 @@ export default function AnalyticsClient() {
   const { data: queriesData, isLoading } = useQuery({
     queryKey: ['analytics-data'],
     queryFn: async () => {
-      const [bRes, sRes, pRes, uRes, invRes] = await Promise.all([
+      const [bRes, sRes, pRes, uRes] = await Promise.all([
         supabase.from('bookings').select('*').is('deleted_at', null),
         supabase.from('direct_sales').select('*').is('deleted_at', null),
         supabase.from('plants').select('*').is('deleted_at', null),
-        supabase.from('users').select('*').is('deleted_at', null),
-        supabase.from('vw_inventory_status').select('*')
+        supabase.from('users').select('*').is('deleted_at', null)
       ]);
 
       return {
         bookings: bRes.data || [],
         directSales: sRes.data || [],
         plants: pRes.data || [],
-        users: uRes.data || [],
-        inventory: invRes.data || []
+        users: uRes.data || []
       };
     }
   });

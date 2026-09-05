@@ -46,6 +46,7 @@ interface Booking { id: string; booking_number: string; customer_name: string; c
 import { PlusCircle, Trash2, ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
+import PlantPicker from '@/components/plants/PlantPicker';
 
 interface CartItem {
   id: string; // original row id or newly generated uuid
@@ -88,7 +89,6 @@ export default function EditBookingPage() {
 
   const { data: plants } = useQuery({ queryKey: ['plants'], queryFn: async () => { const { data } = await supabase.from('plants').select('*').is('deleted_at', null).eq('active', true); return data || []; } });
   const { data: customers } = useQuery({ queryKey: ['customers'], queryFn: async () => { const { data } = await supabase.from('customers').select('*').is('deleted_at', null); return data || []; } });
-  const { data: inventory } = useQuery({ queryKey: ['vw_inventory_status'], queryFn: async () => { const { data } = await supabase.from('vw_inventory_status').select('*'); return data || []; } });
 
   const { data: originalBookingRows } = useQuery({ 
     queryKey: ['bookings', bookingNumber], 
@@ -210,7 +210,6 @@ export default function EditBookingPage() {
 
       // Invalidate all related caches & navigate
       queryClient.invalidateQueries({ queryKey: ['bookings'] });
-      queryClient.invalidateQueries({ queryKey: ['vw_inventory_status'] });
       queryClient.invalidateQueries({ queryKey: ['vw_booking_status'] });
       queryClient.invalidateQueries({ queryKey: ['vw_daily_cashbook'] });
       queryClient.invalidateQueries({ queryKey: ['vw_profit_summary'] });
@@ -395,7 +394,6 @@ export default function EditBookingPage() {
       }
 
       queryClient.invalidateQueries({ queryKey: ['bookings'] });
-      queryClient.invalidateQueries({ queryKey: ['vw_inventory_status'] });
       queryClient.invalidateQueries({ queryKey: ['vw_booking_status'] });
       queryClient.invalidateQueries({ queryKey: ['vw_daily_cashbook'] });
       queryClient.invalidateQueries({ queryKey: ['vw_profit_summary'] });
@@ -463,18 +461,12 @@ export default function EditBookingPage() {
           </div>
           
           <div className="space-y-2">
-            <select value={plantId} onChange={e => setPlantId(e.target.value)} className="w-full p-4 bg-white border border-blue-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-bold text-lg text-blue-900">
-              <option value="">{t('choosePlantPlaceholder')}</option>
-              {plants?.filter(p => p.active !== false).map(p => {
-                const inv = inventory?.find((i: any) => i.plant_id === p.id);
-                const freeStock = inv ? inv.free_stock : 0;
-                return (
-                  <option key={p.id} value={p.id}>
-                    {p.variety ? `${p.plant_name} - ${p.variety}` : p.plant_name} (₹{p.selling_price}) — Free: {freeStock}
-                  </option>
-                );
-              })}
-            </select>
+            <PlantPicker
+              plants={plants || []}
+              selectedPlantId={plantId}
+              onSelectPlant={(p) => setPlantId(p ? p.id : '')}
+              accentColor="blue"
+            />
           </div>
 
           {plantId && (

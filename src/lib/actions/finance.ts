@@ -4,43 +4,7 @@ import { supabaseAdmin } from '@/lib/supabaseAdmin';
 import { cookies } from 'next/headers';
 import crypto from 'crypto';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 
-// Helper to get authenticated client for the current user
-async function getAuthClient() {
-  const cookieStore = await cookies();
-  const session = cookieStore.get('snms_session');
-  let userMobile = '';
-  
-  if (session) {
-    try {
-      const parsed = JSON.parse(session.value);
-      // Look up user mobile if needed
-      const { data } = await supabaseAdmin.from('users').select('mobile').eq('id', parsed.id).single();
-      userMobile = data?.mobile || '';
-    } catch (e) {
-      // Ignore
-    }
-  }
-
-  // Determine auth email
-  let authEmail = 'pushpa_exact@shivkush.local';
-  if (userMobile === '9000000002') {
-    authEmail = 'sarika_exact@shivkush.local';
-  } else if (userMobile === '9000000001') {
-    authEmail = 'pushpa_exact@shivkush.local';
-  }
-
-  // Sign in to get JWT
-  const signRes = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
-    method: 'POST',
-    headers: { 'apikey': anonKey, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: authEmail, password: 'password123' })
-  });
-  const signData = await signRes.json();
-  return signData.access_token;
-}
 
 export async function serverCollectFinalPayment(params: {
   p_booking_id: string;
@@ -69,19 +33,41 @@ export async function serverAddExpense(params: {
   p_amount: number;
   p_payment_mode: string;
   p_description: string | null;
+  p_expense_date?: string | null;
   p_worker_id?: string;
 }) {
   try {
-    const { data, error } = await supabaseAdmin.rpc('rpc_add_expense', {
-      p_category: params.p_category,
-      p_amount: params.p_amount,
-      p_payment_mode: params.p_payment_mode,
-      p_description: params.p_description || null
-    });
+    const expenseDate = params.p_expense_date ? new Date(params.p_expense_date).toISOString() : new Date().toISOString();
+
+    const { data, error } = await supabaseAdmin.from('expenses').insert({
+      category: params.p_category,
+      amount: params.p_amount,
+      payment_mode: params.p_payment_mode,
+      description: params.p_description || null,
+      expense_date: expenseDate,
+      created_by: params.p_worker_id || null
+    }).select('id').single();
+
     if (error) {
       return { success: false, error: error.message };
     }
-    return data;
+
+    await supabaseAdmin.from('audit_logs').insert({
+      id: crypto.randomUUID(),
+      user_id: params.p_worker_id || '00000000-0000-0000-0000-000000000000',
+      action: 'INSERT',
+      table_name: 'expenses',
+      record_id: data.id,
+      details: {
+        category: params.p_category,
+        amount: params.p_amount,
+        payment_mode: params.p_payment_mode,
+        expense_date: expenseDate
+      },
+      created_at: new Date().toISOString()
+    });
+
+    return { success: true, id: data.id };
   } catch (error: any) {
     return { success: false, error: error.message || 'Server error' };
   }

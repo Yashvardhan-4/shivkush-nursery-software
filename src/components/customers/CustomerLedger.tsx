@@ -12,7 +12,7 @@ export default function CustomerLedger() {
   const { data: bookings } = useQuery({
     queryKey: ['bookings'],
     queryFn: async () => {
-      const { data, error } = await supabase.from('bookings').select('*');
+      const { data, error } = await supabase.from('bookings').select('*').is('deleted_at', null);
       if (error) throw error;
       return data || [];
     }
@@ -21,7 +21,7 @@ export default function CustomerLedger() {
   const { data: directSales } = useQuery({
     queryKey: ['direct_sales'],
     queryFn: async () => {
-      const { data, error } = await supabase.from('direct_sales').select('*');
+      const { data, error } = await supabase.from('direct_sales').select('*').is('deleted_at', null);
       if (error) throw error;
       return data || [];
     }
@@ -57,7 +57,9 @@ export default function CustomerLedger() {
   }> = {};
 
   for (const booking of bookings) {
-    const phone = booking.customer_phone;
+    const phone = booking.customer_phone?.trim();
+    if (!phone) continue;
+
     if (!customerMap[phone]) {
       customerMap[phone] = {
         name: booking.customer_name || 'Unknown',
@@ -69,7 +71,7 @@ export default function CustomerLedger() {
         bookingNumbers: [],
       };
     }
-    customerMap[phone].totalBookingValue += booking.total_amount;
+    customerMap[phone].totalBookingValue += Number(booking.total_amount) || 0;
     if (!customerMap[phone].bookingNumbers.includes(booking.booking_number)) {
       customerMap[phone].bookingNumbers.push(booking.booking_number);
       customerMap[phone].bookingCount += 1;
@@ -78,7 +80,7 @@ export default function CustomerLedger() {
 
   // Add direct sales value matched by phone
   for (const sale of directSales) {
-    const phone = sale.customer_phone || '';
+    const phone = sale.customer_phone?.trim() || '';
     if (phone) {
       if (!customerMap[phone]) {
         customerMap[phone] = {
@@ -91,7 +93,7 @@ export default function CustomerLedger() {
           bookingNumbers: [],
         };
       }
-      customerMap[phone].totalSalesValue += sale.amount;
+      customerMap[phone].totalSalesValue += Number(sale.amount) || 0;
     }
   }
 

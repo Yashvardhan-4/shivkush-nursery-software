@@ -8,6 +8,7 @@ import { PlusCircle, Trash2, QrCode, X, WifiOff, Receipt, CheckCircle2, ArrowRig
 import Link from 'next/link';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import PlantPicker from '@/components/plants/PlantPicker';
+import { serverCreateBooking } from '@/lib/actions/bookings';
 
 interface CartItem {
   id: string;
@@ -88,14 +89,6 @@ export default function NewBookingPage() {
     queryKey: ['plants'],
     queryFn: async () => {
       const { data, error } = await supabase.from('plants').select('*').is('deleted_at', null).eq('active', true);
-      if (error) throw error;
-      return data || [];
-    }
-  });
-  const { data: inventory } = useQuery({
-    queryKey: ['vw_inventory_status'],
-    queryFn: async () => {
-      const { data, error } = await supabase.from('vw_inventory_status').select('*');
       if (error) throw error;
       return data || [];
     }
@@ -313,15 +306,15 @@ export default function NewBookingPage() {
         city: city
       };
 
-      const { error } = await supabase.rpc('process_bookings_batch', {
-        p_bookings: newBookings,
-        p_customer: customerPayload,
-        p_audit: auditPayload
+      const res = await serverCreateBooking({
+        bookings: newBookings,
+        customer: customerPayload,
+        audit: auditPayload
       });
 
-      if (error) {
-        console.error(error);
-        alert('Failed to save bookings: ' + (error.message || ''));
+      if (!res.success) {
+        console.error(res.error);
+        alert('Failed to save bookings: ' + (res.error || ''));
         return;
       }
 
@@ -331,7 +324,6 @@ export default function NewBookingPage() {
       queryClient.invalidateQueries({ queryKey: ['vw_booking_status'] });
       queryClient.invalidateQueries({ queryKey: ['vw_daily_cashbook'] });
       queryClient.invalidateQueries({ queryKey: ['vw_profit_summary'] });
-      queryClient.invalidateQueries({ queryKey: ['vw_inventory_status'] });
 
       setCompletedBookingReceipt({
         bookingNumber,

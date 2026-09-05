@@ -67,22 +67,18 @@ export default function NotebookLedger({ role, userId }: { role: string; userId:
   const [search, setSearch] = useState('');
 
   const { data: bookings } = useQuery<BookingRow[]>({
-    queryKey: ['bookings', role, userId],
+    queryKey: ['bookings', 'notebook'],
     queryFn: async () => {
-      let q = supabase.from('bookings').select('*').is('deleted_at', null);
-      if (role === 'worker') q = q.eq('worker_id', userId);
-      const { data, error } = await q;
+      const { data, error } = await supabase.from('bookings').select('*').is('deleted_at', null);
       if (error) throw error;
       return (data as BookingRow[]) || [];
     }
   });
 
   const { data: sales } = useQuery<SaleRow[]>({
-    queryKey: ['direct_sales', role, userId],
+    queryKey: ['direct_sales', 'notebook'],
     queryFn: async () => {
-      let q = supabase.from('direct_sales').select('*').is('deleted_at', null);
-      if (role === 'worker') q = q.eq('worker_id', userId);
-      const { data, error } = await q;
+      const { data, error } = await supabase.from('direct_sales').select('*').is('deleted_at', null);
       if (error) throw error;
       return (data as SaleRow[]) || [];
     }
@@ -191,8 +187,26 @@ export default function NotebookLedger({ role, userId }: { role: string; userId:
             <div className="flex justify-between items-start border-b border-gray-100 pb-3 mb-3">
               <div>
                 <h3 className="font-black text-lg text-gray-900">{b.customer_name}</h3>
-                <div className="flex items-center text-gray-500 text-xs font-bold mt-1 space-x-2">
-                  <Phone className="w-3 h-3" /> <span>{b.customer_phone}</span>
+                <div className="flex items-center text-gray-500 text-xs font-bold mt-1 space-x-2 flex-wrap gap-1">
+                  {b.customer_phone ? (
+                    <div className="flex items-center gap-1.5">
+                      <a
+                        href={`tel:${b.customer_phone}`}
+                        className="flex items-center gap-1 text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md hover:bg-blue-100 active:scale-95 transition-all"
+                      >
+                        <Phone className="w-3 h-3" /> {b.customer_phone}
+                      </a>
+                      <a
+                        href={`https://wa.me/91${b.customer_phone.replace(/\D/g, '')}?text=${encodeURIComponent(`नमस्कार ${b.customer_name}, शिवकुश नर्सरी मधून आपल्या बुकिंग क्र. #${b.booking_number} ची रोपे तयार आहेत. कृपया घेऊन जावे.`)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[11px] font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-md hover:bg-emerald-100 active:scale-95 transition-all"
+                        title="WhatsApp निरोप पाठवा"
+                      >
+                        💬 WhatsApp
+                      </a>
+                    </div>
+                  ) : null}
                   {b.city && <span className="bg-gray-100 px-2 py-0.5 rounded-full">{b.city}</span>}
                 </div>
               </div>

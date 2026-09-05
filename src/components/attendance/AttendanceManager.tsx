@@ -41,8 +41,17 @@ export default function AttendanceManager({ ownerId }: AttendanceManagerProps) {
     queryKey: ['workers'],
     queryFn: async () => {
       const { data, error } = await supabase.from('vw_active_workers').select('id, name, mobile, role').eq('role', 'worker');
-      if (error) throw error;
-      return (data as WorkerUser[]) || [];
+      if (!error && data) {
+        return (data as WorkerUser[]);
+      }
+      // Fallback directly to users table if view is not available
+      const { data: fallbackUsers, error: fbError } = await supabase
+        .from('users')
+        .select('id, name, mobile, role')
+        .eq('role', 'worker')
+        .is('deleted_at', null);
+      if (fbError) throw fbError;
+      return (fallbackUsers as WorkerUser[]) || [];
     }
   });
 

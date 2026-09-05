@@ -58,14 +58,6 @@ export default function WorkerDashboard() {
     }
   });
 
-  const { data: inventory } = useQuery({
-    queryKey: ['vw_inventory_status'],
-    queryFn: async () => {
-      const { data } = await supabase.from('vw_inventory_status').select('*');
-      return data || [];
-    }
-  });
-
   // Calculate worker's total collections today from authoritative daily cashbook:
   // Direct sales created today + Booking advances collected today + Booking final payments collected today
   const todaySalesTotal = cashbook
@@ -87,23 +79,6 @@ export default function WorkerDashboard() {
   const pendingBookingsCount = allBookings.filter(
     (b: any) => b.status !== 'Delivered' && b.status !== 'Cancelled'
   ).length;
-
-  const freeStockData = (() => {
-    if (!inventory) return null;
-
-    return inventory
-      .filter((item: any) => (item.current_physical_stock ?? 0) > 0 || (item.allocated_quantity ?? 0) > 0)
-      .map((item: any) => ({
-        plant: {
-          id: item.plant_id,
-          plant_name: item.plant_name,
-          variety: item.variety,
-        },
-        totalStock: item.current_physical_stock ?? 0,
-        bookedQty: item.allocated_quantity ?? 0,
-        freeStock: item.free_stock ?? 0,
-      }));
-  })();
 
   return (
     <div className="space-y-6 pb-20">
@@ -236,55 +211,6 @@ export default function WorkerDashboard() {
           </div>
           <ArrowRight className="w-5 h-5 text-gray-400" />
         </Link>
-      </div>
-
-      {/* Free Stock by Plant Section */}
-      <div className="space-y-3 pt-2">
-        <div className="flex items-center space-x-2 px-1">
-          <Leaf className="w-5 h-5 text-green-600" />
-          <h2 className="font-black text-gray-800 text-lg">{t('freeStockByPlant')}</h2>
-        </div>
-
-        {!freeStockData && (
-          <p className="text-sm text-gray-400 text-center py-4">{t('loadingStock')}</p>
-        )}
-
-        {freeStockData && freeStockData.length === 0 && (
-          <div className="bg-white p-6 rounded-2xl border border-gray-100 text-center">
-            <p className="text-sm text-gray-400 font-medium">कोणताही स्टॉक उपलब्ध नाही</p>
-          </div>
-        )}
-
-        {freeStockData && (
-          <div className="space-y-2">
-            {freeStockData.map(item => (
-              <div
-                key={item.plant.id}
-                className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center"
-              >
-                <div>
-                  <p className="font-bold text-gray-900">
-                    {item.plant.plant_name}
-                    {item.plant.variety ? ` - ${item.plant.variety}` : ''}
-                  </p>
-                  <p className="text-xs text-gray-400 font-medium">
-                    स्टॉक: {item.totalStock} • बुकिंग: {item.bookedQty}
-                  </p>
-                </div>
-                <div className="text-right">
-                  <span
-                    className={`font-black text-lg ${
-                      item.freeStock <= 0 ? 'text-red-600' : 'text-green-700'
-                    }`}
-                  >
-                    {item.freeStock}
-                  </span>
-                  <p className="text-[10px] uppercase font-bold text-gray-400">उपलब्ध</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
     </div>
   );

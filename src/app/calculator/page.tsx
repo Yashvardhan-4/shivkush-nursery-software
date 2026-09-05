@@ -20,6 +20,16 @@ interface TempItem {
   amount: number;
 }
 
+const SPACING_PRESETS = [
+  { name: 'टोमॅटो (Tomato)', row: '4', plant: '1.5', unit: 'feet' },
+  { name: 'मिरची (Chili)', row: '4', plant: '1', unit: 'feet' },
+  { name: 'वांगी (Brinjal)', row: '4', plant: '2', unit: 'feet' },
+  { name: 'झेंडू (Marigold)', row: '2', plant: '1.5', unit: 'feet' },
+  { name: 'पेरू (Guava)', row: '10', plant: '10', unit: 'feet' },
+  { name: 'डाळिंब (Pomegranate)', row: '12', plant: '10', unit: 'feet' },
+  { name: 'पपई (Papaya)', row: '7', plant: '7', unit: 'feet' },
+];
+
 export default function CalculatorPage() {
   // Navigation & Mode
   const [isPrintMode, setIsPrintMode] = useState(false);
@@ -521,6 +531,33 @@ export default function CalculatorPage() {
               className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-bold text-base text-center"
               placeholder="0"
             />
+          </div>
+        </div>
+
+        {/* Quick Spacing Presets */}
+        <div className="space-y-1.5 pt-1">
+          <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider">
+            ⚡ जलद अंतर निवडा (Quick Crop Presets)
+          </label>
+          <div className="flex gap-1.5 flex-wrap">
+            {SPACING_PRESETS.map((p) => (
+              <button
+                key={p.name}
+                type="button"
+                onClick={() => {
+                  setUnit(p.unit as 'feet' | 'meters');
+                  setRowSpacing(p.row);
+                  setPlantSpacing(p.plant);
+                }}
+                className={`px-2.5 py-1 text-xs font-bold rounded-lg border transition-all ${
+                  unit === p.unit && rowSpacing === p.row && plantSpacing === p.plant
+                    ? 'bg-green-600 text-white border-green-600 shadow-sm'
+                    : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100 hover:border-gray-300'
+                }`}
+              >
+                {p.name} <span className="opacity-75 font-normal">({p.row}×{p.plant} ft)</span>
+              </button>
+            ))}
           </div>
         </div>
 

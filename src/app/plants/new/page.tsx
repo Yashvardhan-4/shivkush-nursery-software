@@ -12,7 +12,6 @@ export default function NewPlantPage() {
   const [variety, setVariety] = useState('');
   const [category, setCategory] = useState('');
   const [price, setPrice] = useState('');
-  const [totalStock, setTotalStock] = useState('0');
   const [pricingTiers, setPricingTiers] = useState<PricingTier[]>([]);
   const [newTierQty, setNewTierQty] = useState('');
   const [newTierPrice, setNewTierPrice] = useState('');
@@ -55,7 +54,6 @@ export default function NewPlantPage() {
       variety: variety,
       category: category,
       selling_price: parseFloat(price),
-      total_stock: Math.max(0, parseInt(totalStock) || 0),
       active: true,
       pricing_tiers: pricingTiers,
     });
@@ -68,7 +66,6 @@ export default function NewPlantPage() {
     }
 
     queryClient.invalidateQueries({ queryKey: ['plants'] });
-    queryClient.invalidateQueries({ queryKey: ['vw_inventory_status'] });
     router.push('/plants');
   };
 
@@ -141,19 +138,6 @@ export default function NewPlantPage() {
             className="w-full p-4 bg-white border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-medium transition-shadow"
             placeholder="e.g. 150"
           />
-        </div>
-
-        <div className="space-y-2">
-          <label className="text-sm font-bold text-gray-700">Initial Physical Stock (Saplings)</label>
-          <input
-            type="number"
-            min="0"
-            value={totalStock}
-            onChange={(e) => setTotalStock(e.target.value)}
-            className="w-full p-4 bg-white border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-green-500 font-black text-xl text-green-800 transition-shadow"
-            placeholder="0"
-          />
-          <p className="text-xs text-gray-400 font-medium">Initial available physical count in nursery. Can be adjusted anytime later.</p>
         </div>
 
         {/* Quantity-based Pricing Tiers */}

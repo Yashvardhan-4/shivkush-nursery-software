@@ -79,14 +79,6 @@ export default function OwnerDashboard() {
     }
   });
 
-  const { data: inventory } = useQuery({
-    queryKey: ['vw_inventory_status'],
-    queryFn: async () => {
-      const { data, error } = await supabase.from('vw_inventory_status').select('*');
-      if (error) throw error;
-      return data || [];
-    }
-  });
 
   /* ---- Today's Worker Collections Query ---- */
   const { data: todayWorkerCollections = [] } = useQuery({
@@ -141,10 +133,6 @@ export default function OwnerDashboard() {
     enabled: users.length > 0
   });
 
-  // Production Deficit: Any plant variety where booked quantity exceeds physical stock (free_stock < 0)
-  const productionAlertsCount = inventory
-    ? inventory.filter((inv: any) => (inv.free_stock ?? 0) < 0).length
-    : null;
 
   const todayRevenue = profitSummary?.revenue ?? 0;
   const todayExpenses = profitSummary?.expenses ?? 0;
@@ -171,6 +159,10 @@ export default function OwnerDashboard() {
 
   const pendingOrdersCount = (allSales || []).filter(
     (s: any) => s.fulfillment_status === 'Pending Handover'
+  ).length;
+
+  const pendingBookingsCount = (allBookings || []).filter(
+    (b: any) => b.status !== 'Delivered' && b.status !== 'Cancelled'
   ).length;
 
   return (
@@ -269,25 +261,28 @@ export default function OwnerDashboard() {
         </div>
       )}
 
-      {/* ── Production Alerts Block ────────────────────────────────────── */}
-      {productionAlertsCount !== null && productionAlertsCount > 0 ? (
-        <Link href="/reports?tab=production" className="block bg-red-50 rounded-2xl shadow-sm border border-red-200 p-5 active:scale-95 transition-transform">
-          <div className="flex items-center gap-3">
-            <div className="bg-red-100 text-red-600 p-3 rounded-2xl">
-              <AlertTriangle className="w-6 h-6" />
-            </div>
-            <div>
-              <h2 className="font-bold text-red-800 text-lg">{t('productionAlerts')}</h2>
-              <p className="text-sm font-semibold text-red-600 mt-0.5">{productionAlertsCount} {t('propagationNeed')}</p>
-            </div>
+      {/* ── Active Bookings & Ledger Quick Card ─────────────────────────── */}
+      <Link
+        href="/bookings"
+        className="bg-blue-50 border border-blue-200 rounded-2xl p-4 flex items-center justify-between shadow-sm active:scale-98 transition-all hover:bg-blue-100/60"
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center font-black">
+            <BookOpen className="w-5 h-5" />
           </div>
-        </Link>
-      ) : (
-        <div className="bg-green-50 border border-green-200 rounded-2xl px-5 py-4 flex items-center gap-3 shadow-sm">
-          <Leaf className="w-5 h-5 text-green-600 shrink-0" />
-          <p className="text-sm font-bold text-green-700">{t('allStockSufficient')}</p>
+          <div>
+            <p className="font-black text-blue-950 text-sm sm:text-base">
+              नोंदवही / ॲक्टिव्ह बुकिंग्ज ({pendingBookingsCount})
+            </p>
+            <p className="text-xs text-blue-700 font-medium">
+              ग्राहकांची बाकी रोपे देणे व हिशोब पाहण्यासाठी टॅप करा
+            </p>
+          </div>
         </div>
-      )}
+        <span className="text-xs font-black text-blue-700 bg-white px-3 py-1.5 rounded-xl border border-blue-200">
+          नोंदवही →
+        </span>
+      </Link>
 
 
       {/* ── View All Transactions ──────────────────────────────────────── */}

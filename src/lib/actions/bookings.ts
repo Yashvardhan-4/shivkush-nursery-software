@@ -152,3 +152,132 @@ export async function serverUpdateBooking(params: {
     return { success: false, error: error.message || 'Server error updating booking' };
   }
 }
+
+export interface CreateBookingItem {
+  id: string;
+  booking_number: string;
+  customer_name: string;
+  customer_phone: string;
+  city?: string | null;
+  plant_id: string;
+  quantity: number;
+  advance_paid: number;
+  advance_payment_mode: 'Cash' | 'UPI' | 'Split' | null;
+  advance_cash_amount: number | null;
+  advance_upi_amount: number | null;
+  total_amount: number;
+  booking_date: string;
+  delivery_date?: string | null;
+  status: string;
+  remarks?: string | null;
+  worker_id?: string | null;
+  assigned_to?: string | null;
+  created_at?: string;
+}
+
+export interface ServerCreateBookingParams {
+  bookings: CreateBookingItem[];
+  customer: {
+    name: string;
+    mobile: string;
+    city?: string | null;
+  };
+  audit: {
+    user_id: string;
+    user_name: string;
+    action: string;
+    details: any;
+  };
+}
+
+export async function serverCreateBooking(params: ServerCreateBookingParams): Promise<{ success: boolean; error?: string }> {
+  try {
+    // 1. Attempt RPC first via supabaseAdmin
+    const { error: rpcError } = await supabaseAdmin.rpc('process_bookings_batch', {
+      p_bookings: params.bookings,
+      p_customer: params.customer,
+      p_audit: params.audit
+    });
+
+    if (!rpcError) {
+      return { success: true };
+    }
+
+    console.warn('RPC process_bookings_batch failed, falling back to direct admin transaction:', rpcError.message);
+
+    // 2. Direct database fallback via supabaseAdmin
+    const now = new Date().toISOString();
+
+    // Upsert customer
+    if (params.customer?.mobile && params.customer.mobile.trim()) {
+      await supabaseAdmin.from('customers').upsert({
+        name: params.customer.name,
+        mobile: params.customer.mobile.trim(),
+        city: params.customer.city || null,
+        updated_at: now
+      }, { onConflict: 'mobile' });
+    }
+
+    // Insert bookings
+    for (const b of params.bookings) {
+      const { error: bError } = await supabaseAdmin.from('bookings').insert({
+        id: b.id,
+        booking_number: b.booking_number,
+        customer_name: b.customer_name,
+        customer_phone: b.customer_phone,
+        city: b.city || null,
+        plant_id: b.plant_id,
+        quantity: b.quantity,
+        advance_paid: b.advance_paid,
+        advance_payment_mode: b.advance_payment_mode,
+        advance_cash_amount: b.advance_cash_amount,
+        advance_upi_amount: b.advance_upi_amount,
+        total_amount: b.total_amount,
+        booking_date: b.booking_date || now,
+        delivery_date: b.delivery_date || null,
+        status: b.status || 'Pending',
+        remarks: b.remarks || '',
+        worker_id: b.worker_id || params.audit.user_id,
+        assigned_to: b.assigned_to || null,
+        created_at: b.created_at || now,
+        updated_at: now
+      });
+
+      if (bError) throw bError;
+
+      // Insert advance payment record if advance > 0
+      if (b.advance_paid && b.advance_paid > 0) {
+        const cashAmt = b.advance_cash_amount || (b.advance_payment_mode === 'Cash' ? b.advance_paid : 0);
+        const upiAmt = b.advance_upi_amount || (b.advance_payment_mode === 'UPI' ? b.advance_paid : 0);
+
+        await supabaseAdmin.from('booking_payments').insert({
+          id: crypto.randomUUID(),
+          booking_id: b.id,
+          payment_type: 'ADVANCE',
+          cash_amount: cashAmt,
+          upi_amount: upiAmt,
+          payment_date: b.booking_date || now,
+          created_by: b.worker_id || params.audit.user_id
+        });
+      }
+    }
+
+    // Insert audit log
+    await supabaseAdmin.from('audit_logs').insert({
+      id: crypto.randomUUID(),
+      user_id: params.audit.user_id,
+      user_name: params.audit.user_name,
+      action: params.audit.action,
+      table_name: 'bookings',
+      record_id: params.bookings[0]?.booking_number || 'UNKNOWN',
+      details: params.audit.details,
+      created_at: now
+    });
+
+    return { success: true };
+  } catch (err: any) {
+    console.error('serverCreateBooking error:', err);
+    return { success: false, error: err.message || 'Server error creating booking' };
+  }
+}
+

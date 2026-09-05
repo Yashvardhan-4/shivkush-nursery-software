@@ -207,7 +207,6 @@ export default function BookingList({ role, userId, userName }: BookingListProps
       }
 
       queryClient.invalidateQueries({ queryKey: ['bookings'] });
-      queryClient.invalidateQueries({ queryKey: ['vw_inventory_status'] });
       queryClient.invalidateQueries({ queryKey: ['vw_booking_status'] });
       queryClient.invalidateQueries({ queryKey: ['vw_daily_cashbook'] });
       queryClient.invalidateQueries({ queryKey: ['vw_profit_summary'] });
@@ -449,13 +448,24 @@ export default function BookingList({ role, userId, userName }: BookingListProps
                       </h3>
                       <div className="flex items-center gap-3 mt-1 flex-wrap">
                         {slip.customer_phone && (
-                          <a
-                            href={`tel:${slip.customer_phone}`}
-                            className="inline-flex items-center gap-1 text-sm font-black text-blue-700 bg-white px-2.5 py-0.5 rounded-lg border border-blue-200 hover:bg-blue-50 transition-colors"
-                          >
-                            <Phone className="w-3.5 h-3.5" />
-                            {slip.customer_phone}
-                          </a>
+                          <div className="inline-flex items-center gap-1.5 flex-wrap">
+                            <a
+                              href={`tel:${slip.customer_phone}`}
+                              className="inline-flex items-center gap-1 text-sm font-black text-blue-700 bg-white px-2.5 py-1 rounded-lg border border-blue-200 hover:bg-blue-50 transition-colors"
+                            >
+                              <Phone className="w-3.5 h-3.5" />
+                              {slip.customer_phone}
+                            </a>
+                            <a
+                              href={`https://wa.me/91${slip.customer_phone.replace(/\D/g, '')}?text=${encodeURIComponent(`नमस्कार ${slip.customer_name}, शिवकुश नर्सरी मधून आपल्या बुकिंग क्र. #${slip.booking_number} ची रोपे तयार आहेत. कृपया घेऊन जावे.`)}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-xs font-black text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 hover:bg-emerald-100 transition-colors"
+                              title="WhatsApp निरोप पाठवा"
+                            >
+                              💬 WhatsApp
+                            </a>
+                          </div>
                         )}
                         {slip.city && (
                           <span className="text-xs font-bold text-gray-600 flex items-center gap-1 bg-white px-2.5 py-0.5 rounded-lg border border-gray-200">

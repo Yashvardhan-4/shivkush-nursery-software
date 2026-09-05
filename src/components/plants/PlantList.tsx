@@ -9,14 +9,6 @@ export default function PlantList({ role }: { role: string }) {
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('All');
   
-  const { data: inventory } = useQuery({
-    queryKey: ['vw_inventory_status'],
-    queryFn: async () => {
-      const { data, error } = await supabase.from('vw_inventory_status').select('*');
-      if (error) throw error;
-      return data || [];
-    }
-  });
 
   const { data: plants } = useQuery({
     queryKey: ['plants', search, categoryFilter],
@@ -76,11 +68,6 @@ export default function PlantList({ role }: { role: string }) {
 
       <div className="grid gap-3">
         {plants.map(plant => {
-          const inv = inventory?.find((i: any) => i.plant_id === plant.id);
-          const physicalStock = inv?.current_physical_stock ?? plant.total_stock ?? 0;
-          const allocated = inv?.allocated_quantity ?? 0;
-          const freeStock = inv?.free_stock ?? (plant.total_stock ?? 0);
-
           return (
             <div key={plant.id} className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-start active:scale-[0.98] transition-transform">
               <div className="flex-1 min-w-0">
@@ -92,25 +79,6 @@ export default function PlantList({ role }: { role: string }) {
                     </span>
                   )}
                   <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{plant.variety}</p>
-                </div>
-
-                {/* Stock Counters */}
-                <div className="flex items-center gap-2 mt-2.5 flex-wrap text-xs">
-                  <span className="bg-gray-100 text-gray-800 px-2.5 py-1 rounded-lg font-bold border border-gray-200">
-                    Physical: {physicalStock}
-                  </span>
-                  <span className={`px-2.5 py-1 rounded-lg font-bold border ${
-                    freeStock < 0 
-                      ? 'bg-red-50 text-red-700 border-red-200 font-extrabold' 
-                      : 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                  }`}>
-                    Free to Sell: {freeStock}
-                  </span>
-                  {allocated > 0 && (
-                    <span className="bg-blue-50 text-blue-700 px-2.5 py-1 rounded-lg font-bold border border-blue-100">
-                      Booked: {allocated}
-                    </span>
-                  )}
                 </div>
 
                 {/* Pricing Tiers */}
